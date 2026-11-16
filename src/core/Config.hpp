@@ -15,11 +15,23 @@ struct WikiSource {
     std::vector<std::string> keywords;  // mots qui orientent vers cette source
 };
 
+// Application lançable à la voix ("lance Spotify"). target : chemin, commande ou URI.
+// Les variables d'environnement (%LOCALAPPDATA%…) sont développées.
+struct AppShortcut {
+    std::string name;                  // en minuscules, cherché dans la phrase
+    std::vector<std::string> aliases;  // mots entiers, en minuscules
+    std::string target;
+    std::string args;
+};
+
 struct CompanionConfig {
     std::string name = "Omnis";  // nom du personnage
 
     // --- Niveau 1 : cerveau local (llama.cpp) ---
     std::filesystem::path llmModel = L"assets/models/qwen2.5-3b-instruct-q4_k_m.gguf";
+    // Projecteur de vision (mmproj) du MÊME modèle, ex. Qwen2.5-VL-3B. Vide = pas de vision locale
+    // (une capture d'écran part alors vers Claude Vision, avec ta permission).
+    std::filesystem::path llmMmproj;
     int llmContext = 4096;
     int llmGpuLayers = 99;       // hors jeu : tout sur la RX 9060 XT (Vulkan)
     int llmThreads = 4;
@@ -34,7 +46,23 @@ struct CompanionConfig {
          {"cyberpunk", "night city", "quête", "quete", "mission", "johnny", "v ", "edgerunner"}},
         {"fr.wikipedia.org", "/w/api.php", {}},  // repli général
     };
-    int knowledgeMaxAgeDays = 14;  // au-delà, une info web en cache est re-vérifiée (patchs LoL)
+    int knowledgeMaxAgeDays = 14;
+    std::string userAgent = "CompanionAI/0.3 (desktop assistant)";  // au-delà, une info web en cache est re-vérifiée (patchs LoL)
+
+    // --- Studio (héritage OMNIS) ---
+    std::string studioProcess = "FL64.exe";  // capture audio ciblée sur ce processus
+    bool studioAlerts = true;                // niveau 0 : "ça clippe", problème de phase
+
+    // --- Contrôle du PC ---
+    std::vector<AppShortcut> apps{
+        {"fl studio", {"fl"}, "FL64.exe", ""},  // mets le chemin complet si FL n'est pas dans App Paths
+        {"spotify", {}, "spotify:", ""},
+        {"discord", {}, "discord://", ""},
+        {"steam", {}, "steam://open/main", ""},
+        {"league of legends", {"lol", "league"}, "C:\\Riot Games\\Riot Client\\RiotClientServices.exe",
+         "--launch-product=league_of_legends --launch-patchline=live"},
+        {"cyberpunk", {}, "steam://rungameid/1091500", ""},
+    };
 
     // --- Niveau 2 : Claude (dernier recours) ---
     bool cloudEnabled = true;

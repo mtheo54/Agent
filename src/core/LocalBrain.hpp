@@ -7,6 +7,8 @@
 //  - Réutilisation du cache KV par préfixe commun : le prompt système (stable) n'est
 //    calculé qu'une fois, seuls les nouveaux tokens sont évalués à chaque tour.
 //  - Grammaire GBNF optionnelle : force le format [ESCALATE | ...] quand le modèle escalade.
+//  - Vision locale (optionnelle) : avec un modèle vision-langage (ex. Qwen2.5-VL-3B) et son
+//    projecteur mmproj, GenerateWithImage() analyse une capture d'écran SANS quitter le PC.
 //  - Unload() libère ~2 Go de RAM pour revenir au budget veille (< 80 Mo).
 //
 // Non thread-safe : à utiliser depuis un seul thread (celui de l'AgentOrchestrator).
@@ -23,11 +25,13 @@
 
 struct llama_model;
 struct llama_context;
+struct mtmd_context;
 
 namespace companion {
 
 struct LocalBrainConfig {
     std::filesystem::path model;
+    std::filesystem::path mmproj;  // vide = pas de vision
     int contextTokens = 4096;
     int gpuLayers = 99;
     int threads = 4;
@@ -59,13 +63,21 @@ public:
 
     std::optional<std::string> Generate(const std::vector<ChatTurn>& messages, const GenerateOptions& opt);
 
+    // Vision locale. Le dernier message "user" doit contenir MediaMarker() là où va l'image.
+    [[nodiscard]] bool HasVision() const;
+    static const char* MediaMarker();
+    std::optional<std::string> GenerateWithImage(const std::vector<ChatTurn>& messages, const unsigned char* rgb,
+                                                 int width, int height, const GenerateOptions& opt);
+
 private:
     std::string ApplyTemplate(const std::vector<ChatTurn>& messages) const;
+    std::string SampleLoop(const GenerateOptions& opt, int nCtx, bool trackTokens);
 
     LocalBrainConfig cfg_{};
     bool useGpu_ = true;
     llama_model* model_ = nullptr;
     llama_context* ctx_ = nullptr;
+    mtmd_context* mtmd_ = nullptr;
     std::vector<int> cachedTokens_;  // tokens présents dans le cache KV (séquence 0)
 };
 

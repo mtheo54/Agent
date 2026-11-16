@@ -86,6 +86,17 @@ std::string WebResearcher::HtmlToText(std::string_view html) {
             if (end == std::string_view::npos) break;
             // Fins de blocs -> retour à la ligne ; cellules -> séparateur.
             const std::string tag = Lower(html.substr(i, std::min<size_t>(end - i, 6)));
+            if (tag.starts_with("<img")) {  // icônes (objets, sorts) : le nom est dans alt="…"
+                const std::string_view img = html.substr(i, end - i);
+                if (const size_t a = img.find("alt=\""); a != std::string_view::npos) {
+                    const size_t e = img.find('"', a + 5);
+                    if (e != std::string_view::npos && e > a + 5) {
+                        out.push_back(' ');
+                        out += HtmlToText(img.substr(a + 5, e - a - 5));  // décode les entités
+                        out.push_back(' ');
+                    }
+                }
+            }
             if (tag.starts_with("</p") || tag.starts_with("<br") || tag.starts_with("</li") ||
                 tag.starts_with("</h") || tag.starts_with("</tr") || tag.starts_with("</div"))
                 out.push_back('\n');
@@ -179,8 +190,9 @@ std::vector<WebDocument> WebResearcher::Search(const WikiSource& src, std::strin
     }
     std::vector<std::string> titles;
     try {
-        for (const auto& r : nlohmann::json::parse(search.body).at("query").at("search"))
-            titles.push_back(r.at("title").get<std::string>());
+        // Le document doit vivre pendant la boucle (une référence dans un temporaire serait détruite).
+        const auto json = nlohmann::json::parse(search.body);
+        for (const auto& r : json.at("query").at("search")) titles.push_back(r.at("title").get<std::string>());
     } catch (const std::exception& e) {
         log::Info("Web: réponse de recherche illisible ({})", e.what());
         return docs;

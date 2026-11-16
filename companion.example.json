@@ -1,12 +1,35 @@
 {
   // Copie ce fichier en companion.json à côté de CompanionAI.exe. Toutes les clés sont optionnelles.
   "name": "Omnis",
+
+  // Cerveau local. Pour la vision locale, utilise un modèle vision-langage + son mmproj :
+  //   "llmModel": "assets/models/Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf",
+  //   "llmMmproj": "assets/models/mmproj-Qwen2.5-VL-3B-Instruct-f16.gguf",
   "llmModel": "assets/models/qwen2.5-3b-instruct-q4_k_m.gguf",
   "llmContext": 4096,
   "llmThreads": 4,
   "llmThreadsGaming": 2,
   "llmUnloadAfterMinutes": 10,
+
+  // Studio : capture ciblée sur ce processus, alertes niveau 0 (clipping, phase).
+  "studioProcess": "FL64.exe",
+  "studioAlerts": true,
+
+  // Applis lançables à la voix ("lance spotify"). target : chemin complet, commande ou URI.
+  "apps": [
+    { "name": "fl studio", "aliases": ["fl"], "target": "C:\\Program Files\\Image-Line\\FL Studio 2025\\FL64.exe" },
+    { "name": "spotify", "target": "spotify:" },
+    { "name": "discord", "target": "discord://" },
+    { "name": "steam", "target": "steam://open/main" },
+    { "name": "league of legends", "aliases": ["lol", "league"],
+      "target": "C:\\Riot Games\\Riot Client\\RiotClientServices.exe",
+      "args": "--launch-product=league_of_legends --launch-patchline=live" },
+    { "name": "cyberpunk", "target": "steam://rungameid/1091500" }
+  ],
+
+  // Recherche web locale (liste blanche) et cache des connaissances apprises.
   "knowledgeMaxAgeDays": 14,
+  "userAgent": "CompanionAI/0.3 (desktop assistant)",
   "wikis": [
     { "host": "leagueoflegends.fandom.com", "apiPath": "/api.php",
       "keywords": ["lol", "league", "champion", "build", "stuff", "item", "objet", "rune", "matchup"] },
@@ -14,6 +37,8 @@
       "keywords": ["cyberpunk", "night city", "quête", "mission", "johnny"] },
     { "host": "fr.wikipedia.org", "apiPath": "/w/api.php", "keywords": [] }
   ],
+
+  // Dernier recours.
   "cloudEnabled": true,
   "cloudAsksPermission": true,
   "claudeModel": "claude-opus-5-5",

@@ -3,6 +3,8 @@
 - **Étape 1** : `ResourceGovernor`, `VoiceEngine` + `VoiceFX`, `OverlayWindow` + `ProceduralAvatar` + `MatCapShader.hlsl`.
 - **Étape 2** : cerveau « local d'abord » — `AgentOrchestrator`, `LocalBrain` (llama.cpp), `MemoryDB` (SQLite),
   `PermissionGate`, `WebResearcher` (wikis en liste blanche), `ClaudeClient` (dernier recours), `GameCoach` (LoL).
+- **Étape 3** : studio (`WasapiLoopback` + `OmnisAnalyzer`), vision (capture DXGI, analysée en local puis
+  Claude Vision en secours), conseiller de build LoL local, `SystemControl` (volume, musique, applis).
 
 ## Cascade
 
@@ -14,6 +16,19 @@
 | 2 | Claude | dernier recours (raisonnement complexe, ou le web local n'a rien donné), après ta permission |
 
 Ce qui a été appris sur le web ou auprès de Claude est stocké : la même question est ensuite traitée sans réseau.
+
+## Ce que tu peux lui dire
+
+| Phrase | Ce qui se passe |
+|---|---|
+| « Ton avis sur mon mix ? » | Écoute FL Studio (ou le son du PC) 3 s, mesures OMNIS (LUFS, crête, clipping, phase, spectre), avis du modèle local |
+| *(automatique dans FL Studio)* | « Attention, ça clippe », « problème de phase » (niveau 0, limité dans le temps) |
+| « Je build quoi ? » (en partie LoL) | Profil de dégâts ennemi, anti-soin, objets de ta classe, achats possibles avec ton or — données officielles Riot, calcul local |
+| « Regarde mon écran, je bloque sur cette quête » | Capture 720p → modèle de vision local (peut enchaîner sur le wiki Cyberpunk) → sinon Claude Vision, avec ta permission |
+| « Monte le son », « volume à 30 », « coupe le son » | API audio Windows (aucune touche simulée) |
+| « Musique suivante », « mets la musique en pause » | Touches multimédia — **refusées pendant un jeu** (anti-cheat) |
+| « Lance Spotify » | Applis de la liste blanche (`apps` dans `companion.json`), après ta permission |
+| « Retiens que mon projet s'appelle… » | Mémoire SQLite, réutilisée dans les conversations |
 
 ## Dépendances (dans `external/`)
 
@@ -35,6 +50,9 @@ nlohmann_json et SQLite sont récupérés automatiquement (FetchContent). Chaque
 ## Modèles (`assets/models/`, copiés à côté de l'exe)
 
 - `qwen2.5-3b-instruct-q4_k_m.gguf` : cerveau local (~2 Go) — ou tout autre 3B instruct GGUF (`llmModel` dans `companion.json`)
+- *(optionnel, vision locale)* un modèle vision-langage **et** son projecteur, ex. `Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf`
+  + `mmproj-Qwen2.5-VL-3B-Instruct-f16.gguf` (dépôt `ggml-org/Qwen2.5-VL-3B-Instruct-GGUF`). Il remplace alors le
+  modèle texte (`llmModel` + `llmMmproj`) : un seul modèle pour parler et voir.
 - `ggml-base-q5_1.bin` : Whisper base quantifié (~60 Mo)
 - `fr_FR-siwis-medium.onnx` + `fr_FR-siwis-medium.onnx.json` : voix Piper française
 - `espeak-ng-data/` à côté de l'exécutable
@@ -62,8 +80,9 @@ Logs : `OutputDebugString` (DebugView de Sysinternals, ou la fenêtre Sortie de 
 
 ## Configuration (optionnelle)
 
-Copie `companion.example.json` en `companion.json` à côté de l'exe : modèle, liste blanche de wikis,
-Claude activé ou non, permission cloud, etc. La mémoire est dans `%LOCALAPPDATA%\CompanionAI\companion.db`.
+Copie `companion.example.json` en `companion.json` à côté de l'exe : modèle, vision, liste blanche de wikis,
+applis lançables, alertes studio, Claude activé ou non, permission cloud, etc. Le cache des données Riot est dans
+`%LOCALAPPDATA%\CompanionAI\ddragon`. La mémoire est dans `%LOCALAPPDATA%\CompanionAI\companion.db`.
 
 ## Clé Claude (facultative)
 

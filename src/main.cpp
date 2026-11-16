@@ -3,6 +3,8 @@
 // Étape 1 : ResourceGovernor, voix (STT/TTS + VoiceFX 8-bit), overlay DX11 + avatar.
 // Étape 2 : cerveau local d'abord — AgentOrchestrator (niveaux 0 / 1 / web local / Claude),
 //           LocalBrain (llama.cpp), MemoryDB (SQLite), PermissionGate, coach LoL (API locale Riot).
+// Étape 3 : studio (WasapiLoopback + OmnisAnalyzer), vision (capture DXGI, locale puis Claude),
+//           SystemControl (volume, musique, applis ; aucune touche simulée en jeu).
 //
 // Raccourcis globaux (RegisterHotKey : API officielle, aucun hook clavier) :
 //   Ctrl+Alt+C : push-to-talk (bascule : appuyer pour parler, ré-appuyer pour envoyer)
@@ -10,7 +12,9 @@
 //   Ctrl+Alt+H : afficher / masquer l'avatar
 //   Ctrl+Alt+Q : quitter
 
+#include "audio/OmnisAnalyzer.hpp"
 #include "audio/VoiceEngine.hpp"
+#include "audio/WasapiLoopback.hpp"
 #include "core/AgentOrchestrator.hpp"
 #include "core/Config.hpp"
 #include "core/LocalBrain.hpp"
@@ -19,6 +23,7 @@
 #include "core/PermissionGate.hpp"
 #include "core/ResourceGovernor.hpp"
 #include "modules/GameCoach.hpp"
+#include "modules/SystemControl.hpp"
 #include "network/ClaudeClient.hpp"
 #include "network/HttpClient.hpp"
 #include "network/WebResearcher.hpp"
@@ -77,6 +82,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     const auto root = ExeDir();
     CompanionConfig cfg = LoadConfig(root / L"companion.json");
     if (cfg.llmModel.is_relative()) cfg.llmModel = root / cfg.llmModel;
+    if (!cfg.llmMmproj.empty() && cfg.llmMmproj.is_relative()) cfg.llmMmproj = root / cfg.llmMmproj;
 
     // --- Overlay + avatar ---------------------------------------------------
     OverlayWindow overlay;
@@ -102,15 +108,19 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
 
     // --- Cerveau --------------------------------------------------------------
     MemoryDB db;
-    db.Open(DataDir() / L"companion.db");
-    HttpClient http;
+    const auto dataDir = DataDir();
+    db.Open(dataDir / L"companion.db");
+    HttpClient http(cfg.userAgent);
     LocalBrain brain;
     PermissionGate gate(db, [&voice](const std::string& question) { voice.Speak(question); });
     WebResearcher web(http, cfg.wikis);
     ClaudeClient claude(http, cfg.claudeModel, cfg.claudeEffort);
     GameCoach coach(http);
     ResourceGovernor governor;
-    AgentOrchestrator orchestrator({cfg, governor, voice, db, brain, gate, web, claude, coach});
+    SystemControl system(governor, cfg.apps);
+    WasapiLoopback loopback;
+    OmnisAnalyzer analyzer;
+    AgentOrchestrator orchestrator({cfg, governor, voice, db, brain, gate, web, claude, coach, system, loopback, analyzer, dataDir});
 
     std::atomic<SystemMode> mode{SystemMode::Interactive};
     governor.SetModeListener([&](SystemMode, SystemMode current) {

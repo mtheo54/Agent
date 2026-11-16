@@ -5,6 +5,10 @@
 #if COMPANION_WITH_LLAMA
 #include <llama.h>
 #endif
+#if COMPANION_WITH_LLAMA && COMPANION_WITH_MTMD
+#include <mtmd-helper.h>
+#include <mtmd.h>
+#endif
 
 #include <algorithm>
 
@@ -48,7 +52,9 @@ bool LocalBrain::Load(const LocalBrainConfig& cfg) {
     }
     llama_context_params cp = llama_context_default_params();
     cp.n_ctx = static_cast<uint32_t>(cfg.contextTokens);
-    cp.n_batch = 512;
+    const bool vision = !cfg.mmproj.empty();
+    cp.n_batch = vision ? 1024 : 512;  // une image fait plusieurs centaines de tokens
+    cp.n_ubatch = vision ? 1024 : 512;
     cp.n_threads = cfg.threads;
     cp.n_threads_batch = cfg.threads;
     cp.no_perf = true;
@@ -65,6 +71,10 @@ bool LocalBrain::Load(const LocalBrainConfig& cfg) {
 }
 
 void LocalBrain::Unload() {
+#if COMPANION_WITH_MTMD
+    if (mtmd_) mtmd_free(mtmd_);
+#endif
+    mtmd_ = nullptr;
     if (ctx_) llama_free(ctx_);
     if (model_) llama_model_free(model_);
     ctx_ = nullptr;
@@ -146,6 +156,12 @@ std::optional<std::string> LocalBrain::Generate(const std::vector<ChatTurn>& mes
                              tokens.begin() + static_cast<std::ptrdiff_t>(i + static_cast<size_t>(chunk)));
     }
 
+    return SampleLoop(opt, nCtx, /*trackTokens=*/true);
+}
+
+
+std::string LocalBrain::SampleLoop(const GenerateOptions& opt, int nCtx, bool trackTokens) {
+    const llama_vocab* vocab = llama_model_get_vocab(model_);
     // Échantillonneur : grammaire (optionnelle) -> pénalités -> top-k -> top-p -> température -> tirage.
     llama_sampler* smpl = llama_sampler_chain_init(llama_sampler_chain_default_params());
     if (opt.grammar) {
@@ -170,12 +186,79 @@ std::optional<std::string> LocalBrain::Generate(const std::vector<ChatTurn>& mes
             out.append(piece, static_cast<size_t>(len));
             if (opt.onPiece && !opt.onPiece(std::string_view(piece, static_cast<size_t>(len)))) break;
         }
-        if (static_cast<int>(cachedTokens_.size()) + 1 >= nCtx) break;
+        if (trackTokens && static_cast<int>(cachedTokens_.size()) + 1 >= nCtx) break;
         if (llama_decode(ctx_, llama_batch_get_one(&tok, 1)) != 0) break;
-        cachedTokens_.push_back(tok);
+        if (trackTokens) cachedTokens_.push_back(tok);
     }
     llama_sampler_free(smpl);
     return out;
+}
+
+bool LocalBrain::HasVision() const {
+#if COMPANION_WITH_MTMD
+    return !cfg_.mmproj.empty() && std::filesystem::exists(cfg_.mmproj) && std::filesystem::exists(cfg_.model);
+#else
+    return false;
+#endif
+}
+
+const char* LocalBrain::MediaMarker() {
+#if COMPANION_WITH_MTMD
+    return mtmd_default_marker();
+#else
+    return "<__media__>";
+#endif
+}
+
+std::optional<std::string> LocalBrain::GenerateWithImage(const std::vector<ChatTurn>& messages,
+                                                         const unsigned char* rgb, int width, int height,
+                                                         const GenerateOptions& opt) {
+#if COMPANION_WITH_MTMD
+    if (!HasVision()) return std::nullopt;
+    if (!IsLoaded() && !Load(cfg_)) return std::nullopt;
+    if (!mtmd_) {
+        mtmd_context_params mp = mtmd_context_params_default();
+        mp.use_gpu = useGpu_;
+        mp.n_threads = cfg_.threads;
+        mp.print_timings = false;
+        mp.warmup = false;
+        mp.image_max_tokens = 768;  // borne le coût d'une capture 720p
+        mtmd_ = mtmd_init_from_file(log::Narrow(cfg_.mmproj.wstring()).c_str(), model_, mp);
+        if (!mtmd_ || !mtmd_support_vision(mtmd_)) {
+            log::Info("LocalBrain: projecteur de vision invalide");
+            if (mtmd_) mtmd_free(mtmd_);
+            mtmd_ = nullptr;
+            return std::nullopt;
+        }
+    }
+    const std::string prompt = ApplyTemplate(messages);
+    if (prompt.empty()) return std::nullopt;
+
+    // L'image occupe des positions spéciales (M-RoPE…) : on repart d'un cache vide.
+    llama_memory_clear(llama_get_memory(ctx_), true);
+    cachedTokens_.clear();
+
+    mtmd_bitmap* bitmap = mtmd_bitmap_init(static_cast<uint32_t>(width), static_cast<uint32_t>(height), rgb);
+    mtmd_input_chunks* chunks = mtmd_input_chunks_init();
+    const mtmd_input_text text{prompt.c_str(), prompt.size(), true, true};
+    const mtmd_bitmap* bitmaps[] = {bitmap};
+    std::optional<std::string> result;
+    llama_pos nPast = 0;
+    if (mtmd_tokenize(mtmd_, chunks, &text, bitmaps, 1) == 0 &&
+        static_cast<int>(mtmd_helper_get_n_pos(chunks)) + opt.maxTokens < static_cast<int>(llama_n_ctx(ctx_)) &&
+        mtmd_helper_eval_chunks(mtmd_, ctx_, chunks, 0, 0, static_cast<int32_t>(llama_n_batch(ctx_)), true, &nPast) == 0) {
+        result = SampleLoop(opt, static_cast<int>(llama_n_ctx(ctx_)), /*trackTokens=*/false);
+    } else {
+        log::Info("LocalBrain: évaluation de l'image impossible");
+    }
+    mtmd_input_chunks_free(chunks);
+    mtmd_bitmap_free(bitmap);
+    llama_memory_clear(llama_get_memory(ctx_), true);  // le prochain Generate() repart proprement
+    return result;
+#else
+    (void)messages; (void)rgb; (void)width; (void)height; (void)opt;
+    return std::nullopt;
+#endif
 }
 
 #else  // !COMPANION_WITH_LLAMA : build sans llama.cpp, le niveau 1 est désactivé.
@@ -188,6 +271,11 @@ void LocalBrain::Unload() {}
 bool LocalBrain::Configure(bool useGpu, int threads) { useGpu_ = useGpu; cfg_.threads = threads; return true; }
 std::string LocalBrain::ApplyTemplate(const std::vector<ChatTurn>&) const { return {}; }
 std::optional<std::string> LocalBrain::Generate(const std::vector<ChatTurn>&, const GenerateOptions&) { return std::nullopt; }
+std::string LocalBrain::SampleLoop(const GenerateOptions&, int, bool) { return {}; }
+bool LocalBrain::HasVision() const { return false; }
+const char* LocalBrain::MediaMarker() { return "<__media__>"; }
+std::optional<std::string> LocalBrain::GenerateWithImage(const std::vector<ChatTurn>&, const unsigned char*, int, int,
+                                                         const GenerateOptions&) { return std::nullopt; }
 
 #endif
 

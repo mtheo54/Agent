@@ -1,0 +1,219 @@
+#include "audio/WasapiLoopback.hpp"
+
+#include "core/Log.hpp"
+
+#include <windows.h>
+#include <audioclient.h>
+#include <mmdeviceapi.h>
+#include <tlhelp32.h>
+#include <wrl/client.h>
+
+#if __has_include(<audioclientactivationparams.h>)
+#include <audioclientactivationparams.h>
+#else
+// SDK Windows 10.0.20348+ ; redéclaré pour les toolchains qui ne l'ont pas (MinGW).
+typedef enum AUDIOCLIENT_ACTIVATION_TYPE {
+    AUDIOCLIENT_ACTIVATION_TYPE_DEFAULT = 0,
+    AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK = 1
+} AUDIOCLIENT_ACTIVATION_TYPE;
+typedef enum PROCESS_LOOPBACK_MODE {
+    PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE = 0,
+    PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE = 1
+} PROCESS_LOOPBACK_MODE;
+typedef struct AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS {
+    DWORD TargetProcessId;
+    PROCESS_LOOPBACK_MODE ProcessLoopbackMode;
+} AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS;
+typedef struct AUDIOCLIENT_ACTIVATION_PARAMS {
+    AUDIOCLIENT_ACTIVATION_TYPE ActivationType;
+    union {
+        AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS ProcessLoopbackParams;
+    };
+} AUDIOCLIENT_ACTIVATION_PARAMS;
+#define VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK L"VAD\\Process_Loopback"
+#endif
+
+#include <cwctype>
+#include <vector>
+
+using Microsoft::WRL::ComPtr;
+
+namespace companion {
+namespace {
+
+// Gestionnaire de fin d'activation asynchrone (COM minimal, agile : appelé sur un thread MTA).
+class ActivationHandler final : public IActivateAudioInterfaceCompletionHandler, public IAgileObject {
+public:
+    ActivationHandler() : done_(CreateEventW(nullptr, TRUE, FALSE, nullptr)) {}
+    ~ActivationHandler() { CloseHandle(done_); }
+    HANDLE DoneEvent() const noexcept { return done_; }
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override {
+        if (riid == __uuidof(IUnknown) || riid == __uuidof(IActivateAudioInterfaceCompletionHandler)) {
+            *ppv = static_cast<IActivateAudioInterfaceCompletionHandler*>(this);
+        } else if (riid == __uuidof(IAgileObject)) {
+            *ppv = static_cast<IAgileObject*>(this);
+        } else {
+            *ppv = nullptr;
+            return E_NOINTERFACE;
+        }
+        AddRef();
+        return S_OK;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return InterlockedIncrement(&refs_); }
+    ULONG STDMETHODCALLTYPE Release() override {
+        const ULONG r = InterlockedDecrement(&refs_);
+        if (r == 0) delete this;
+        return r;
+    }
+    HRESULT STDMETHODCALLTYPE ActivateCompleted(IActivateAudioInterfaceAsyncOperation*) override {
+        SetEvent(done_);
+        return S_OK;
+    }
+
+private:
+    LONG refs_ = 1;
+    HANDLE done_;
+};
+
+using ActivateFn = HRESULT(WINAPI*)(LPCWSTR, REFIID, PROPVARIANT*, IActivateAudioInterfaceCompletionHandler*,
+                                    IActivateAudioInterfaceAsyncOperation**);
+
+// Active un IAudioClient sur l'arbre de processus `pid` (Windows 11 / Server 2022+).
+HRESULT ActivateProcessLoopback(DWORD pid, ComPtr<IAudioClient>& client) {
+    static const auto activate = reinterpret_cast<ActivateFn>(reinterpret_cast<void*>(
+        GetProcAddress(LoadLibraryW(L"Mmdevapi.dll"), "ActivateAudioInterfaceAsync")));
+    if (!activate) return E_NOTIMPL;
+
+    AUDIOCLIENT_ACTIVATION_PARAMS params{};
+    params.ActivationType = AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK;
+    params.ProcessLoopbackParams.TargetProcessId = pid;
+    params.ProcessLoopbackParams.ProcessLoopbackMode = PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE;
+    PROPVARIANT pv{};
+    pv.vt = VT_BLOB;
+    pv.blob.cbSize = sizeof(params);
+    pv.blob.pBlobData = reinterpret_cast<BYTE*>(&params);
+
+    auto* handler = new ActivationHandler();
+    ComPtr<IActivateAudioInterfaceAsyncOperation> op;
+    HRESULT hr = activate(VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, __uuidof(IAudioClient), &pv, handler, &op);
+    if (SUCCEEDED(hr)) {
+        WaitForSingleObject(handler->DoneEvent(), 5000);
+        HRESULT activateHr = E_FAIL;
+        ComPtr<IUnknown> unk;
+        hr = op->GetActivateResult(&activateHr, &unk);
+        if (SUCCEEDED(hr)) hr = activateHr;
+        if (SUCCEEDED(hr)) hr = unk.As(&client);
+    }
+    handler->Release();
+    return hr;
+}
+
+HRESULT ActivateSystemLoopback(ComPtr<IAudioClient>& client) {
+    ComPtr<IMMDeviceEnumerator> enumerator;
+    ComPtr<IMMDevice> device;
+    HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&enumerator));
+    if (SUCCEEDED(hr)) hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device);
+    if (SUCCEEDED(hr))
+        hr = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
+                              reinterpret_cast<void**>(client.ReleaseAndGetAddressOf()));
+    return hr;
+}
+
+}  // namespace
+
+std::uint32_t WasapiLoopback::FindProcessId(const std::wstring& exeName) {
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return 0;
+    PROCESSENTRY32W pe{};
+    pe.dwSize = sizeof(pe);
+    std::uint32_t pid = 0;
+    for (BOOL ok = Process32FirstW(snap, &pe); ok; ok = Process32NextW(snap, &pe)) {
+        if (_wcsicmp(pe.szExeFile, exeName.c_str()) == 0) {
+            pid = pe.th32ProcessID;
+            break;
+        }
+    }
+    CloseHandle(snap);
+    return pid;
+}
+
+bool WasapiLoopback::Start(const std::wstring& processName, Sink sink) {
+    Stop();
+    std::uint32_t pid = 0;
+    if (!processName.empty()) {
+        pid = FindProcessId(processName);
+        if (pid == 0) return false;
+    }
+    processMode_ = pid != 0;
+    running_ = true;
+    thread_ = std::jthread([this, pid, sink = std::move(sink)](std::stop_token st) { Run(st, pid, sink); });
+    return true;
+}
+
+void WasapiLoopback::Stop() {
+    if (thread_.joinable()) {
+        thread_.request_stop();
+        thread_.join();
+    }
+    running_ = false;
+}
+
+void WasapiLoopback::Run(std::stop_token st, std::uint32_t pid, Sink sink) {
+    log::SetCurrentThreadName(L"Companion.Loopback");
+    const HRESULT comHr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+
+    ComPtr<IAudioClient> client;
+    HRESULT hr = pid ? ActivateProcessLoopback(pid, client) : ActivateSystemLoopback(client);
+
+    WAVEFORMATEX fmt{};
+    fmt.wFormatTag = WAVE_FORMAT_IEEE_FLOAT;
+    fmt.nChannels = kChannels;
+    fmt.nSamplesPerSec = kSampleRate;
+    fmt.wBitsPerSample = 32;
+    fmt.nBlockAlign = kChannels * 4;
+    fmt.nAvgBytesPerSec = kSampleRate * fmt.nBlockAlign;
+
+    HANDLE event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    ComPtr<IAudioCaptureClient> capture;
+    if (SUCCEEDED(hr))
+        hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED,
+                                AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_EVENTCALLBACK |
+                                    AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
+                                2'000'000 /* 200 ms */, 0, &fmt, nullptr);
+    if (SUCCEEDED(hr)) hr = client->SetEventHandle(event);
+    if (SUCCEEDED(hr)) hr = client->GetService(IID_PPV_ARGS(&capture));
+    if (SUCCEEDED(hr)) hr = client->Start();
+
+    if (FAILED(hr)) {
+        log::Info("Loopback: échec d'initialisation ({}, hr=0x{:08X})", pid ? "processus" : "système",
+                  static_cast<unsigned>(hr));
+    } else {
+        log::Info("Loopback: capture {} démarrée", pid ? "du processus" : "du mix système");
+        std::vector<float> silence;
+        while (!st.stop_requested()) {
+            // Sans son, aucun événement n'arrive : le délai permet de rester réactif à l'arrêt.
+            WaitForSingleObject(event, 200);
+            UINT32 packet = 0;
+            while (SUCCEEDED(capture->GetNextPacketSize(&packet)) && packet > 0) {
+                BYTE* data = nullptr;
+                UINT32 frames = 0;
+                DWORD flags = 0;
+                if (FAILED(capture->GetBuffer(&data, &frames, &flags, nullptr, nullptr))) break;
+                if (flags & AUDCLNT_BUFFERFLAGS_SILENT) {
+                    silence.assign(static_cast<size_t>(frames) * kChannels, 0.f);
+                    sink(silence.data(), frames);
+                } else {
+                    sink(reinterpret_cast<const float*>(data), frames);
+                }
+                capture->ReleaseBuffer(frames);
+            }
+        }
+        client->Stop();
+    }
+    CloseHandle(event);
+    if (SUCCEEDED(comHr)) CoUninitialize();
+    running_ = false;
+}
+
+}  // namespace companion

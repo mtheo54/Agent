@@ -1,0 +1,47 @@
+#pragma once
+// WasapiLoopback : écoute directe du son du PC, sans plugin VST sur le Master (rapport §4.C).
+//
+//  - Mode processus (Windows 11) : capture UNIQUEMENT l'arbre de processus de FL64.exe
+//    (ActivateAudioInterfaceAsync + PROCESS_LOOPBACK). La voix du compagnon, Discord ou le
+//    navigateur ne polluent pas l'analyse.
+//  - Mode système (repli) : loopback du périphérique de sortie par défaut (tout le mix du PC).
+//
+// Format livré : float stéréo entrelacé 48 kHz (conversion par le moteur audio Windows).
+// Le thread de capture ne fait que copier : l'analyse tourne ailleurs, en priorité basse.
+
+#include <atomic>
+#include <cstdint>
+#include <functional>
+#include <stop_token>
+#include <string>
+#include <thread>
+
+namespace companion {
+
+class WasapiLoopback {
+public:
+    static constexpr std::uint32_t kSampleRate = 48000;
+    static constexpr std::uint32_t kChannels = 2;
+    // Appelé sur le thread de capture avec des trames stéréo entrelacées. Doit être rapide.
+    using Sink = std::function<void(const float* interleaved, std::size_t frames)>;
+
+    ~WasapiLoopback() { Stop(); }
+
+    // processName vide = mix système. Retourne false si le processus est introuvable
+    // (l'appelant peut alors retenter en mode système).
+    bool Start(const std::wstring& processName, Sink sink);
+    void Stop();
+    [[nodiscard]] bool Running() const noexcept { return running_.load(); }
+    [[nodiscard]] bool IsProcessCapture() const noexcept { return processMode_; }
+
+    static std::uint32_t FindProcessId(const std::wstring& exeName);
+
+private:
+    void Run(std::stop_token st, std::uint32_t pid, Sink sink);
+
+    std::jthread thread_;
+    std::atomic<bool> running_{false};
+    bool processMode_ = false;
+};
+
+}  // namespace companion

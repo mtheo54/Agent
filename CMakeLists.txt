@@ -62,6 +62,7 @@ if(COMPANION_WITH_LLAMA)
     set(LLAMA_BUILD_TOOLS    OFF CACHE BOOL "" FORCE)
     set(LLAMA_BUILD_SERVER   OFF CACHE BOOL "" FORCE)
     set(LLAMA_CURL           OFF CACHE BOOL "" FORCE)
+    set(LLAMA_BUILD_MTMD     ON  CACHE BOOL "" FORCE)  # vision locale (capture d'écran)
     add_subdirectory(external/llama.cpp EXCLUDE_FROM_ALL)
 endif()
 
@@ -101,6 +102,8 @@ endif()
 # ----------------------------------------------------------------------------
 add_executable(CompanionAI WIN32
     src/main.cpp
+    src/audio/OmnisAnalyzer.cpp
+    src/audio/WasapiLoopback.cpp
     src/core/AgentOrchestrator.cpp
     src/core/Config.cpp
     src/core/LocalBrain.cpp
@@ -108,6 +111,8 @@ add_executable(CompanionAI WIN32
     src/core/PermissionGate.cpp
     src/core/ResourceGovernor.cpp
     src/modules/GameCoach.cpp
+    src/modules/ScreenCapture.cpp
+    src/modules/SystemControl.cpp
     src/network/ClaudeClient.cpp
     src/network/HttpClient.cpp
     src/network/WebResearcher.cpp
@@ -122,6 +127,7 @@ target_compile_definitions(CompanionAI PRIVATE
     UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX
     _WIN32_WINNT=0x0A00 WINVER=0x0A00
     $<$<BOOL:${COMPANION_WITH_LLAMA}>:COMPANION_WITH_LLAMA=1>
+    $<$<BOOL:${COMPANION_WITH_LLAMA}>:COMPANION_WITH_MTMD=1>
     $<$<BOOL:${COMPANION_WITH_WHISPER}>:COMPANION_WITH_WHISPER=1>
     $<$<BOOL:${COMPANION_WITH_ONNX}>:COMPANION_WITH_ONNX=1>
     $<$<AND:$<BOOL:${COMPANION_WITH_ONNX}>,$<BOOL:${COMPANION_WITH_ESPEAK}>>:COMPANION_WITH_ESPEAK=1>
@@ -139,8 +145,9 @@ target_link_libraries(CompanionAI PRIVATE
     nlohmann_json::nlohmann_json
     sqlite3
     d3d11 dxgi dcomp d3dcompiler
-    ole32 uuid avrt pdh shell32 user32 windowscodecs winhttp advapi32
+    ole32 oleaut32 uuid avrt pdh shell32 user32 windowscodecs winhttp advapi32
     $<$<BOOL:${COMPANION_WITH_LLAMA}>:llama>
+    $<$<BOOL:${COMPANION_WITH_LLAMA}>:mtmd>
     $<$<BOOL:${COMPANION_WITH_WHISPER}>:whisper>
     $<$<BOOL:${COMPANION_WITH_ONNX}>:onnxruntime::onnxruntime>
 )

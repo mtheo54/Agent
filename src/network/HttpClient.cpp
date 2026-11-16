@@ -22,9 +22,10 @@ struct Handle {
 
 }  // namespace
 
-HttpClient::HttpClient() {
-    // User-Agent générique : aucune information personnelle n'est envoyée.
-    session_ = WinHttpOpen(L"CompanionAI/0.2 (desktop assistant)", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+HttpClient::HttpClient(const std::string& userAgent) {
+    // User-Agent générique par défaut : aucune information personnelle n'est envoyée.
+    // (Wikipédia limite les clients anonymes ; "userAgent" dans companion.json permet d'y ajouter un contact.)
+    session_ = WinHttpOpen(Widen(userAgent).c_str(), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                            WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (session_) {
         DWORD decompression = WINHTTP_DECOMPRESSION_FLAG_ALL;

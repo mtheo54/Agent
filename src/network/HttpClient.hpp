@@ -29,7 +29,7 @@ struct HttpResponse {
 
 class HttpClient {
 public:
-    HttpClient();
+    explicit HttpClient(const std::string& userAgent = "CompanionAI/0.3 (desktop assistant)");
     ~HttpClient();
     HttpClient(const HttpClient&) = delete;
     HttpClient& operator=(const HttpClient&) = delete;
