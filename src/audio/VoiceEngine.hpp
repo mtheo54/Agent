@@ -1,0 +1,79 @@
+#pragma once
+// VoiceEngine : pipeline vocal 100 % CPU (0 Mo de VRAM).
+//
+//   Micro ─WASAPI capture (16 kHz mono, auto-conversion)─► [Push-to-Talk | VAD] ─► whisper.cpp ─► texte
+//   Texte ─► phonémisation espeak-ng ─► Piper (ONNX Runtime CPU) ─► file SPSC
+//         ─► thread de rendu WASAPI (MMCSS "Audio") ─► VoiceFX 8-bit ─► haut-parleurs
+//                                                         └─► RMS atomique ─► avatar 3D
+//
+// Le RMS est mesuré au moment du rendu : l'animation est synchronisée avec ce que l'on entend.
+
+#include "audio/VoiceFX.hpp"
+
+#include <atomic>
+#include <cstdint>
+#include <filesystem>
+#include <functional>
+#include <memory>
+#include <string>
+
+namespace companion {
+
+struct VoiceEngineConfig {
+    std::filesystem::path whisperModel = L"assets/models/ggml-base-q5_1.bin";
+    std::filesystem::path piperModel = L"assets/models/fr_FR-siwis-medium.onnx";  // + .onnx.json
+    std::filesystem::path espeakDataDir = L"espeak-ng-data";
+    std::string language = "fr";
+    int sttThreads = 4;        // hors jeu
+    int sttThreadsGaming = 2;  // en jeu : on laisse 4 cœurs au jeu
+    int ttsThreads = 2;
+    VoiceFXConfig fx{};
+};
+
+// Activation de l'écoute (rapport §4.B : "Push-to-Talk ou détection de voix (VAD)").
+enum class ListenMode : std::uint8_t {
+    PushToTalk,     // BeginListening()/EndListening()
+    VoiceActivity,  // micro ouvert en continu, segments de parole détectés automatiquement
+};
+
+class VoiceEngine {
+public:
+    using TranscriptCallback = std::function<void(std::string text)>;
+
+    VoiceEngine();
+    ~VoiceEngine();
+    VoiceEngine(const VoiceEngine&) = delete;
+    VoiceEngine& operator=(const VoiceEngine&) = delete;
+
+    // Le rendu audio démarre toujours ; STT/TTS sont optionnels (modèles absents = désactivés).
+    bool Initialize(const VoiceEngineConfig& cfg);
+    void Shutdown();
+
+    // --- STT ---
+    void SetTranscriptCallback(TranscriptCallback cb);  // appelé sur le thread worker
+    void SetListenMode(ListenMode mode);
+    [[nodiscard]] ListenMode GetListenMode() const noexcept;
+    void BeginListening();  // Push-to-Talk uniquement
+    void EndListening();    // déclenche la transcription asynchrone
+    // Vrai pendant un push-to-talk, ou pendant un segment de parole détecté par la VAD.
+    [[nodiscard]] bool IsListening() const noexcept;
+
+    // --- TTS ---
+    void Speak(std::string text);  // asynchrone, mis en file
+    void StopSpeaking();           // vide la file et coupe la voix immédiatement
+    [[nodiscard]] bool IsSpeaking() const noexcept;
+
+    // --- Expression ---
+    void SetMood(float mood01) noexcept;           // module l'intensité 8-bit
+    [[nodiscard]] float VoiceRms() const noexcept;  // pour ProceduralAvatar (thread-safe)
+    void SetGamingMode(bool gaming) noexcept;       // réduit les threads STT
+
+    [[nodiscard]] bool HasStt() const noexcept;
+    [[nodiscard]] bool HasTts() const noexcept;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
+}  // namespace companion

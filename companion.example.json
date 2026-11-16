@@ -1,0 +1,21 @@
+{
+  // Copie ce fichier en companion.json à côté de CompanionAI.exe. Toutes les clés sont optionnelles.
+  "name": "Omnis",
+  "llmModel": "assets/models/qwen2.5-3b-instruct-q4_k_m.gguf",
+  "llmContext": 4096,
+  "llmThreads": 4,
+  "llmThreadsGaming": 2,
+  "llmUnloadAfterMinutes": 10,
+  "knowledgeMaxAgeDays": 14,
+  "wikis": [
+    { "host": "leagueoflegends.fandom.com", "apiPath": "/api.php",
+      "keywords": ["lol", "league", "champion", "build", "stuff", "item", "objet", "rune", "matchup"] },
+    { "host": "cyberpunk.fandom.com", "apiPath": "/api.php",
+      "keywords": ["cyberpunk", "night city", "quête", "mission", "johnny"] },
+    { "host": "fr.wikipedia.org", "apiPath": "/w/api.php", "keywords": [] }
+  ],
+  "cloudEnabled": true,
+  "cloudAsksPermission": true,
+  "claudeModel": "claude-opus-5-5",
+  "claudeEffort": "medium"
+}

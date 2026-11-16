@@ -1,0 +1,72 @@
+#pragma once
+// LocalBrain : niveau 1 de la cascade — modèle 3B Q4_K_M embarqué via llama.cpp (0 token API).
+//
+//  - Hors jeu : couches sur la RX 9060 XT (backend Vulkan). En jeu : rechargement CPU-only
+//    (0 Mo de VRAM, rapport §2), 2 threads. Le fichier GGUF est mappé en mémoire (mmap) :
+//    le rechargement relit le cache disque de Windows, ~1–2 s.
+//  - Réutilisation du cache KV par préfixe commun : le prompt système (stable) n'est
+//    calculé qu'une fois, seuls les nouveaux tokens sont évalués à chaque tour.
+//  - Grammaire GBNF optionnelle : force le format [ESCALATE | ...] quand le modèle escalade.
+//  - Unload() libère ~2 Go de RAM pour revenir au budget veille (< 80 Mo).
+//
+// Non thread-safe : à utiliser depuis un seul thread (celui de l'AgentOrchestrator).
+
+#include "core/MemoryDB.hpp"  // ChatTurn
+
+#include <filesystem>
+#include <functional>
+#include <optional>
+#include <stop_token>
+#include <string>
+#include <string_view>
+#include <vector>
+
+struct llama_model;
+struct llama_context;
+
+namespace companion {
+
+struct LocalBrainConfig {
+    std::filesystem::path model;
+    int contextTokens = 4096;
+    int gpuLayers = 99;
+    int threads = 4;
+};
+
+struct GenerateOptions {
+    int maxTokens = 220;
+    float temperature = 0.7f;
+    const char* grammar = nullptr;  // GBNF, racine "root"
+    // Reçoit chaque morceau de texte au fil de l'eau ; retourner false arrête la génération.
+    std::function<bool(std::string_view piece)> onPiece;
+    std::stop_token stop;
+};
+
+class LocalBrain {
+public:
+    LocalBrain();
+    ~LocalBrain();
+    LocalBrain(const LocalBrain&) = delete;
+    LocalBrain& operator=(const LocalBrain&) = delete;
+
+    bool Load(const LocalBrainConfig& cfg);
+    void Unload();
+    [[nodiscard]] bool IsLoaded() const noexcept { return ctx_ != nullptr; }
+    [[nodiscard]] bool Available() const;  // fichier modèle présent et llama.cpp compilé
+
+    // Bascule GPU <-> CPU (recharge si nécessaire). threads s'applique immédiatement.
+    bool Configure(bool useGpu, int threads);
+
+    std::optional<std::string> Generate(const std::vector<ChatTurn>& messages, const GenerateOptions& opt);
+
+private:
+    std::string ApplyTemplate(const std::vector<ChatTurn>& messages) const;
+
+    LocalBrainConfig cfg_{};
+    bool useGpu_ = true;
+    llama_model* model_ = nullptr;
+    llama_context* ctx_ = nullptr;
+    std::vector<int> cachedTokens_;  // tokens présents dans le cache KV (séquence 0)
+};
+
+}  // namespace companion

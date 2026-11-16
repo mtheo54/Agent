@@ -1,0 +1,19 @@
+# Build
+build/
+out/
+.vs/
+CMakeUserPresets.json
+
+# Dépendances clonées / téléchargées localement (voir README)
+external/*
+!external/.gitkeep
+
+# Modèles (plusieurs Go)
+assets/models/*
+!assets/models/.gitkeep
+
+# Config locale et secrets
+companion.json
+*.db
+*.db-wal
+*.db-shm
