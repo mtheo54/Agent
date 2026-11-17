@@ -349,6 +349,65 @@ std::string AgentOrchestrator::DropRepeatedOpener(const std::string& chunk) cons
     return chunk;
 }
 
+// Rage bait « de temps en temps » (ton sans filtre) : une provocation de mauvaise foi pour le faire rager.
+// S'il mord (il répond énervé dans les 3 minutes), Omnis avoue en rigolant. Jamais s'il va mal, jamais
+// pendant un avis de mixage, au plus un toutes les 10 minutes.
+std::string AgentOrchestrator::RageBaitHint(const std::string& userText) {
+    using clock = std::chrono::steady_clock;
+    const auto now = clock::now();
+    bool angry = false, down = false;
+    {
+        std::scoped_lock lock(emotionMutex_);
+        if (now - emotionAt_ < std::chrono::seconds(90) && lastEmotion_.confidence >= 0.35f) {
+            angry = lastEmotion_.label == VoiceEmotion::Angry || lastEmotion_.label == VoiceEmotion::Stressed;
+            down = lastEmotion_.label == VoiceEmotion::Sad || lastEmotion_.label == VoiceEmotion::Tired;
+        }
+    }
+    // 1) Il a mordu ?
+    if (baitPending_ && now - lastBait_ < std::chrono::minutes(3)) {
+        baitPending_ = false;
+        const std::string t = Lower(userText);
+        const bool bit = angry || ContainsAny(t, {"n'importe quoi", "t'es con", "ta gueule", "ferme", "mais non", "nan mais",
+                                                  "t'es sérieux", "c'est faux", "jamais de la vie", "t'es nul", "dis pas",
+                                                  "abuse", "n'importe nawak", "tu racontes"});
+        if (bit && !down) {
+            forcedReplyStyle_ = SpeakingStyle::Amused;  // il se marre (petit rire automatique)
+            return "[Il a mordu à ton rage bait] Avoue en rigolant que tu disais ça exprès pour le faire rager "
+                   "(une phrase, commence par (rire)), chambre-le un peu de s'être fait avoir, puis reviens au sujet.\n";
+        }
+    }
+    // 2) Nouvelle provocation ?
+    if (cfg_.tone != 2 || studioFocus_ || down || angry || now - lastBait_ < std::chrono::minutes(10)) return {};
+    baitRng_ = baitRng_ * 1664525u + 1013904223u;
+    if (static_cast<float>(baitRng_ >> 8) / 16777216.f >= 0.15f) return {};
+    static const char* const music[] = {
+        "FL Studio c'est un logiciel pour enfants, les vrais producteurs sont sur Ableton.",
+        "ton meilleur son c'est le tout premier que t'as fait, depuis tu régresses, c'est documenté.",
+        "la trap c'était mieux en 2016, maintenant c'est tous les mêmes type beats.",
+        "le kick c'est surcoté, un vrai morceau ça se fait sans kick.",
+        "honnêtement les presets d'usine sonnent mieux que tes sons à toi.",
+        "le mastering ça sert à rien, c'est un truc inventé pour vendre des plugins.",
+    };
+    static const char* const lol[] = {
+        "la jungle c'est le rôle des gens qui savent pas laner.", "le support c'est pas un vrai rôle, c'est un stage d'observation.",
+        "ton main c'est un champion pour les silver, assume.", "les wards c'est pour les gens qui ont peur.",
+    };
+    static const char* const general[] = {
+        "les pâtes au ketchup c'est de la gastronomie, débat clos.", "la pizza ananas c'est la meilleure pizza, point.",
+        "le Wi-Fi c'est mieux que le câble, t'as juste pas compris.", "un PC gamer c'est surcoté, une Switch ça suffit largement.",
+        "le café c'est meilleur froid de la veille.", "les gens qui disent « pain au chocolat » ont raison… non attends, c'est chocolatine.",
+    };
+    const bool inLol = d_.coach.Latest().has_value();
+    const bool inStudio = mode_.load() == SystemMode::Studio;
+    const auto pick = [&](const auto& arr) { return arr[(baitRng_ >> 12) % (sizeof(arr) / sizeof(arr[0]))]; };
+    const char* example = inLol ? pick(lol) : inStudio ? pick(music) : pick(general);
+    lastBait_ = now;
+    baitPending_ = true;
+    return std::string("[Rage bait] Cette fois, glisse une provocation de mauvaise foi pour le faire rager, l'air "
+                       "parfaitement sérieux, en lien avec la conversation si possible (sinon dans ce genre-là : « ") +
+           example + " »). Ne dis surtout pas que c'est pour rire. Rien d'identitaire ni de vraiment blessant.\n";
+}
+
 // Memes « de temps en temps » : jamais en ton poli, jamais si l'utilisateur a l'air triste, fatigué ou
 // énervé (là on ne rigole pas), humour noir seulement s'il va bien.
 std::string AgentOrchestrator::MemeHint() {
@@ -378,7 +437,7 @@ void AgentOrchestrator::Say(const std::string& text) {
     if (text.empty()) return;
     const std::string expression = ExpressionForReply(text);
     React(expression);
-    d_.voice.Speak(text, ReplyStyle(expression, style_.load()));
+    d_.voice.Speak(text, ReplyStyle(expression, style_.load(), text));
     d_.db.AddMessage("assistant", text);
 }
 
@@ -425,7 +484,8 @@ std::string AgentOrchestrator::GenerateSpoken(const std::vector<ChatTurn>& messa
             said = DropRepeatedOpener(chunk);
             const std::string expression = ExpressionForReply(said);
             React(expression);
-            replyStyle = ReplyStyle(expression, style_.load());
+            replyStyle = forcedReplyStyle_.value_or(ReplyStyle(expression, style_.load(), said));
+            forcedReplyStyle_.reset();
         }
         spoken = true;
         if (!said.empty()) d_.voice.Speak(said, replyStyle);
@@ -560,7 +620,7 @@ void AgentOrchestrator::HandleLevel1(const std::string& text, const std::vector<
     }
     std::vector<ChatTurn> messages{{"system", PersonaPrompt()}};
     messages.insert(messages.end(), history.begin(), history.end());
-    const std::string ctx = LiveContext(text) + extraContext + OpenerHint() + MemeHint();
+    const std::string ctx = LiveContext(text) + extraContext + OpenerHint() + MemeHint() + RageBaitHint(text);
     messages.push_back({"user", ctx.empty() ? text : "[Contexte]\n" + ctx + "\n[Message]\n" + text});
 
     bool escalation = false;

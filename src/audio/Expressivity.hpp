@@ -2,7 +2,8 @@
 // Expressivité : ce qui rend la voix humaine… et un peu robot.
 //
 //  - Balises dans le texte (écrites par le modèle ou la banque de répliques) : (rire), (petit rire),
-//    (soupir), (hmm), (tousse), (oh), (bug). Jouées avec de vrais sons dans la voix d'Omnis
+//    (soupir), (hmm), (tousse), (se racle la gorge), (oh), (bug). Rires, toux, raclements et soupirs sont de
+//    vrais enregistrements humains (VocalSound, CC BY-SA) ; Jouées avec de vrais sons dans la voix d'Omnis
 //    (assets/voice/<voix>/vocal/<type>_<n>.wav), jamais prononcées. Une *action* inconnue est retirée.
 //  - Spontanéité : un petit rire avant une réponse drôle, un « oh ! » avant une surprise, sans balise.
 //  - Bugs de robot : de temps en temps une syllabe accroche (« je s-s-suis »), grain numérique qui monte,
@@ -21,7 +22,7 @@
 
 namespace companion {
 
-enum class Vocal : std::uint8_t { Laugh, Chuckle, Sigh, Hmm, Cough, Gasp, Glitch, Count };
+enum class Vocal : std::uint8_t { Laugh, Chuckle, Sigh, Hmm, Cough, Gasp, Throat, Glitch, Count };
 const char* ToFileStem(Vocal v) noexcept;  // "laugh", "chuckle"…
 
 struct SpeechPart {
@@ -69,6 +70,25 @@ private:
     float grainMs_ = 70.f;
     bool tapeStop_ = false;
     std::uint32_t seed_ = 1;
+};
+
+// Exagération des émotions sur la voix synthétisée, au fil du streaming : un humain excité parle plus vite,
+// plus haut et plus fort ; triste ou doux, plus lentement, plus bas, plus doucement. « Varispeed » (comme
+// une bande qui tourne plus vite) : vitesse et hauteur bougent ensemble, ce qui est exactement ce que
+// fait la voix humaine sous l'émotion, sans artefact de time-stretch.
+class EmotionShaper {
+public:
+    // intensity 0 … 1.5 (réglage EXPRESSIVITÉ) ; 0 = voix brute.
+    void Set(SpeakingStyle style, float intensity) noexcept;
+    void Reset() noexcept { pos_ = 0.0; prev_ = 0.f; havePrev_ = false; }
+    void Process(std::vector<float>& chunk);  // peut changer la longueur du morceau
+
+private:
+    double ratio_ = 1.0;  // > 1 : plus vite et plus aigu
+    float gain_ = 1.f;
+    double pos_ = 0.0;    // position fractionnaire dans le flux d'entrée (relative au morceau courant)
+    float prev_ = 0.f;
+    bool havePrev_ = false;
 };
 
 // Probabilités de spontanéité selon le style (pas de rire si on console, etc.).

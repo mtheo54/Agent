@@ -17,6 +17,7 @@ const char* ToFileStem(Vocal v) noexcept {
         case Vocal::Hmm: return "hmm";
         case Vocal::Cough: return "cough";
         case Vocal::Gasp: return "gasp";
+        case Vocal::Throat: return "throat";
         default: return "glitch";
     }
 }
@@ -38,7 +39,8 @@ Vocal Classify(const std::string& raw) {
     if (has({"petit rire", "rigole", "ricane", "sourit", "sourire", "hé hé", "he he", "pouffe"})) return Vocal::Chuckle;
     if (has({"rire", "rit", "ha ha", "haha", "mdr", "explose"})) return Vocal::Laugh;
     if (has({"soupir", "pff", "souffle", "blasé"})) return Vocal::Sigh;
-    if (has({"tousse", "toux", "kof", "racle", "gorge"})) return Vocal::Cough;
+    if (has({"racle", "gorge", "ahem", "hum hum", "s'éclaircit", "eclaircit"})) return Vocal::Throat;
+    if (has({"tousse", "toux", "kof"})) return Vocal::Cough;
     if (has({"bug", "glitch", "bzz", "grésille", "gresille", "beug", "plante"})) return Vocal::Glitch;
     if (has({"hmm", "réfléchit", "reflechit", "hésite", "hesite"})) return Vocal::Hmm;
     if (has({"surpris", "oh", "inspire", "sursaute", "choqué"})) return Vocal::Gasp;
@@ -219,6 +221,46 @@ std::vector<float> RobotGlitcher::Burst(std::span<const float> source, int sampl
 }
 
 // ---------------------------------------------------------------------------
+void EmotionShaper::Set(SpeakingStyle style, float intensity) noexcept {
+    // (écart de vitesse, gain en dB) à intensité 1
+    float speed = 0.f, db = 0.f;
+    switch (style) {
+        case SpeakingStyle::Bright: speed = 0.045f; db = 1.5f; break;
+        case SpeakingStyle::Surprised: speed = 0.055f; db = 2.f; break;
+        case SpeakingStyle::Amused: speed = 0.035f; db = 1.f; break;
+        case SpeakingStyle::Annoyed: speed = 0.04f; db = 2.f; break;
+        case SpeakingStyle::Soft: speed = -0.045f; db = -3.f; break;
+        case SpeakingStyle::Calm: speed = -0.03f; db = -1.5f; break;
+        default: break;
+    }
+    intensity = std::clamp(intensity, 0.f, 1.5f);
+    ratio_ = 1.0 + static_cast<double>(speed * intensity);
+    gain_ = std::pow(10.f, db * intensity / 20.f);
+}
+
+void EmotionShaper::Process(std::vector<float>& chunk) {
+    if (chunk.empty()) return;
+    if (std::abs(ratio_ - 1.0) < 1e-4) {
+        for (auto& s : chunk) s = std::clamp(s * gain_, -1.f, 1.f);
+        return;
+    }
+    // Interpolation linéaire continue d'un morceau à l'autre : l'échantillon « -1 » est le dernier du
+    // morceau précédent, pos_ est relatif au début du morceau courant.
+    std::vector<float> out;
+    out.reserve(static_cast<size_t>(static_cast<double>(chunk.size()) / ratio_) + 2);
+    const auto at = [&](long i) { return i < 0 ? (havePrev_ ? prev_ : chunk[0]) : chunk[static_cast<size_t>(i)]; };
+    while (pos_ < static_cast<double>(chunk.size()) - 1.0) {
+        const long k = static_cast<long>(std::floor(pos_));
+        const float f = static_cast<float>(pos_ - static_cast<double>(k));
+        out.push_back(std::clamp((at(k) * (1.f - f) + at(k + 1) * f) * gain_, -1.f, 1.f));
+        pos_ += ratio_;
+    }
+    pos_ -= static_cast<double>(chunk.size());
+    prev_ = chunk.back();
+    havePrev_ = true;
+    chunk.swap(out);
+}
+
 float Spontaneity::GlitchChance(SpeakingStyle s, float quirks) noexcept {
     float f = 0.f;
     switch (s) {
@@ -226,6 +268,7 @@ float Spontaneity::GlitchChance(SpeakingStyle s, float quirks) noexcept {
         case SpeakingStyle::Bright: f = 1.3f; break;
         case SpeakingStyle::Amused: f = 1.2f; break;
         case SpeakingStyle::Surprised: f = 1.6f; break;  // le choc le fait planter
+        case SpeakingStyle::Annoyed: f = 1.2f; break;
         default: f = 0.f;                               // doux / calme : jamais quand il console
     }
     return std::clamp(quirks, 0.f, 1.f) * 0.14f * f;
@@ -240,6 +283,7 @@ Vocal Spontaneity::Lead(SpeakingStyle s, std::uint32_t& rng) noexcept {
     switch (s) {
         case SpeakingStyle::Amused: return r < 0.45f ? Vocal::Chuckle : r < 0.6f ? Vocal::Laugh : Vocal::Count;
         case SpeakingStyle::Surprised: return r < 0.4f ? Vocal::Gasp : Vocal::Count;
+        case SpeakingStyle::Annoyed: return r < 0.35f ? Vocal::Sigh : Vocal::Count;  // « pfff… »
         default: return Vocal::Count;
     }
 }

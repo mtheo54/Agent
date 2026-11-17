@@ -383,6 +383,8 @@ struct VoiceEngine::Impl {
     // Expressivité : sons humains, spontanéité, bugs de robot (thread de synthèse uniquement)
     VocalBank vocals;
     RobotGlitcher glitcher;
+    EmotionShaper shaper;
+    std::atomic<float> emotionIntensity{1.f};
     std::atomic<float> quirks{0.5f};
     std::uint32_t vrng = 0x5EEDu;
     std::chrono::steady_clock::time_point lastGlitch{}, lastCough{}, lastLead{};
@@ -441,6 +443,7 @@ struct VoiceEngine::Impl {
             case SpeakingStyle::Calm: lengthMul = 1.06f; noiseMul = 0.85f; moodDelta = -0.15f; break;
             case SpeakingStyle::Amused: lengthMul = 0.95f; noiseMul = 1.25f; moodDelta = 0.15f; break;
             case SpeakingStyle::Surprised: lengthMul = 0.9f; noiseMul = 1.3f; moodDelta = 0.25f; break;
+            case SpeakingStyle::Annoyed: lengthMul = 0.94f; noiseMul = 1.15f; moodDelta = 0.2f; break;
             default: lengthMul = 1.f; noiseMul = 1.f; moodDelta = 0.f; break;
         }
     }
@@ -706,11 +709,14 @@ struct VoiceEngine::Impl {
         float lengthMul, noiseMul, moodDelta;
         StyleParams(style, lengthMul, noiseMul, moodDelta);
         bool done = false;
+        shaper.Set(style, emotionIntensity.load());
+        shaper.Reset();
         if (UseNeural()) {
             const float jitter = (NextRandom(vrng) - 0.5f) * 0.12f;  // jamais deux fois la même intonation
             done = neural.Speak(text, style, [&](std::span<const float> pcm) {
                 if (speechGeneration.load() != generation) return false;  // interrompu : on arrête le décodeur
                 std::vector<float> chunk(pcm.begin(), pcm.end());
+                shaper.Process(chunk);
                 glitcher.Process(chunk);
                 PushAudio(chunk, generation);
                 return true;
@@ -756,11 +762,14 @@ struct VoiceEngine::Impl {
                 lastLead = now;
             }
         }
-        // … et de temps en temps, il s'éclaircit la « gorge » avant de parler.
+        // … et de temps en temps, il s'éclaircit la « gorge » (ou tousse) avant de parler.
         if (!parts.empty() && !parts.front().isVocal && now - lastCough > std::chrono::minutes(3) &&
-            NextRandom(vrng) < Spontaneity::CoughChance(style, q) && vocals.Has(Vocal::Cough)) {
-            parts.insert(parts.begin(), SpeechPart{true, Vocal::Cough, {}});
-            lastCough = now;
+            NextRandom(vrng) < Spontaneity::CoughChance(style, q)) {
+            const Vocal v = vocals.Has(Vocal::Throat) && NextRandom(vrng) < 0.7f ? Vocal::Throat : Vocal::Cough;
+            if (vocals.Has(v)) {
+                parts.insert(parts.begin(), SpeechPart{true, v, {}});
+                lastCough = now;
+            }
         }
 
         bool forceGlitch = false;
@@ -992,6 +1001,7 @@ void VoiceEngine::SetNeuralVoice(bool enabled, bool inGame) noexcept {
 }
 bool VoiceEngine::HasNeuralVoice() const noexcept { return impl_->neural.Ready(); }
 void VoiceEngine::SetQuirks(float quirks01) noexcept { impl_->quirks = std::clamp(quirks01, 0.f, 1.f); }
+void VoiceEngine::SetEmotionIntensity(float intensity) noexcept { impl_->emotionIntensity = std::clamp(intensity, 0.f, 1.5f); }
 
 bool VoiceEngine::HasStt() const noexcept {
 #if COMPANION_WITH_WHISPER

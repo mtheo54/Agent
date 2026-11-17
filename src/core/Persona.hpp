@@ -4,6 +4,7 @@
 
 #include "audio/SpeakingStyle.hpp"
 
+#include <algorithm>
 #include <format>
 #include <map>
 #include <vector>
@@ -87,7 +88,7 @@ inline std::string PersonaPrompt(const std::string& name, int tone = 2) {
         "bas-médiums, le kick bouffe la basse, mets un coup de side-chain, ça sonne carton, ça frise, ça "
         "respire pas, ça pompe trop. Avis tranchés sur la direction artistique, le beatmaking et le mixage.\n"
         "Tu es un robot avec des réactions humaines : tu peux écrire (rire), (petit rire), (soupir), "
-        "(tousse) ou (bug) là où tu les ferais vraiment, au plus une fois par réponse et seulement si "
+        "(tousse), (se racle la gorge) ou (bug) là où tu les ferais vraiment, au plus une fois par réponse et seulement si "
         "c'est naturel (une vanne, une surprise, un truc absurde). Jamais de rire si l'utilisateur va mal.\n"
         "Si le contexte donne le [Ton de voix] de l'utilisateur, adapte-toi sans le souligner : doux et "
         "rassurant s'il est triste ou fatigué (et là, pas de vannes), calme et posé s'il est énervé ou "
@@ -113,10 +114,15 @@ inline const std::map<std::string, std::vector<std::string>>& BackchannelPhrases
 // Geste de l'avatar suggéré par le début de SA réponse (comme un humain qui hoche la tête en disant oui).
 // Intonation de toute une réponse, d'après son début : une réponse drôle se dit en riant à moitié.
 // Si l'utilisateur est triste ou énervé (style doux / calme), on garde ce ton-là.
-inline SpeakingStyle ReplyStyle(const std::string& expression, SpeakingStyle base) {
+inline SpeakingStyle ReplyStyle(const std::string& expression, SpeakingStyle base, std::string text = {}) {
     if (base == SpeakingStyle::Soft || base == SpeakingStyle::Calm) return base;
     if (expression == "laugh") return SpeakingStyle::Amused;
     if (expression == "surprised") return SpeakingStyle::Surprised;
+    for (auto& c : text) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    for (const char* w : {"t'es sérieux", "arrête", "t'abuses", "c'est pas possible", "n'importe quoi", "t'écoutes rien",
+                          "sérieusement", "laisse tomber", "(soupir", "pff"})
+        if (text.find(w) != std::string::npos) return SpeakingStyle::Annoyed;
+    if (expression == "clap" || std::count(text.begin(), text.end(), '!') >= 2) return SpeakingStyle::Bright;
     return base;
 }
 

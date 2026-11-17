@@ -147,6 +147,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     voice.SetBaseSpeechRate(cfg.speechRate);
     voice.SetEmotionDetection(cfg.emotionDetection);
     voice.SetQuirks(cfg.voiceQuirks);
+    voice.SetEmotionIntensity(0.4f + cfg.expressiveness);  // EXPRESSIVITÉ : gestes ET émotion dans la voix
     Phrases phrases;  // répliques par ton (assets/persona/phrases.json)
     phrases.Load(root / L"assets" / L"persona" / L"phrases.json");
     phrases.SetTone(static_cast<Tone>(cfg.tone));
@@ -231,6 +232,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
         voice.SetEmotionDetection(cfg.emotionDetection);
         voice.SetNeuralVoice(cfg.neuralVoice, cfg.neuralVoiceInGame);
         voice.SetQuirks(cfg.voiceQuirks);
+        voice.SetEmotionIntensity(0.4f + cfg.expressiveness);
         if (toneChanged) {
             phrases.SetTone(static_cast<Tone>(cfg.tone));
             voice.PrepareBackchannels(backchannels());

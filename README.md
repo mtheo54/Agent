@@ -72,8 +72,11 @@ Il a ses animations selon ce qu'il fait :
   avant lecture (« -4.1 LUFS » → « moins quatre virgule un LUFS »).
   Pour lui donner une autre voix : remplace ces fichiers (WAV 24 kHz mono + texte exact).
 - **Réactions humaines… et bugs de robot** (réglage `TICS & BUGS`, clé `voiceQuirks`) :
-  - vrais sons dans sa voix (`assets/voice/omnis/vocal/`) : rires, petit rire, soupir, « hmm », toux, « oh ! » ;
-    le modèle peut les placer avec `(rire)`, `(soupir)`, `(tousse)`, `(bug)`…, jamais prononcés ;
+  - **vrais** rires, petits rires, toux, raclements de gorge et soupirs humains (corpus VocalSound, CC BY-SA),
+    plus « hmm » et « oh ! » dans sa voix (`assets/voice/omnis/vocal/`) ; le modèle peut les placer avec
+    `(rire)`, `(soupir)`, `(tousse)`, `(se racle la gorge)`, `(bug)`…, jamais prononcés ;
+  - **émotions exagérées** comme chez un humain (réglage EXPRESSIVITÉ) : excité, il parle plus vite, plus
+    haut et plus fort ; doux ou calme, plus lentement, plus bas ; 7 intonations (dont *agacé*) ;
   - spontanéité : une réponse drôle se dit en riant à moitié (prise `amused`), une surprise avec la voix qui
     monte (`surprised`), parfois précédée d'un petit rire ou d'un « oh ! » ;
   - de temps en temps une syllabe accroche comme un buffer qui saute (« je s-s-suis »), grain numérique qui
@@ -88,6 +91,10 @@ Il a ses animations selon ce qu'il fait :
   gros mots normaux, il te chambre et t'insulte gentiment (bouffon, gros naze, « -1000 aura »), jamais sur
   tes origines, ta religion, ta sexualité, ton physique ou un handicap. Humour un peu sombre, jamais sur le
   suicide ni quand tu vas vraiment mal (là, pas de vannes).
+- **Rage bait** (sans filtre) : de temps en temps (au plus une fois toutes les 10 min), il te provoque avec
+  une mauvaise foi parfaitement sérieuse (« FL Studio c'est un logiciel pour enfants », « la jungle c'est
+  le rôle des gens qui savent pas laner », « la pizza ananas c'est la meilleure »). Si tu mords, il avoue en
+  se marrant et te chambre de t'être fait avoir. Jamais si tu vas mal, jamais pendant un avis de mixage.
 - **Memes TikTok du moment** (`assets/persona/memes.json`, français surtout, anglais aussi, quelques-uns
   sombres) : de temps en temps, 2-3 lui sont proposés et il en place un si ça colle. Mis à jour en
   novembre 2026 ; les memes meurent vite, édite le fichier pour en ajouter ou en retirer. Toutes ses répliques toutes faites (alertes, confirmations, relances)

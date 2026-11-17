@@ -93,6 +93,8 @@ public:
     void SetNeuralVoice(bool enabled, bool inGame) noexcept;
     // Tics humains et bugs de robot (rires spontanés, toux, syllabe qui accroche) : 0 jamais … 1 souvent.
     void SetQuirks(float quirks01) noexcept;
+    // Exagération des émotions dans la voix (vitesse, hauteur, volume) : 0 … 1,5.
+    void SetEmotionIntensity(float intensity) noexcept;
     [[nodiscard]] bool HasNeuralVoice() const noexcept;  // voix neuronale chargée
 
     [[nodiscard]] bool HasStt() const noexcept;

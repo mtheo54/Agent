@@ -131,7 +131,7 @@ bool NeuralVoice::Load(const NeuralVoiceConfig& cfg) {
     }
 
     // Prises de référence : extraites une fois au chargement (empreinte + codes), réutilisées à chaque phrase.
-    constexpr std::array<const char*, kSpeakingStyleCount> names{"normal", "bright", "soft", "calm", "amused", "surprised"};
+    constexpr std::array<const char*, kSpeakingStyleCount> names{"normal", "bright", "soft", "calm", "amused", "surprised", "annoyed"};
     for (size_t i = 0; i < names.size(); ++i) {
         std::vector<float> pcm;
         int rate = 0;

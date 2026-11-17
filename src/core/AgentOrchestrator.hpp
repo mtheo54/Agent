@@ -41,6 +41,7 @@
 #include <functional>
 #include <mutex>
 #include <map>
+#include <optional>
 #include <stop_token>
 #include <string>
 #include <thread>
@@ -156,6 +157,11 @@ private:
     MixLexicon lexicon_;  // jargon de beatmaker (lexique d'OMNIS)
     MemeBank memes_;      // memes TikTok FR / EN du moment (assets/persona/memes.json)
     [[nodiscard]] std::string MemeHint();
+    [[nodiscard]] std::string RageBaitHint(const std::string& userText);
+    std::chrono::steady_clock::time_point lastBait_{};
+    bool baitPending_ = false;
+    std::uint32_t baitRng_ = 0xBA17u;
+    std::optional<SpeakingStyle> forcedReplyStyle_;  // prochaine réponse (ex. il se marre après un rage bait)
     bool studioFocus_ = false;  // question studio ciblée en cours (thread de l'orchestrateur)
     void RememberOpener(const std::string& reply);
     [[nodiscard]] std::string OpenerHint() const;
