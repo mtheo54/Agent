@@ -1,6 +1,7 @@
 #pragma once
 // OverlayWindow : fenêtre Win32 transparente, toujours au premier plan, click-through,
-// rendue en D3D11 via une swapchain DirectComposition (alpha pré-multiplié).
+// dessinée en Direct2D dans une swapchain DirectComposition (alpha pré-multiplié).
+// Le périphérique D3D11 ne sert que de support à DXGI / DirectComposition / Direct2D.
 //
 // Pourquoi DirectComposition : DXGI_ALPHA_MODE_PREMULTIPLIED n'est PAS supporté par
 // CreateSwapChainForHwnd (seulement par CreateSwapChainForComposition). La combinaison
@@ -14,6 +15,7 @@
 // plupart des jeux DX12 sous Windows 11), pas au-dessus d'un plein écran exclusif.
 
 #include <windows.h>
+#include <d2d1_1.h>
 #include <d3d11.h>
 #include <dcomp.h>
 #include <dxgi1_3.h>
@@ -24,11 +26,10 @@ namespace companion {
 class OverlayWindow {
 public:
     struct Desc {
-        int width = 320;
+        int width = 320;    // taille logique (à 100 %) ; multipliée par l'échelle DPI de l'écran
         int height = 420;
         int marginX = 24;   // distance au bord droit de la zone de travail
         int marginY = 24;   // distance au bord bas
-        UINT msaaSamples = 4;
     };
 
     OverlayWindow() = default;
@@ -42,21 +43,20 @@ public:
     void SetVisible(bool visible);
     [[nodiscard]] bool IsVisible() const noexcept { return visible_; }
 
-    // Lie la cible MSAA + profondeur et l'efface en transparent (0,0,0,0).
-    void BeginFrame();
-    // Résout le MSAA dans le back buffer et présente (sans attente VSync bloquante).
+    // Cible Direct2D = back buffer, effacée en transparent. Retourne le contexte de dessin.
+    ID2D1DeviceContext* BeginFrame();
+    // Termine le dessin et présente (sans attente VSync bloquante).
     void EndFrame();
 
     [[nodiscard]] HWND Hwnd() const noexcept { return hwnd_; }
     [[nodiscard]] ID3D11Device* Device() const noexcept { return device_.Get(); }
-    [[nodiscard]] ID3D11DeviceContext* Context() const noexcept { return context_.Get(); }
-    [[nodiscard]] int Width() const noexcept { return desc_.width; }
-    [[nodiscard]] int Height() const noexcept { return desc_.height; }
+    [[nodiscard]] ID2D1Factory1* D2DFactory() const noexcept { return d2dFactory_.Get(); }
+    [[nodiscard]] float Scale() const noexcept { return scale_; }  // DPI / 96
 
 private:
     bool CreateDevice();
     bool CreateSwapChainAndComposition();
-    bool CreateTargets();
+
     static LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 
     Desc desc_{};
@@ -71,10 +71,11 @@ private:
     Microsoft::WRL::ComPtr<IDCompositionTarget> dcompTarget_;
     Microsoft::WRL::ComPtr<IDCompositionVisual> dcompVisual_;
 
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> msaaColor_;
-    Microsoft::WRL::ComPtr<ID3D11RenderTargetView> msaaRtv_;
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> depth_;
-    Microsoft::WRL::ComPtr<ID3D11DepthStencilView> dsv_;
+    Microsoft::WRL::ComPtr<ID2D1Factory1> d2dFactory_;
+    Microsoft::WRL::ComPtr<ID2D1Device> d2dDevice_;
+    Microsoft::WRL::ComPtr<ID2D1DeviceContext> d2dContext_;
+    float scale_ = 1.f;
+    int pixelWidth_ = 0, pixelHeight_ = 0;
 };
 
 }  // namespace companion

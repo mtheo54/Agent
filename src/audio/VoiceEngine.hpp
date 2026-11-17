@@ -65,7 +65,7 @@ public:
 
     // --- Expression ---
     void SetMood(float mood01) noexcept;           // module l'intensité 8-bit
-    [[nodiscard]] float VoiceRms() const noexcept;  // pour ProceduralAvatar (thread-safe)
+    [[nodiscard]] float VoiceRms() const noexcept;  // pour CartoonAvatar (thread-safe)
     void SetGamingMode(bool gaming) noexcept;       // réduit les threads STT
 
     [[nodiscard]] bool HasStt() const noexcept;

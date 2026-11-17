@@ -1,6 +1,7 @@
 // CompanionAI — point d'entrée.
 //
-// Étape 1 : ResourceGovernor, voix (STT/TTS + VoiceFX 8-bit), overlay DX11 + avatar.
+// Étape 1 : ResourceGovernor, voix (STT/TTS + VoiceFX 8-bit), overlay transparent + avatar
+//           (personnage 2D anime x cartoon à 24 i/s, décrit dans assets/avatar/rig.json).
 // Étape 2 : cerveau local d'abord — AgentOrchestrator (niveaux 0 / 1 / web local / Claude),
 //           LocalBrain (llama.cpp), MemoryDB (SQLite), PermissionGate, coach LoL (API locale Riot).
 // Étape 3 : studio (WasapiLoopback + OmnisAnalyzer), vision (capture DXGI, locale puis Claude),
@@ -29,7 +30,7 @@
 #include "network/HttpClient.hpp"
 #include "network/WebResearcher.hpp"
 #include "render/OverlayWindow.hpp"
-#include "render/ProceduralAvatar.hpp"
+#include "render/CartoonAvatar.hpp"
 
 #include <windows.h>
 #include <objbase.h>
@@ -108,10 +109,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
         MessageBoxW(nullptr, L"Impossible de créer l'overlay DirectX 11.", L"CompanionAI", MB_ICONERROR);
         return 1;
     }
-    ProceduralAvatar avatar;
-    if (!avatar.Initialize(overlay.Device(), root / L"shaders" / L"MatCapShader.hlsl",
-                           root / L"assets" / L"textures" / L"matcap_chrome.png")) {
-        MessageBoxW(nullptr, L"Initialisation de l'avatar impossible (shader ?).", L"CompanionAI", MB_ICONERROR);
+    CartoonAvatar avatar;
+    if (!avatar.Load(root / L"assets" / L"avatar" / L"rig.json")) {
+        MessageBoxW(nullptr, L"assets/avatar/rig.json introuvable ou invalide.", L"CompanionAI", MB_ICONERROR);
         return 1;
     }
 
@@ -176,8 +176,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     bool running = true;
     while (running) {
         const SystemMode m = mode.load();
-        // 30 fps hors jeu, 15 fps en jeu : quelques dizaines de µs GPU par image.
-        const auto frameBudget = std::chrono::milliseconds(m == SystemMode::Gaming ? 66 : 33);
+        // L'animation est à 24 i/s (12 en jeu) : on se réveille au rythme de 24 Hz et l'avatar
+        // dit lui-même quand une nouvelle image est due. Rien n'est redessiné entre deux images.
+        const auto frameBudget = std::chrono::microseconds(41'667);
         const auto waitMs =
             std::chrono::duration_cast<std::chrono::milliseconds>(frameBudget - (clock::now() - last)).count();
         MsgWaitForMultipleObjectsEx(0, nullptr, static_cast<DWORD>(std::max<long long>(0, waitMs)), QS_ALLINPUT,
@@ -223,12 +224,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
         else if (m == SystemMode::Studio) state = AvatarState::Studio;
         avatar.SetState(state);
         if (waveRequested.exchange(false)) avatar.Wave();
-        avatar.Update(dt, voice.VoiceRms());
+        const bool newFrame = avatar.Update(dt, voice.VoiceRms());
 
-        if (overlay.IsVisible()) {
-            overlay.BeginFrame();
-            avatar.Render(overlay.Context(), static_cast<float>(overlay.Width()) / static_cast<float>(overlay.Height()));
-            overlay.EndFrame();
+        if (newFrame && overlay.IsVisible()) {
+            if (ID2D1DeviceContext* ctx = overlay.BeginFrame()) {
+                avatar.Render(ctx, overlay.D2DFactory(), overlay.Scale());
+                overlay.EndFrame();
+            }
         }
     }
 

@@ -119,7 +119,7 @@ add_executable(CompanionAI WIN32
     src/network/WebResearcher.cpp
     src/audio/VoiceEngine.cpp
     src/render/OverlayWindow.cpp
-    src/render/ProceduralAvatar.cpp
+    src/render/CartoonAvatar.cpp
 )
 
 target_include_directories(CompanionAI PRIVATE src)
@@ -145,7 +145,7 @@ endif()
 target_link_libraries(CompanionAI PRIVATE
     nlohmann_json::nlohmann_json
     sqlite3
-    d3d11 dxgi dcomp d3dcompiler
+    d3d11 dxgi dcomp d2d1
     ole32 oleaut32 uuid avrt pdh shell32 user32 windowscodecs winhttp advapi32
     $<$<BOOL:${COMPANION_WITH_LLAMA}>:llama>
     $<$<BOOL:${COMPANION_WITH_LLAMA}>:mtmd>
@@ -159,14 +159,9 @@ if(COMPANION_WITH_ONNX AND COMPANION_WITH_ESPEAK)
 endif()
 
 # ----------------------------------------------------------------------------
-# Post-build : shaders (compilés au runtime via d3dcompiler_47, présent dans Win10/11),
-# DLL et modèles copiés à côté de l'exécutable.
+# Post-build : assets (personnage 2D, modèles) et DLL copiés à côté de l'exécutable.
 # ----------------------------------------------------------------------------
 add_custom_command(TARGET CompanionAI POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:CompanionAI>/shaders"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/src/render/MatCapShader.hlsl"
-            "$<TARGET_FILE_DIR:CompanionAI>/shaders/MatCapShader.hlsl"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_SOURCE_DIR}/assets" "$<TARGET_FILE_DIR:CompanionAI>/assets")
 

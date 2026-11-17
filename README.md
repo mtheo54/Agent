@@ -1,12 +1,39 @@
 # CompanionAI (héritage OMNIS)
 
-- **Étape 1** : `ResourceGovernor`, `VoiceEngine` + `VoiceFX`, `OverlayWindow` + `ProceduralAvatar` + `MatCapShader.hlsl`.
+- **Étape 1** : `ResourceGovernor`, `VoiceEngine` + `VoiceFX`, `OverlayWindow` (overlay transparent click-through).
 - **Étape 2** : cerveau « local d'abord » — `AgentOrchestrator`, `LocalBrain` (llama.cpp), `MemoryDB` (SQLite),
   `PermissionGate`, `WebResearcher` (wikis en liste blanche), `ClaudeClient` (dernier recours), `GameCoach` (LoL).
 - **Étape 3** : studio (`WasapiLoopback` + `OmnisAnalyzer`), vision (capture DXGI, analysée en local puis
   Claude Vision en secours), conseiller de build LoL local, `SystemControl` (volume, musique, applis).
 - **Étape 4** : `SelfTrainer` — auto-entraînement pendant l'inactivité du PC, dans un processus isolé ;
-  avatar « bonhomme chromé » gris, sans visage, qui salue.
+  personnage 2D animé (voir ci-dessous).
+
+## Le personnage
+
+Un bonhomme chromé gris, sans visage, **dessiné en 2D** (entre l'anime et le cartoon) et animé à
+**24 images par seconde** (12 en jeu) : aplats avec ombre nette, reflets blancs, contour sombre,
+écrasement/étirement, émotes. Il a ses animations selon ce qu'il fait :
+
+| Animation | Quand |
+|---|---|
+| `idle` | au repos (respiration) |
+| `wave` | au démarrage et quand tu dis « salut » |
+| `talk` | quand il parle (il rebondit aussi sur sa voix) |
+| `listen` | quand tu parles : main à l'oreille, ondes sonores |
+| `think` | recherche / Claude : main au menton, « … » |
+| `train` | auto-entraînement : footing sur place, goutte de sueur |
+| `studio` | dans FL Studio : la tête suit le rythme, notes de musique |
+
+Tout est dans `assets/avatar/rig.json` (squelette, formes, palette, images clés). Pour régler une
+animation sans recompiler, rends-la en vidéo avec le même algorithme de dessin :
+
+```bash
+pip install pycairo
+```
+
+```bash
+python tools/avatar_preview.py --sequence idle,wave,talk --out apercu.mp4
+```
 
 ## Auto-entraînement (étape 4)
 
@@ -80,8 +107,7 @@ nlohmann_json et SQLite sont récupérés automatiquement (FetchContent). Chaque
 - `ggml-base-q5_1.bin` : Whisper base quantifié (~60 Mo)
 - `fr_FR-siwis-medium.onnx` + `fr_FR-siwis-medium.onnx.json` : voix Piper française
 - `espeak-ng-data/` à côté de l'exécutable
-- `assets/textures/matcap_chrome.png` : texture chrome 256x256 (fournie ; régénérable avec
-  `gen_matcap.py`). Si elle manque, l'avatar génère un chrome équivalent en C++.
+- `assets/avatar/rig.json` : le personnage 2D (fourni).
 
 ## Build (Visual Studio 2022, x64)
 

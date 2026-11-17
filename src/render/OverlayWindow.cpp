@@ -26,12 +26,15 @@ bool OverlayWindow::Create(HINSTANCE instance, const Desc& desc) {
 
     RECT work{};
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
-    const int x = work.right - desc.width - desc.marginX;
-    const int y = work.bottom - desc.height - desc.marginY;
+    scale_ = static_cast<float>(GetDpiForSystem()) / 96.f;  // 150 % sur un écran 4K : personnage net
+    pixelWidth_ = static_cast<int>(desc.width * scale_);
+    pixelHeight_ = static_cast<int>(desc.height * scale_);
+    const int x = work.right - pixelWidth_ - static_cast<int>(desc.marginX * scale_);
+    const int y = work.bottom - pixelHeight_ - static_cast<int>(desc.marginY * scale_);
 
     const DWORD exStyle = WS_EX_NOREDIRECTIONBITMAP | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST |
                           WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
-    hwnd_ = CreateWindowExW(exStyle, kWindowClass, L"Companion", WS_POPUP, x, y, desc.width, desc.height,
+    hwnd_ = CreateWindowExW(exStyle, kWindowClass, L"Companion", WS_POPUP, x, y, pixelWidth_, pixelHeight_,
                             nullptr, nullptr, instance, this);
     if (!hwnd_) {
         log::Info("Overlay: CreateWindowEx a échoué ({})", GetLastError());
@@ -40,7 +43,7 @@ bool OverlayWindow::Create(HINSTANCE instance, const Desc& desc) {
     // Opacité globale 100 % : le contenu DirectComposition porte la transparence par pixel.
     SetLayeredWindowAttributes(hwnd_, 0, 255, LWA_ALPHA);
 
-    if (!CreateDevice() || !CreateSwapChainAndComposition() || !CreateTargets()) {
+    if (!CreateDevice() || !CreateSwapChainAndComposition()) {
         Destroy();
         return false;
     }
@@ -50,7 +53,7 @@ bool OverlayWindow::Create(HINSTANCE instance, const Desc& desc) {
 
 void OverlayWindow::Destroy() {
     if (context_) context_->ClearState();
-    dsv_.Reset(); depth_.Reset(); msaaRtv_.Reset(); msaaColor_.Reset();
+    d2dContext_.Reset(); d2dDevice_.Reset(); d2dFactory_.Reset();
     dcompVisual_.Reset(); dcompTarget_.Reset(); dcompDevice_.Reset();
     swapChain_.Reset(); context_.Reset(); device_.Reset();
     if (hwnd_) { DestroyWindow(hwnd_); hwnd_ = nullptr; }
@@ -83,6 +86,20 @@ bool OverlayWindow::CreateDevice() {
     if (SUCCEEDED(device_.As(&dxgiDevice))) dxgiDevice->SetGPUThreadPriority(-7);
     ComPtr<IDXGIDevice1> dxgiDevice1;
     if (SUCCEEDED(device_.As(&dxgiDevice1))) dxgiDevice1->SetMaximumFrameLatency(1);
+
+    // Direct2D sur le même périphérique (dessin vectoriel anticrénelé du personnage).
+    D2D1_FACTORY_OPTIONS opts{};
+#ifdef _DEBUG
+    opts.debugLevel = D2D1_DEBUG_LEVEL_INFORMATION;
+#endif
+    if (FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, __uuidof(ID2D1Factory1), &opts,
+                                 reinterpret_cast<void**>(d2dFactory_.GetAddressOf()))) ||
+        FAILED(d2dFactory_->CreateDevice(dxgiDevice.Get(), &d2dDevice_)) ||
+        FAILED(d2dDevice_->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &d2dContext_))) {
+        log::Info("Overlay: Direct2D indisponible");
+        return false;
+    }
+    d2dContext_->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     return true;
 }
 
@@ -97,8 +114,8 @@ bool OverlayWindow::CreateSwapChainAndComposition() {
     if (FAILED(CreateDXGIFactory2(factoryFlags, IID_PPV_ARGS(&factory)))) return false;
 
     DXGI_SWAP_CHAIN_DESC1 sc{};
-    sc.Width = static_cast<UINT>(desc_.width);
-    sc.Height = static_cast<UINT>(desc_.height);
+    sc.Width = static_cast<UINT>(pixelWidth_);
+    sc.Height = static_cast<UINT>(pixelHeight_);
     sc.Format = kColorFormat;
     sc.SampleDesc = {1, 0};
     sc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
@@ -120,49 +137,26 @@ bool OverlayWindow::CreateSwapChainAndComposition() {
     return SUCCEEDED(dcompDevice_->Commit());
 }
 
-bool OverlayWindow::CreateTargets() {
-    // Cible MSAA 4x : bords de l'avatar lissés. La résolution MSAA de couleurs pré-multipliées
-    // donne des bords semi-transparents corrects sur le bureau ou le jeu.
-    UINT quality = 0;
-    UINT samples = desc_.msaaSamples;
-    while (samples > 1 && (FAILED(device_->CheckMultisampleQualityLevels(kColorFormat, samples, &quality)) || quality == 0))
-        samples /= 2;
-    desc_.msaaSamples = samples;
-
-    D3D11_TEXTURE2D_DESC td{};
-    td.Width = static_cast<UINT>(desc_.width);
-    td.Height = static_cast<UINT>(desc_.height);
-    td.MipLevels = 1;
-    td.ArraySize = 1;
-    td.Format = kColorFormat;
-    td.SampleDesc = {samples, 0};
-    td.Usage = D3D11_USAGE_DEFAULT;
-    td.BindFlags = D3D11_BIND_RENDER_TARGET;
-    if (FAILED(device_->CreateTexture2D(&td, nullptr, &msaaColor_))) return false;
-    if (FAILED(device_->CreateRenderTargetView(msaaColor_.Get(), nullptr, &msaaRtv_))) return false;
-
-    td.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
-    td.BindFlags = D3D11_BIND_DEPTH_STENCIL;
-    if (FAILED(device_->CreateTexture2D(&td, nullptr, &depth_))) return false;
-    return SUCCEEDED(device_->CreateDepthStencilView(depth_.Get(), nullptr, &dsv_));
-}
-
-void OverlayWindow::BeginFrame() {
-    constexpr float transparent[4] = {0.f, 0.f, 0.f, 0.f};
-    ID3D11RenderTargetView* rtv = msaaRtv_.Get();
-    context_->OMSetRenderTargets(1, &rtv, dsv_.Get());
-    context_->ClearRenderTargetView(msaaRtv_.Get(), transparent);
-    context_->ClearDepthStencilView(dsv_.Get(), D3D11_CLEAR_DEPTH, 1.f, 0);
-    D3D11_VIEWPORT vp{0.f, 0.f, static_cast<float>(desc_.width), static_cast<float>(desc_.height), 0.f, 1.f};
-    context_->RSSetViewports(1, &vp);
+ID2D1DeviceContext* OverlayWindow::BeginFrame() {
+    // Flip model : GetBuffer(0) désigne toujours le back buffer courant.
+    ComPtr<IDXGISurface> surface;
+    if (FAILED(swapChain_->GetBuffer(0, IID_PPV_ARGS(&surface)))) return nullptr;
+    const D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
+        D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+        D2D1::PixelFormat(kColorFormat, D2D1_ALPHA_MODE_PREMULTIPLIED), 96.f, 96.f);
+    ComPtr<ID2D1Bitmap1> target;
+    if (FAILED(d2dContext_->CreateBitmapFromDxgiSurface(surface.Get(), &props, &target))) return nullptr;
+    d2dContext_->SetTarget(target.Get());
+    d2dContext_->BeginDraw();
+    d2dContext_->Clear(D2D1::ColorF(0.f, 0.f, 0.f, 0.f));
+    return d2dContext_.Get();
 }
 
 void OverlayWindow::EndFrame() {
-    ComPtr<ID3D11Texture2D> backBuffer;
-    if (SUCCEEDED(swapChain_->GetBuffer(0, IID_PPV_ARGS(&backBuffer))))
-        context_->ResolveSubresource(backBuffer.Get(), 0, msaaColor_.Get(), 0, kColorFormat);
-    // SyncInterval 0 : DWM compose de toute façon (pas de tearing) ; la cadence est
-    // fixée par la boucle principale (30 fps / 15 fps en jeu), pas par le taux du moniteur.
+    d2dContext_->EndDraw();
+    d2dContext_->SetTarget(nullptr);
+    // SyncInterval 0 : DWM compose de toute façon (pas de tearing) ; la cadence (24 ou 12 i/s)
+    // est fixée par l'animation, pas par le taux de rafraîchissement du moniteur.
     swapChain_->Present(0, 0);
 }
 
