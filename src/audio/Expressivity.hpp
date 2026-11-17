@@ -46,30 +46,56 @@ private:
     std::array<size_t, static_cast<size_t>(Vocal::Count)> last_{};
 };
 
-// Bugs de robot appliqués à l'audio au fil du streaming.
+// Bugs de robot appliqués à l'audio au fil du streaming. Plusieurs par phrase, de 9 types :
+//   Stutter   syllabe qui accroche (« je s-s-suis »), de plus en plus numérique
+//   TapeStop  la bande ralentit et s'arrête, puis repart
+//   Chipmunk  bout de syllabe rejoué une octave plus haut, en accéléré
+//   Dropout   coupure de buffer (30-90 ms de silence)
+//   Skip      le flux saute 40-120 ms en avant
+//   BitBurst  éclat numérique : 4-6 bits, échantillons tenus
+//   Warble    la voix ondule (vibrato numérique 9-14 Hz)
+//   Reverse   un bout de syllabe à l'envers
+//   RingMod   flash « voix de robot » (modulation en anneau 40-90 Hz)
+// Coût : O(n) par morceau, en place, aucune allocation après le premier morceau (tampons réservés).
 class RobotGlitcher {
 public:
-    void Prepare(int sampleRate) noexcept { rate_ = sampleRate; }
-    // Nouvelle phrase : décide s'il y aura un bug, et où. quirks 0 … 1 (réglage), force = balise (bug).
-    void Plan(SpeakingStyle style, float quirks, std::uint32_t& rng, bool force = false);
-    // Traite un morceau ; peut l'allonger (répétitions). À appeler dans l'ordre du flux.
-    void Process(std::vector<float>& chunk);
-    // Version « tout d'un coup » (Piper, sons) : applique le bug prévu sur le tampon entier.
-    void ProcessAll(std::vector<float>& pcm) { Process(pcm); }
-    [[nodiscard]] bool Pending() const noexcept { return armed_; }
+    enum class Kind : std::uint8_t { Stutter, TapeStop, Chipmunk, Dropout, Skip, BitBurst, Warble, Reverse, RingMod, Count };
 
-    // Effet seul (pour la balise (bug) en fin de phrase, ou après une toux) : grésillement court.
+    void Prepare(int sampleRate);
+    // Nouvelle phrase : décide combien de bugs, lesquels et où. quirks 0 … 1 (réglage TICS & BUGS),
+    // force = balise (bug), allowBig = les gros bugs (accroche, bande, accéléré) ne sont pas en pause,
+    // load = charge CPU 0 … 1 (un PC qui rame fait bugger le robot).
+    void Plan(SpeakingStyle style, float quirks, std::uint32_t& rng, bool force = false, bool allowBig = true, float load = 0.f);
+    // Traite un morceau du flux, dans l'ordre ; peut l'allonger ou le raccourcir.
+    void Process(std::vector<float>& chunk);
+    // Un seul bug d'un type donné, à une position donnée (balise (bug), démos, tests).
+    void PlanSingle(Kind kind, std::size_t atSample, std::uint32_t seed);
+    [[nodiscard]] bool Pending() const noexcept { return next_ < count_; }
+    [[nodiscard]] bool UsedBig() const noexcept { return usedBig_; }
+    [[nodiscard]] int Planned() const noexcept { return count_; }
+
+    // Effet seul (balise (bug) en fin de phrase, ou après une toux) : grésillement court.
     static std::vector<float> Burst(std::span<const float> source, int sampleRate, std::uint32_t& rng);
 
 private:
+    struct Event {
+        std::size_t at = 0;  // position dans la phrase (échantillons d'entrée)
+        Kind kind = Kind::Stutter;
+        std::uint16_t lenMs = 60;
+        std::uint8_t reps = 2;
+        std::uint32_t seed = 1;
+    };
+    static constexpr int kMaxEvents = 6;
+    std::array<Event, kMaxEvents> events_{};
+    int count_ = 0, next_ = 0;
+    bool usedBig_ = false;
+    std::size_t seen_ = 0;
     int rate_ = 24000;
-    bool armed_ = false;
-    std::size_t at_ = 0;    // position du bug (échantillons depuis le début de la phrase)
-    std::size_t seen_ = 0;  // échantillons déjà passés
-    int repeats_ = 2;
-    float grainMs_ = 70.f;
-    bool tapeStop_ = false;
-    std::uint32_t seed_ = 1;
+    std::vector<float> grain_, scratch_;  // réservés dans Prepare()
+
+    [[nodiscard]] std::size_t Samples(float ms) const noexcept { return static_cast<std::size_t>(ms * 0.001f * static_cast<float>(rate_)); }
+    std::size_t FindOnset(const std::vector<float>& x, std::size_t from) const noexcept;
+    void Apply(std::vector<float>& chunk, std::size_t pos, const Event& e);
 };
 
 // Exagération des émotions sur la voix synthétisée, au fil du streaming : un humain excité parle plus vite,
@@ -86,6 +112,7 @@ public:
 private:
     double ratio_ = 1.0;  // > 1 : plus vite et plus aigu
     float gain_ = 1.f;
+    std::vector<float> out_;  // tampon réutilisé (échangé avec le morceau : aucune allocation en régime établi)
     double pos_ = 0.0;    // position fractionnaire dans le flux d'entrée (relative au morceau courant)
     float prev_ = 0.f;
     bool havePrev_ = false;

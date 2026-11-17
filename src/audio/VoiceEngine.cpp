@@ -385,6 +385,8 @@ struct VoiceEngine::Impl {
     RobotGlitcher glitcher;
     EmotionShaper shaper;
     std::atomic<float> emotionIntensity{1.f};
+    std::atomic<float> systemLoad{0.f};  // charge CPU (ResourceGovernor) : un PC qui rame fait bugger le robot
+    std::vector<float> chunkBuf;         // morceau de voix en cours de traitement (capacité conservée)
     std::atomic<float> quirks{0.5f};
     std::uint32_t vrng = 0x5EEDu;
     std::chrono::steady_clock::time_point lastGlitch{}, lastCough{}, lastLead{};
@@ -703,9 +705,10 @@ struct VoiceEngine::Impl {
     // Un morceau de texte : voix neuronale (streaming) ou Piper, avec un éventuel bug de robot.
     void SpeakText(const std::string& text, uint32_t generation, SpeakingStyle style, bool forceGlitch) {
         using clock = std::chrono::steady_clock;
-        const bool cooldown = clock::now() - lastGlitch < std::chrono::seconds(45);
-        glitcher.Plan(style, cooldown ? 0.f : quirks.load(), vrng, forceGlitch);
-        const bool planned = glitcher.Pending();
+        // Petits bugs (coupure, saut, éclat, ondulation, envers, voix robot) : à tout moment ; gros bugs
+        // (syllabe qui accroche, bande qui ralentit, accéléré) : au plus un toutes les 20 s.
+        const bool allowBig = forceGlitch || clock::now() - lastGlitch > std::chrono::seconds(20);
+        glitcher.Plan(style, quirks.load(), vrng, forceGlitch, allowBig, systemLoad.load(std::memory_order_relaxed));
         float lengthMul, noiseMul, moodDelta;
         StyleParams(style, lengthMul, noiseMul, moodDelta);
         bool done = false;
@@ -715,10 +718,10 @@ struct VoiceEngine::Impl {
             const float jitter = (NextRandom(vrng) - 0.5f) * 0.12f;  // jamais deux fois la même intonation
             done = neural.Speak(text, style, [&](std::span<const float> pcm) {
                 if (speechGeneration.load() != generation) return false;  // interrompu : on arrête le décodeur
-                std::vector<float> chunk(pcm.begin(), pcm.end());
-                shaper.Process(chunk);
-                glitcher.Process(chunk);
-                PushAudio(chunk, generation);
+                chunkBuf.assign(pcm.begin(), pcm.end());  // tampon réutilisé : aucune allocation en régime établi
+                shaper.Process(chunkBuf);
+                glitcher.Process(chunkBuf);
+                PushAudio(chunkBuf, generation);
                 return true;
             }, jitter);
         }
@@ -734,7 +737,7 @@ struct VoiceEngine::Impl {
             }
         }
 #endif
-        if (planned && !glitcher.Pending()) lastGlitch = clock::now();
+        if (glitcher.UsedBig()) lastGlitch = clock::now();
     }
 
     void PlayVocal(Vocal v, uint32_t generation) {
@@ -855,6 +858,7 @@ bool VoiceEngine::Initialize(const VoiceEngineConfig& cfg) {
     // de suite (Piper répond en attendant), les relances préparées ensuite profitent de la nouvelle voix.
     if (cfg.neuralEnabled) d.Post([&d] { d.neural.Load(d.cfg.neural); });
     d.glitcher.Prepare(static_cast<int>(d.outputRate));
+    d.chunkBuf.reserve(static_cast<size_t>(d.outputRate) * 2);
     d.vrng ^= static_cast<std::uint32_t>(GetTickCount64());
     d.Post([&d] {
         if (d.vocals.Load(d.cfg.neural.voiceDir / L"vocal", static_cast<int>(d.outputRate))) log::Info("VoiceEngine: sons humains prêts");
@@ -1001,6 +1005,7 @@ void VoiceEngine::SetNeuralVoice(bool enabled, bool inGame) noexcept {
 }
 bool VoiceEngine::HasNeuralVoice() const noexcept { return impl_->neural.Ready(); }
 void VoiceEngine::SetQuirks(float quirks01) noexcept { impl_->quirks = std::clamp(quirks01, 0.f, 1.f); }
+void VoiceEngine::SetSystemLoad(float load01) noexcept { impl_->systemLoad.store(std::clamp(load01, 0.f, 1.f), std::memory_order_relaxed); }
 void VoiceEngine::SetEmotionIntensity(float intensity) noexcept { impl_->emotionIntensity = std::clamp(intensity, 0.f, 1.5f); }
 
 bool VoiceEngine::HasStt() const noexcept {

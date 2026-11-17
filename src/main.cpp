@@ -333,12 +333,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
         const float dt = std::chrono::duration<float>(now - last).count();
         last = now;
 
-        // État visuel : interaction en cours d'abord, puis contexte système.
+        // État visuel : interaction en cours d'abord, puis contexte système. Un seul instantané par image.
+        const SystemSnapshot sys = governor.Snapshot();
+        voice.SetSystemLoad(sys.cpuLoad);  // atomique relâché : coût nul
         const AgentActivity activity = orchestrator.Activity();
         AvatarState state = AvatarState::Idle;
         if (voice.IsListening()) state = AvatarState::Listening;
         else if (activity == AgentActivity::Researching || activity == AgentActivity::Cloud) state = AvatarState::Escalating;
-        else if (governor.Snapshot().backgroundWorkActive) state = AvatarState::Training;
+        else if (sys.backgroundWorkActive) state = AvatarState::Training;
         else if (m == SystemMode::Gaming) state = AvatarState::Gaming;
         else if (m == SystemMode::Studio) state = AvatarState::Studio;
         avatar.SetState(state);

@@ -79,9 +79,12 @@ Il a ses animations selon ce qu'il fait :
     haut et plus fort ; doux ou calme, plus lentement, plus bas ; 7 intonations (dont *agacé*) ;
   - spontanéité : une réponse drôle se dit en riant à moitié (prise `amused`), une surprise avec la voix qui
     monte (`surprised`), parfois précédée d'un petit rire ou d'un « oh ! » ;
-  - de temps en temps une syllabe accroche comme un buffer qui saute (« je s-s-suis »), grain numérique qui
-    monte, parfois un ralenti façon bande ; une toux de robot finit en grésillement. Au plus un bug par 45 s,
-    une toux par 3 min, **jamais** quand il console ou calme quelqu'un ;
+  - **bugs de robot**, plusieurs par phrase, 9 types : syllabe qui accroche (« je s-s-suis »), bande qui
+    ralentit, syllabe rejouée en accéléré, coupure de buffer, saut, éclat numérique (4-6 bits), voix qui
+    ondule, bout de syllabe à l'envers, flash « voix de robot ». Réglage par défaut : ~1 phrase sur 4 (1 sur
+    3 quand il est excité), une sur deux au maximum ; gros bugs au plus un toutes les 20 s ; il bugge plus
+    quand ton PC est chargé ; **jamais** quand il console ou calme quelqu'un. Coût mesuré : 0,045 % d'un
+    cœur au pire cas (émotions + bugs + grain 8-bit), aucune allocation mémoire dans la boucle audio.
   - l'intonation varie d'une phrase à l'autre, et il ne recommence pas deux réponses par la même interjection.
 - **En jeu**, la voix passe sur Piper (CPU) pour ne pas prendre de GPU au jeu ; les relances (« hmm… ») et
   répliques courtes restent celles de la voix neuronale, pré-calculées. `neuralVoiceInGame: true` pour la garder.

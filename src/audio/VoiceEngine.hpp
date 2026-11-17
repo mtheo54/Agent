@@ -95,6 +95,7 @@ public:
     void SetQuirks(float quirks01) noexcept;
     // Exagération des émotions dans la voix (vitesse, hauteur, volume) : 0 … 1,5.
     void SetEmotionIntensity(float intensity) noexcept;
+    void SetSystemLoad(float load01) noexcept;  // charge CPU 0 … 1 (plus de bugs quand le PC rame)
     [[nodiscard]] bool HasNeuralVoice() const noexcept;  // voix neuronale chargée
 
     [[nodiscard]] bool HasStt() const noexcept;
