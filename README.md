@@ -64,12 +64,13 @@ Il a ses animations selon ce qu'il fait :
   diction (plus vive, plus douce ou plus posée) et sa posture.
 - **Tu peux lui couper la parole** en écoute continue : il se tait et t'écoute (le décodeur s'arrête net).
 - **Voix neuronale** : Qwen3-TTS 0.6B (Apache 2.0) via qwentts.cpp, sur le GPU (Vulkan), en streaming.
-  Sa voix est **originale** : conçue par description (« jeune homme, accent parisien, timbre chaud et un peu
-  éraillé, ton complice de pote de studio ») avec Qwen3-TTS VoiceDesign, une prise par émotion dans
-  `assets/voice/omnis/` (`normal`, `bright`, `soft`, `calm` + transcription). L'empreinte vocale vient toujours
-  de `normal` (identité stable), l'intonation de la prise qui correspond à l'humeur. Les nombres et unités
-  sont écrits en toutes lettres avant lecture (« -4.1 LUFS » → « moins quatre virgule un LUFS »).
-  Pour lui donner une autre voix : remplace ces 4 fichiers (WAV 24 kHz mono + texte exact).
+  Sa voix part d'un **francophone natif** (corpus CML-TTS, CC-BY 4.0, voir `assets/voice/omnis/SOURCES.md`) :
+  la première voix, inventée par description, avait un accent anglais (le clonage copie l'accent de la
+  référence). Une prise par émotion dans `assets/voice/omnis/` (`normal`, `bright`, `soft`, `calm`, `amused`,
+  `surprised` + transcription) ; l'empreinte vocale vient toujours de `normal` (identité stable),
+  l'intonation de la prise qui correspond à l'humeur. Les nombres et unités sont écrits en toutes lettres
+  avant lecture (« -4.1 LUFS » → « moins quatre virgule un LUFS »).
+  Pour lui donner une autre voix : remplace ces fichiers (WAV 24 kHz mono + texte exact).
 - **Réactions humaines… et bugs de robot** (réglage `TICS & BUGS`, clé `voiceQuirks`) :
   - vrais sons dans sa voix (`assets/voice/omnis/vocal/`) : rires, petit rire, soupir, « hmm », toux, « oh ! » ;
     le modèle peut les placer avec `(rire)`, `(soupir)`, `(tousse)`, `(bug)`…, jamais prononcés ;
