@@ -291,8 +291,14 @@ void CALLBACK ResourceGovernor::WinEventProc(HWINEVENTHOOK, DWORD, HWND, LONG, L
     if (auto* self = s_instance.load(std::memory_order_acquire)) self->foregroundChanged_.store(true);
 }
 
+std::wstring ResourceGovernor::ActiveGame() const {
+    std::scoped_lock lock(mutex_);
+    return activeGame_;
+}
+
 void ResourceGovernor::ScanProcesses() {
     bool game = false, daw = false;
+    std::wstring gameName;
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snap == INVALID_HANDLE_VALUE) return;
     PROCESSENTRY32W pe{};
@@ -300,12 +306,17 @@ void ResourceGovernor::ScanProcesses() {
     std::wstring name;
     for (BOOL ok = Process32FirstW(snap, &pe); ok && !(game && daw); ok = Process32NextW(snap, &pe)) {
         name = ToLower(pe.szExeFile);
-        if (!game && games_.contains(name)) game = true;
+        if (!game && games_.contains(name)) {
+            game = true;
+            gameName = name;
+        }
         if (!daw && daws_.contains(name)) daw = true;
     }
     CloseHandle(snap);
     gameRunning_ = game;
     dawRunning_ = daw;
+    std::scoped_lock lock(mutex_);
+    activeGame_ = gameName;
 }
 
 bool ResourceGovernor::IsFullscreenAppRunning() noexcept {

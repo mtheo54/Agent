@@ -79,6 +79,8 @@ public:
 
     [[nodiscard]] SystemMode Mode() const noexcept { return mode_.load(std::memory_order_acquire); }
     [[nodiscard]] bool IsGaming() const noexcept { return Mode() == SystemMode::Gaming; }
+    // Exécutable du jeu détecté (minuscules, ex. "cyberpunk2077.exe"), vide sinon.
+    [[nodiscard]] std::wstring ActiveGame() const;
     [[nodiscard]] SystemSnapshot Snapshot() const;
 
     // Conditions d'auto-entraînement réunies (Idle + CPU/GPU sous les seuils) ?
@@ -130,6 +132,7 @@ private:
     std::atomic<float> gpuLoad_{-1.f};
     std::atomic<std::int64_t> idleMs_{0};
     bool gameRunning_ = false;
+    std::wstring activeGame_;  // protégé par mutex_
     bool dawRunning_ = false;
 
     mutable std::mutex mutex_;  // protège stopSource_ et les listeners

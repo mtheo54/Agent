@@ -46,6 +46,9 @@ public:
     void Express(const std::string& clip) { pendingExpression_ = clip; }
     // Posture de fond quand il est au repos : "idle", "sad", "empathy", "soothe", "sleep", "dance"…
     void SetMood(const std::string& clip) { moodClip_ = clip; }
+    // Contextes actifs ("cyberpunk", "studio", "lol", "fps", "train", "research", "cloud", "sleep") :
+    // les accessoires correspondants (rig.json > contexts) apparaissent avec un petit « pop ».
+    void SetContexts(const std::vector<std::string>& contexts);
 
     // Avance l'horloge. Retourne true quand une nouvelle image doit être dessinée (24 ou 12 i/s).
     bool Update(float dtSeconds, float voiceRms) noexcept;
@@ -76,14 +79,27 @@ private:
         std::array<float, 2> upperArmR{}, foreArmR{}, thighR{}, shinR{}, foot{};
     };
 
+    struct PropPart {
+        std::string type, bone, fill, color;
+        std::vector<D2D1_POINT_2F> points;
+        D2D1_POINT_2F c{}, p0{}, p1{}, size{};
+        float r0 = 0, r1 = 0, rx = 0, ry = 0, radius = 0, angle = 0, a0 = 0, a1 = 0, width = 0;
+        bool highlight = false, blink = false;
+    };
+    struct Prop {
+        std::string layer;  // back, preHead, head, front
+        std::vector<PropPart> parts;
+    };
     struct Skeleton {
         D2D1_POINT_2F H{}, neck{}, hc{}, headOffset{};
         float T = 0, ha = 0;
         D2D1_POINT_2F shoulder[2]{}, elbow[2]{}, hand[2]{}, hip[2]{}, knee[2]{}, ankle[2]{};
-        float fore[2]{};
+        float fore[2]{}, up[2]{};
     };
 
     Pose Sample(const Clip& clip, int frame) const;
+    Pose TargetPose() const;  // pose clé (avec fondu entre animations), avant les ressorts
+    void StepSprings(const Pose& target);
     Skeleton Solve(const Pose& pose) const;
     std::string ClipForState() const;
     void Draw(ID2D1DeviceContext* ctx, ID2D1Factory1* factory, const Pose& pose, const Clip& clip, float scale,
@@ -102,6 +118,10 @@ private:
     D2D1_POINT_2F shadowOffset_{8, 7}, limbShadowOffset_{5, 4}, rimOffset_{3.2f, 2.8f}, weightOffset_{0.9f, 0.9f};
     Pose rest_;
     std::map<std::string, Clip> clips_;
+    std::map<std::string, std::array<float, 2>> springParams_;  // canal -> [fréquence Hz, amortissement]
+    std::map<std::string, Prop> props_;
+    std::map<std::string, std::vector<std::string>> contexts_;
+    float airbrush_ = 0.f, bounce_ = 0.f;
 
     // Lecture
     AvatarState state_ = AvatarState::Idle;
@@ -115,12 +135,17 @@ private:
     float clock_ = 0.f;
     float rmsEnv_ = 0.f;
     float opacity_ = 1.f;
+    Pose pose_;                                            // pose animée (après physique secondaire)
+    std::map<std::string, std::array<float, 2>> springs_;  // canal -> [position, vitesse]
+    std::vector<std::string> wantedProps_;
+    std::map<std::string, std::pair<float, int>> pops_;    // accessoire -> [échelle, âge]
     bool dirty_ = true;
 
     // Ressources Direct2D (liées au contexte)
     ID2D1DeviceContext* brushCtx_ = nullptr;
     std::map<std::string, Microsoft::WRL::ComPtr<ID2D1SolidColorBrush>> brushes_;
     Microsoft::WRL::ComPtr<ID2D1StrokeStyle1> roundStroke_;
+    Microsoft::WRL::ComPtr<ID2D1RadialGradientBrush> airBrush_, bounceBrush_;
 };
 
 }  // namespace companion

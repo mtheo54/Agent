@@ -312,12 +312,27 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
         else if (m == SystemMode::Studio) state = AvatarState::Studio;
         avatar.SetState(state);
         if (waveRequested.exchange(false)) avatar.Wave();
+        const bool sleeping = m == SystemMode::Idle && state == AvatarState::Idle;
         {
             std::scoped_lock lock(avatarCmds.mutex);
             for (const auto& clip : avatarCmds.expressions) avatar.Express(clip);
             avatarCmds.expressions.clear();
             // PC inactif depuis 5 min (et pas d'entraînement) : il pique du nez.
-            avatar.SetMood(m == SystemMode::Idle && state == AvatarState::Idle ? std::string("sleep") : avatarCmds.mood);
+            avatar.SetMood(sleeping ? std::string("sleep") : avatarCmds.mood);
+        }
+        // Accessoires selon le contexte : jeu en cours, studio, entraînement, recherche, Claude, sommeil.
+        {
+            std::vector<std::string> contexts;
+            const std::wstring game = governor.ActiveGame();
+            if (game == L"cyberpunk2077.exe") contexts.push_back("cyberpunk");
+            else if (game == L"league of legends.exe") contexts.push_back("lol");
+            else if (!game.empty()) contexts.push_back("fps");
+            if (m == SystemMode::Studio) contexts.push_back("studio");
+            if (state == AvatarState::Training) contexts.push_back("train");
+            if (activity == AgentActivity::Researching) contexts.push_back("research");
+            if (activity == AgentActivity::Cloud) contexts.push_back("cloud");
+            if (sleeping) contexts.push_back("sleep");
+            avatar.SetContexts(contexts);
         }
         settings.Tick(dt);
         const bool newFrame = avatar.Update(dt, voice.VoiceRms());

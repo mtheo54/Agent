@@ -43,6 +43,25 @@ def sample(clip, rest, frame):
     return pose
 
 
+class Animator:
+    """Physique secondaire : chaque canal suit la pose cible comme un ressort amorti (24 i/s, 4 sous-pas)."""
+    def __init__(self, rig):
+        self.springs = rig.get("springs", {})
+        self.state = {}
+
+    def step(self, target, dt=1 / 24):
+        out = {}
+        for ch, tgt in target.items():
+            f, z = self.springs.get(ch, self.springs.get("default", [6.0, 0.85]))
+            x, v = self.state.get(ch, (tgt, 0.0))
+            w = 2 * math.pi * f; h = dt / 4
+            for _ in range(4):
+                v += (w * w * (tgt - x) - 2 * z * w * v) * h
+                x += v * h
+            self.state[ch] = (x, v); out[ch] = x
+        return out
+
+
 # --- Géométrie ----------------------------------------------------------------
 def rgb(h): return tuple(int(h[i:i + 2], 16) / 255 for i in (1, 3, 5))
 def rot(a, v):
@@ -63,7 +82,7 @@ def skeleton(rig, pose, rms=0.0):
     for side, key in (("a", "shoulderA"), ("b", "shoulderB")):
         s = at(b[key]); up = pose[side + "U"] + T; fo = up + pose[side + "F"]
         e = add(s, direction(up), b["upperArm"]); h = add(e, direction(fo), b["foreArm"])
-        j[side + "Shoulder"], j[side + "Elbow"], j[side + "Hand"], j[side + "Fore"] = s, e, h, fo
+        j[side + "Shoulder"], j[side + "Elbow"], j[side + "Hand"], j[side + "Fore"], j[side + "Up"] = s, e, h, fo, up
     for side, key in (("a", "hipA"), ("b", "hipB")):
         hp = add(H, b[key]); th = pose[side + "T"]; sh = th + pose[side + "S"]
         k = add(hp, direction(th), b["thigh"]); an = add(k, direction(sh), b["shin"])
@@ -105,18 +124,35 @@ class Painter:
         self.so, self.lo = tuple(st["shadowOffset"]), tuple(st["limbShadowOffset"])
         self.ro, self.rw = tuple(st["rimOffset"]), st["rimWidth"]
         self.wo, self.wr = tuple(st["weightOffset"]), st["weightRatio"]
+        self.air, self.bounce = st.get("airbrush", 0.0), st.get("bounce", 0.0)
 
-    def part(self, path, back=False, big=False, highlight=None, band=None, details=None, rim=True):
-        """Une forme au rendu anime (même ordre de couches que CartoonAvatar::Part en C++)."""
+    def part(self, path, back=False, big=False, highlight=None, band=None, details=None, rim=True, color=None):
+        """Une forme au rendu anime (même ordre de couches que CartoonAvatar::Draw en C++).
+        color : couleur d'aplat d'un accessoire (l'ombre en est dérivée)."""
         c, P = self.c, self.P
-        base, shadow = (P["backBase"], P["backShadow"]) if back else (P["base"], P["shadow"])
+        if color:
+            base = P[color]; shadow = tuple(x * 0.6 for x in base)
+        else:
+            base, shadow = (P["backBase"], P["backShadow"]) if back else (P["base"], P["shadow"])
         off = self.so if big else self.lo
+        path(c); x0, y0, x1, y1 = c.path_extents(); c.new_path()
+        w, h = max(x1 - x0, 1), max(y1 - y0, 1); R = max(w, h)
         c.save(); path(c); c.clip()
         c.set_source_rgb(*shadow); c.paint()                                     # 1. ombre
         c.save(); c.translate(-off[0], -off[1]); path(c); c.restore()            # 2. partie éclairée
         c.set_source_rgb(*base); c.fill()
+        if self.air > 0:                                                         # 2b. modelé à l'aérographe
+            cx, cy = x0 + w * 0.32, y0 + h * 0.28
+            g = cairo.RadialGradient(cx, cy, 0, cx, cy, R * 0.75)
+            g.add_color_stop_rgba(0, *P["airbrush"], self.air * (0.6 if back else 1.0)); g.add_color_stop_rgba(1, *P["airbrush"], 0)
+            c.set_source(g); c.paint()
         if band:                                                                 # 3. bande de reflet
             c.set_source_rgb(*(P["backBand"] if back else P["band"])); band(c)
+        if self.bounce > 0:                                                      # 3b. lumière réfléchie (sol)
+            bx, by = x0 + w * 0.78, y1 - h * 0.04
+            g = cairo.RadialGradient(bx, by, 0, bx, by, R * 0.55)
+            g.add_color_stop_rgba(0, *P["bounce"], self.bounce); g.add_color_stop_rgba(1, *P["bounce"], 0)
+            c.set_source(g); c.paint()
         if rim:                                                                  # 4. liseré de lumière
             c.save(); c.translate(-self.ro[0], -self.ro[1]); path(c); c.restore()
             c.set_source_rgba(*P["rim"], 0.55 if back else 0.9); c.set_line_width(self.rw); c.stroke()
@@ -132,7 +168,72 @@ class Painter:
         c.set_line_width(self.lw * self.wr); c.stroke()
 
 
-def draw(ctx, rig, pose, frame, clip, rms=0.0, history=()):
+def bone_frame(j, bone):
+    """Origine et angle (degrés, sens écran) d'un os, pour placer un accessoire."""
+    if bone == "head": return j["hc"], j["ha"]
+    if bone == "torso": return j["H"], j["T"]
+    side = bone[-1].lower()
+    if bone.startswith("upper"): return j[side + "Shoulder"], -j[side + "Up"]
+    if bone.startswith("fore"): return j[side + "Elbow"], -j[side + "Fore"]
+    return j[side + "Hand"], -j[side + "Fore"]  # hand
+
+
+def draw_prop(ctx, pn, rig, j, name, scale, frame):
+    P = pn.P
+    for pr in rig["props"][name]["parts"]:
+        o, ang = bone_frame(j, pr["bone"])
+        def place(c, local_angle=0.0, center=(0, 0)):
+            c.translate(*o); c.rotate(math.radians(ang)); c.scale(scale, scale)
+            c.translate(*center); c.rotate(math.radians(local_angle))
+        t = pr["type"]
+        if t == "glow":
+            pts = [add(o, rot(ang, (x * scale, y * scale))) for x, y in pr["points"]]
+            for wmul, alpha, col in ((3.2, 0.22, P[pr["color"]]), (1.0, 1.0, P[pr["color"]]), (0.35, 0.9, (1, 1, 1))):
+                ctx.set_source_rgba(*col, alpha); ctx.set_line_width(pr["width"] * wmul * scale); ctx.set_line_cap(cairo.LINE_CAP_ROUND)
+                ctx.move_to(*pts[0]); [ctx.line_to(*q) for q in pts[1:]]; ctx.stroke()
+            continue
+        if t == "arc":
+            cc = add(o, rot(ang, (pr["c"][0] * scale, pr["c"][1] * scale))); r = pr["radius"] * scale
+            a0, a1 = math.radians(pr["a0"] + ang), math.radians(pr["a1"] + ang)
+            for width, col in ((pr["width"] * scale + 2 * pn.lw, P["outline"]), (pr["width"] * scale, P[pr["fill"]])):
+                ctx.set_source_rgb(*col); ctx.set_line_width(width); ctx.set_line_cap(cairo.LINE_CAP_ROUND)
+                ctx.new_sub_path(); ctx.arc(cc[0], cc[1], r, a0, a1); ctx.stroke()
+            ctx.set_source_rgba(*P["airbrush"], 0.35); ctx.set_line_width(max(1.5, pr["width"] * scale * 0.25))
+            ctx.new_sub_path(); ctx.arc(cc[0], cc[1], r - pr["width"] * scale * 0.2, a0 + 0.15, (a0 + a1) / 2); ctx.stroke()
+            continue
+        if t == "ellipse":
+            def path(c, pr=pr):
+                c.save(); place(c, pr.get("angle", 0), pr["c"]); c.scale(pr["r"][0], pr["r"][1])
+                c.new_sub_path(); c.arc(0, 0, 1, 0, 2 * math.pi); c.restore()
+        elif t == "rrect":
+            def path(c, pr=pr):
+                c.save(); place(c, pr.get("angle", 0), pr["c"])
+                w, h, r = pr["size"][0] / 2, pr["size"][1] / 2, pr["radius"]
+                c.new_sub_path()
+                c.arc(w - r, -h + r, r, -math.pi / 2, 0); c.arc(w - r, h - r, r, 0, math.pi / 2)
+                c.arc(-w + r, h - r, r, math.pi / 2, math.pi); c.arc(-w + r, -h + r, r, math.pi, 1.5 * math.pi)
+                c.close_path(); c.restore()
+        elif t == "capsule":
+            def path(c, pr=pr):
+                p0 = add(o, rot(ang, (pr["p0"][0] * scale, pr["p0"][1] * scale)))
+                p1 = add(o, rot(ang, (pr["p1"][0] * scale, pr["p1"][1] * scale)))
+                capsule(c, p0, p1, pr["r0"] * scale, pr["r1"] * scale)
+        else:  # poly
+            def path(c, pr=pr):
+                pts = [add(o, rot(ang, (x * scale, y * scale))) for x, y in pr["points"]]
+                c.new_sub_path(); c.move_to(*pts[0]); [c.line_to(*q) for q in pts[1:]]; c.close_path()
+        hl = None
+        if pr.get("highlight"):
+            def hl(c, path=path):  # reflet : petite ellipse en haut à gauche de la forme
+                path(c); x0, y0, x1, y1 = c.path_extents(); c.new_path()
+                ellipse(c, (x0 + (x1 - x0) * 0.3, y0 + (y1 - y0) * 0.25), max(1.5, (x1 - x0) * 0.16), max(1.2, (y1 - y0) * 0.09), -25)
+        color = pr["fill"]
+        if pr.get("blink") and (frame // 6) % 2:
+            color = "propDark"
+        pn.part(path, color=color, highlight=hl, rim=pr["fill"] not in ("neon", "led"))
+
+
+def draw(ctx, rig, pose, frame, clip, rms=0.0, history=(), props=None):
     b = rig["body"]; pn = Painter(ctx, rig); P = pn.P
     gx, gy = rig["hips"][0], rig["ground"]
     sx, sy = 1 + pose["sq"] * 0.6, 1 - pose["sq"]
@@ -207,7 +308,13 @@ def draw(ctx, rig, pose, frame, clip, rms=0.0, history=()):
                 highlight=lambda c: ellipse(c, add(fc, rot(ang, (-out * 6, -5))), 7, 2.5, ang),
                 details=lambda c: (c.move_to(*add(fc, rot(ang, (out * 6, -fh * 0.9)))), c.line_to(*add(fc, rot(ang, (out * 9, 0))))))
 
-    # Ordre : bras arrière, jambe arrière, jambe avant, cou, torse, tête, bras avant
+    props = props or {}
+    def layer(name):
+        for pname, sc in props.items():
+            if sc > 0.01 and rig["props"][pname]["layer"] == name: draw_prop(ctx, pn, rig, j, pname, sc, frame)
+
+    # Ordre : accessoires « back », bras arrière, jambe arrière, jambe avant, cou, torse, « preHead », tête, « head », bras avant, « front »
+    layer("back")
     arm("b", True)
     leg("b", True)
     leg("a", False)
@@ -244,9 +351,12 @@ def draw(ctx, rig, pose, frame, clip, rms=0.0, history=()):
         ellipse(c, add(hc, rot(ha, (-26, -28))), 20, 10.5, ha - 38)
         ellipse(c, add(hc, rot(ha, (-6, -44))), 4.5, 4.5)
         ellipse(c, add(hc, rot(ha, (-38, -6))), 3, 7, ha - 10)
+    layer("preHead")
     pn.part(lambda c: ellipse(c, hc, hr, hr), big=True, band=head_band, highlight=head_hl)
+    layer("head")
 
     arm("a", False)
+    layer("front")
     ctx.restore()
 
     # Effets et émotes : hors écrasement, à la position écrasée de la tête
@@ -330,7 +440,31 @@ def emote(ctx, P, kind, frame, hc, hr):
             ctx.set_source_rgba(*P["accent"], 0.9); ctx.set_line_width(1.2); ctx.stroke()
 
 
-def render_frame(rig, clip_name, frame, scale=2, bg=True):
+class PropPops:
+    """Apparition « pop » des accessoires (6 images, léger dépassement), disparition en 4 images."""
+    def __init__(self): self.state = {}  # nom -> [échelle, âge]
+
+    def step(self, wanted):
+        for p in set(self.state) | set(wanted):
+            sc, age = self.state.get(p, [0.0, 0])
+            if p in wanted:
+                age += 1; k = min(1.0, age / 6.0)
+                sc = math.sqrt(k) * (1 + 0.18 * math.sin(math.pi * k)) if k < 1 else 1.0
+            else:
+                sc, age = max(0.0, sc - 0.25), 0
+            self.state[p] = [sc, age]
+        return {p: v[0] for p, v in self.state.items() if v[0] > 0.01}
+
+
+def props_for(rig, contexts):
+    names = []
+    for c in contexts:
+        for p in rig.get("contexts", {}).get(c, []):
+            if p not in names: names.append(p)
+    return names
+
+
+def render_frame(rig, clip_name, frame, scale=2, bg=True, pose=None, props=None):
     w, h = rig["canvas"]
     surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, int(w * scale), int(h * scale))
     ctx = cairo.Context(surf); ctx.scale(scale, scale)
@@ -342,7 +476,7 @@ def render_frame(rig, clip_name, frame, scale=2, bg=True):
     for k in (2, 1):  # deux images précédentes pour la traînée
         if frame - k >= 0 and clip.get("trail"):
             history.append(skeleton(rig, sample(clip, rig["rest"], frame - k)))
-    draw(ctx, rig, sample(clip, rig["rest"], frame), frame, clip, history=history)
+    draw(ctx, rig, pose or sample(clip, rig["rest"], frame), frame, clip, history=history, props=props)
     return surf
 
 
@@ -353,7 +487,9 @@ def main():
     ap.add_argument("--loops", type=int, default=2)
     ap.add_argument("--out")
     ap.add_argument("--sheet")
+    ap.add_argument("--props-sheet", dest="props_sheet")
     ap.add_argument("--sequence", help="ex. idle,wave,talk : enchaîne plusieurs animations dans une vidéo")
+    ap.add_argument("--contexts", default="", help="contextes par animation, ex. ',cyberpunk,studio' (accessoires)")
     a = ap.parse_args()
     rig = json.load(open(a.rig, encoding="utf-8"))
     if a.sheet:
@@ -369,13 +505,34 @@ def main():
             c.set_source_rgb(0.1, 0.1, 0.1); c.select_font_face("Sans", 0, 1); c.set_font_size(30)
             c.move_to(i * w * 2 + 20, h * 2 + 44); c.show_text(n); c.restore()
         sheet.write_to_png(a.sheet); return
+    if a.props_sheet:
+        demos = [("idle", 40, "cyberpunk"), ("studio", 3, "studio"), ("talk", 6, "lol"), ("train", 6, "train"),
+                 ("think", 24, "research"), ("think", 24, "cloud"), ("sleep", 48, "sleep")]
+        w, h = rig["canvas"]
+        sheet = cairo.ImageSurface(cairo.FORMAT_ARGB32, w * len(demos) * 2, (h + 30) * 2)
+        c = cairo.Context(sheet); c.set_source_rgb(1, 1, 1); c.paint()
+        for i, (n, f, ctx_name) in enumerate(demos):
+            anim = Animator(rig)
+            for k in range(f + 1): pose = anim.step(sample(rig["clips"][n], rig["rest"], k))
+            props = {p: 1.0 for p in props_for(rig, [ctx_name])}
+            c.set_source_surface(render_frame(rig, n, f, scale=2, pose=pose, props=props), i * w * 2, 0); c.paint()
+            c.set_source_rgb(0.1, 0.1, 0.1); c.select_font_face("Sans", 0, 1); c.set_font_size(30)
+            c.move_to(i * w * 2 + 20, h * 2 + 44); c.show_text(ctx_name)
+        sheet.write_to_png(a.props_sheet); return
+    names = a.sequence.split(",") if a.sequence else [a.clip]
+    ctxs = a.contexts.split(",") if a.contexts else []
     plan = []
-    for name in (a.sequence.split(",") if a.sequence else [a.clip]):
+    for k, name in enumerate(names):
         clip = rig["clips"][name]
-        plan += [(name, f % clip["frames"]) for f in range(clip["frames"] * (1 if not clip.get("loop") else a.loops))]
+        context = ctxs[k] if k < len(ctxs) else ""
+        plan += [(name, f % clip["frames"], context) for f in range(clip["frames"] * (1 if not clip.get("loop") else a.loops))]
+    anim = Animator(rig)
+    pops = PropPops()
     with tempfile.TemporaryDirectory() as tmp:
-        for i, (name, f) in enumerate(plan):
-            render_frame(rig, name, f).write_to_png(os.path.join(tmp, f"{i:04d}.png"))
+        for i, (name, f, context) in enumerate(plan):
+            live = pops.step(props_for(rig, [context] if context else []))
+            pose = anim.step(sample(rig["clips"][name], rig["rest"], f))
+            render_frame(rig, name, f, pose=pose, props=live).write_to_png(os.path.join(tmp, f"{i:04d}.png"))
         out = a.out or f"{a.sequence.replace(',', '_') if a.sequence else a.clip}.mp4"
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-framerate", str(rig["fps"]), "-i", os.path.join(tmp, "%04d.png"),
                         "-pix_fmt", "yuv420p", "-crf", "16", "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2", out], check=True)

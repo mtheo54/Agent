@@ -20,6 +20,23 @@ Un bonhomme chromé gris, sans visage, **dessiné en 2D dans un style d'animatio
 - traînée de mouvement sur les gestes rapides, traits d'emphase manga quand il parle, émotes ;
 - poses clés franches, dépassement puis stabilisation, regard qui balaie au repos.
 
+- **physique secondaire** : chaque partie du corps suit sa pose comme un ressort amorti — la tête et
+  les avant-bras arrivent avec un léger retard et rebondissent, les mouvements dépassent puis se posent ;
+- **modelé à l'aérographe** par-dessus les aplats et lumière réfléchie bleutée sous les formes ;
+- **accessoires selon le contexte**, dessinés avec le même rendu et apparus avec un petit « pop » :
+
+| Contexte | Accessoire |
+|---|---|
+| Cyberpunk 2077 | cyber-bras néon (design original) |
+| FL Studio | casque de studio |
+| League of Legends, CS2, Valorant | casque gaming avec micro |
+| auto-entraînement | bandeau de sport |
+| recherche web | loupe |
+| question à Claude | antenne qui clignote |
+| sommeil (PC inactif) | bonnet de nuit |
+
+Accessoires et contextes sont décrits dans `rig.json` (`props`, `contexts`) : on en ajoute sans recompiler.
+
 Il a ses animations selon ce qu'il fait :
 
 | Animation | Quand |
@@ -63,7 +80,7 @@ pip install pycairo
 ```
 
 ```bash
-python tools/avatar_preview.py --sequence idle,wave,talk --out apercu.mp4
+python tools/avatar_preview.py --sequence idle,wave,talk --contexts ",,cyberpunk" --out apercu.mp4
 ```
 
 ## Auto-entraînement (étape 4)

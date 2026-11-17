@@ -180,6 +180,41 @@ bool CartoonAvatar::Load(const std::filesystem::path& rigJson) {
         weightRatio_ = st.value("weightRatio", weightRatio_);
         if (st.contains("rimOffset")) rimOffset_ = Pt(st.at("rimOffset"));
         if (st.contains("weightOffset")) weightOffset_ = Pt(st.at("weightOffset"));
+        airbrush_ = st.value("airbrush", 0.f);
+        bounce_ = st.value("bounce", 0.f);
+        if (j.contains("springs"))
+            for (const auto& [ch, v] : j.at("springs").items()) springParams_[ch] = Pair(v);
+        if (j.contains("props"))
+            for (const auto& [name, pj] : j.at("props").items()) {
+                Prop prop;
+                prop.layer = pj.value("layer", std::string{"front"});
+                for (const auto& q : pj.at("parts")) {
+                    PropPart part;
+                    part.type = q.at("type").get<std::string>();
+                    part.bone = q.at("bone").get<std::string>();
+                    part.fill = q.value("fill", std::string{});
+                    part.color = q.value("color", std::string{});
+                    if (q.contains("points")) for (const auto& pt : q.at("points")) part.points.push_back(Pt(pt));
+                    if (q.contains("c")) part.c = Pt(q.at("c"));
+                    if (q.contains("p0")) part.p0 = Pt(q.at("p0"));
+                    if (q.contains("p1")) part.p1 = Pt(q.at("p1"));
+                    if (q.contains("size")) part.size = Pt(q.at("size"));
+                    if (q.contains("r")) { part.rx = q.at("r").at(0); part.ry = q.at("r").at(1); }
+                    part.r0 = q.value("r0", 0.f);
+                    part.r1 = q.value("r1", 0.f);
+                    part.radius = q.value("radius", 0.f);
+                    part.angle = q.value("angle", 0.f);
+                    part.a0 = q.value("a0", 0.f);
+                    part.a1 = q.value("a1", 0.f);
+                    part.width = q.value("width", 0.f);
+                    part.highlight = q.value("highlight", false);
+                    part.blink = q.value("blink", false);
+                    prop.parts.push_back(std::move(part));
+                }
+                props_[name] = std::move(prop);
+            }
+        if (j.contains("contexts"))
+            for (const auto& [ctxName, list] : j.at("contexts").items()) contexts_[ctxName] = list.get<std::vector<std::string>>();
         for (const auto& [k, v] : j.at("rest").items()) rest_[k] = v.get<float>();
         for (const auto& [name, c] : j.at("clips").items()) {
             Clip clip;
@@ -219,6 +254,47 @@ CartoonAvatar::Pose CartoonAvatar::Sample(const Clip& clip, int frame) const {
         }
     }
     return pose;
+}
+
+CartoonAvatar::Pose CartoonAvatar::TargetPose() const {
+    auto find = [&](const std::string& n) -> const Clip& { return clips_.contains(n) ? clips_.at(n) : clips_.at("idle"); };
+    Pose pose = Sample(find(clip_), frame_);
+    if (blend_ > 0 && !prevClip_.empty()) {
+        const Pose prev = Sample(find(prevClip_), prevFrame_);
+        const float w = static_cast<float>(blend_) / 4.f;
+        for (auto& [ch, v] : pose)
+            if (const auto it = prev.find(ch); it != prev.end()) v += (it->second - v) * w;
+    }
+    return pose;
+}
+
+// Physique secondaire : chaque canal suit sa cible comme un ressort amorti (même intégration que
+// Animator.step() en Python : 4 sous-pas d'Euler semi-implicite par image).
+void CartoonAvatar::StepSprings(const Pose& target) {
+    const float dt = 1.f / fps_;
+    const auto def = springParams_.contains("default") ? springParams_.at("default") : std::array<float, 2>{6.f, 0.85f};
+    for (const auto& [ch, tgt] : target) {
+        const auto it = springParams_.find(ch);
+        const auto [f, z] = it != springParams_.end() ? it->second : def;
+        auto [st, inserted] = springs_.try_emplace(ch, std::array<float, 2>{tgt, 0.f});
+        float x = st->second[0], v = st->second[1];
+        const float w = 2.f * kPi * f, h = dt / 4.f;
+        for (int i = 0; i < 4; ++i) {
+            v += (w * w * (tgt - x) - 2.f * z * w * v) * h;
+            x += v * h;
+        }
+        st->second = {x, v};
+        pose_[ch] = x;
+    }
+}
+
+void CartoonAvatar::SetContexts(const std::vector<std::string>& contexts) {
+    wantedProps_.clear();
+    for (const auto& c : contexts)
+        if (const auto it = contexts_.find(c); it != contexts_.end())
+            for (const auto& p : it->second)
+                if (props_.contains(p) && std::find(wantedProps_.begin(), wantedProps_.end(), p) == wantedProps_.end())
+                    wantedProps_.push_back(p);
 }
 
 std::string CartoonAvatar::ClipForState() const {
@@ -274,6 +350,20 @@ bool CartoonAvatar::Update(float dt, float voiceRms) noexcept {
         frame_ = cur.loop ? (frame_ + advance) % cur.frames : std::min(frame_ + advance, cur.frames - 1);
         blend_ = std::max(0, blend_ - advance);
     }
+    // Accessoires : apparition « pop » en 6 images (léger dépassement), disparition en 4.
+    for (const auto& p : wantedProps_) pops_.try_emplace(p, std::pair<float, int>{0.f, 0});
+    for (auto& [name, st] : pops_) {
+        const bool wanted = std::find(wantedProps_.begin(), wantedProps_.end(), name) != wantedProps_.end();
+        if (wanted) {
+            const int age = ++st.second;
+            const float k = std::min(1.f, static_cast<float>(age) / 6.f);
+            st.first = k < 1.f ? std::sqrt(k) * (1.f + 0.18f * std::sin(kPi * k)) : 1.f;
+        } else {
+            st.first = std::max(0.f, st.first - 0.25f);
+            st.second = 0;
+        }
+    }
+    StepSprings(TargetPose());
     dirty_ = true;
     return true;
 }
@@ -282,12 +372,19 @@ ID2D1SolidColorBrush* CartoonAvatar::Brush(ID2D1DeviceContext* ctx, const std::s
     if (brushCtx_ != ctx) {  // nouveau contexte : ressources recréées
         brushes_.clear();
         roundStroke_.Reset();
+        airBrush_.Reset();
+        bounceBrush_.Reset();
         brushCtx_ = ctx;
     }
     auto& b = brushes_[name];
     if (!b) {
-        const auto it = palette_.find(name);
-        ctx->CreateSolidColorBrush(it != palette_.end() ? it->second : D2D1::ColorF(D2D1::ColorF::White), &b);
+        // "nom#shade" : ombre dérivée d'une couleur d'accessoire (60 % de la luminosité).
+        const std::string key(name);
+        const bool shade = key.size() > 6 && key.ends_with("#shade");
+        const auto it = palette_.find(shade ? key.substr(0, key.size() - 6) : key);
+        D2D1_COLOR_F c = it != palette_.end() ? it->second : D2D1::ColorF(D2D1::ColorF::White);
+        if (shade) c = D2D1::ColorF(c.r * 0.6f, c.g * 0.6f, c.b * 0.6f, c.a);
+        ctx->CreateSolidColorBrush(c, &b);
     }
     b->SetOpacity(alpha);
     return b.Get();
@@ -305,6 +402,7 @@ CartoonAvatar::Skeleton CartoonAvatar::Solve(const Pose& pose) const {
         k.shoulder[i] = at(a ? b.shoulderA : b.shoulderB);
         const float up = (a ? P("aU") : P("bU")) + k.T;
         k.fore[i] = up + (a ? P("aF") : P("bF"));
+        k.up[i] = up;
         k.elbow[i] = Add(k.shoulder[i], Dir(up), b.upperArm);
         k.hand[i] = Add(k.elbow[i], Dir(k.fore[i]), b.foreArm);
         k.hip[i] = Add(k.H, a ? b.hipA : b.hipB);
@@ -323,12 +421,19 @@ CartoonAvatar::Skeleton CartoonAvatar::Solve(const Pose& pose) const {
 void CartoonAvatar::Render(ID2D1DeviceContext* ctx, ID2D1Factory1* factory, float scale, D2D1_POINT_2F offset) {
     if (!ctx || !factory || clips_.empty()) return;
     auto find = [&](const std::string& n) -> const Clip& { return clips_.contains(n) ? clips_.at(n) : clips_.at("idle"); };
-    Pose pose = Sample(find(clip_), frame_);
-    if (blend_ > 0 && !prevClip_.empty()) {
-        const Pose prev = Sample(find(prevClip_), prevFrame_);
-        const float w = static_cast<float>(blend_) / 4.f;
-        for (auto& [ch, v] : pose)
-            if (const auto it = prev.find(ch); it != prev.end()) v += (it->second - v) * w;
+    if (pose_.empty()) StepSprings(TargetPose());
+    const Pose& pose = pose_;
+    if (!airBrush_ || brushCtx_ != ctx) {
+        Brush(ctx, "base");  // réinitialise les ressources si le contexte a changé
+        const auto make = [&](const char* name, float alpha, ComPtr<ID2D1RadialGradientBrush>& out) {
+            D2D1_COLOR_F c = palette_.contains(name) ? palette_.at(name) : D2D1::ColorF(D2D1::ColorF::White);
+            D2D1_GRADIENT_STOP stops[2] = {{0.f, D2D1::ColorF(c.r, c.g, c.b, alpha)}, {1.f, D2D1::ColorF(c.r, c.g, c.b, 0.f)}};
+            ComPtr<ID2D1GradientStopCollection> coll;
+            ctx->CreateGradientStopCollection(stops, 2, &coll);
+            ctx->CreateRadialGradientBrush(D2D1::RadialGradientBrushProperties({0, 0}, {0, 0}, 1.f, 1.f), coll.Get(), &out);
+        };
+        make("airbrush", airbrush_, airBrush_);
+        make("bounce", bounce_, bounceBrush_);
     }
     if (!roundStroke_) {
         D2D1_STROKE_STYLE_PROPERTIES1 p{};  // champs remplis à la main (helper absent de certains SDK)
@@ -400,24 +505,134 @@ void CartoonAvatar::Draw(ID2D1DeviceContext* ctx, ID2D1Factory1* factory, const 
         ComPtr<ID2D1Geometry> details;  // traits fins
         bool rim = true;
     };
-    const auto part = [&](const ComPtr<ID2D1Geometry>& geom, bool back, bool big, const Layers& L) {
+    // Une forme au rendu anime : couleurs explicites (corps ou accessoire). Même ordre de couches que
+    // Painter.part() en Python.
+    const auto paint = [&](const ComPtr<ID2D1Geometry>& geom, const std::string& base, const std::string& shadow,
+                           const char* band, bool soft, bool big, const Layers& L) {
         if (!geom) return;
         const D2D1_POINT_2F off = big ? shadowOffset_ : limbShadowOffset_;
         ctx->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), geom.Get()), nullptr);
         D2D1_RECT_F r{};
         geom->GetBounds(nullptr, &r);
-        ctx->FillRectangle(D2D1::RectF(r.left - 4, r.top - 4, r.right + 4, r.bottom + 4),
-                           Brush(ctx, back ? "backShadow" : "shadow"));                                   // 1. ombre
-        fill(shifted(geom, {-off.x, -off.y}), Brush(ctx, back ? "backBase" : "base"));                  // 2. lumière
-        if (L.band) L.band();                                                                           // 3. reflet
-        if (L.rim) stroke(shifted(geom, {-rimOffset_.x, -rimOffset_.y}), Brush(ctx, "rim", back ? 0.55f : 0.9f),
-                          rimWidth_);                                                                   // 4. liseré
-        if (L.highlight && !back) fill(L.highlight, Brush(ctx, "highlight"));                           // 5. reflets
-        if (L.details) stroke(L.details, Brush(ctx, "outline", 0.85f), innerLine_);                     // 6. détails
+        const D2D1_RECT_F all{r.left - 4, r.top - 4, r.right + 4, r.bottom + 4};
+        const float w = std::max(r.right - r.left, 1.f), h = std::max(r.bottom - r.top, 1.f), R = std::max(w, h);
+        ctx->FillRectangle(all, Brush(ctx, shadow.c_str()));                                            // 1. ombre
+        fill(shifted(geom, {-off.x, -off.y}), Brush(ctx, base.c_str()));                                 // 2. lumière
+        if (airbrush_ > 0.f && airBrush_) {                                                              // 2b. aérographe
+            airBrush_->SetCenter({r.left + w * 0.32f, r.top + h * 0.28f});
+            airBrush_->SetRadiusX(R * 0.75f);
+            airBrush_->SetRadiusY(R * 0.75f);
+            airBrush_->SetOpacity(soft ? 0.6f : 1.f);
+            ctx->FillRectangle(all, airBrush_.Get());
+        }
+        if (L.band) L.band();                                                                            // 3. reflet
+        (void)band;
+        if (bounce_ > 0.f && bounceBrush_) {                                                             // 3b. lumière réfléchie
+            bounceBrush_->SetCenter({r.left + w * 0.78f, r.bottom - h * 0.04f});
+            bounceBrush_->SetRadiusX(R * 0.55f);
+            bounceBrush_->SetRadiusY(R * 0.55f);
+            ctx->FillRectangle(all, bounceBrush_.Get());
+        }
+        if (L.rim) stroke(shifted(geom, {-rimOffset_.x, -rimOffset_.y}), Brush(ctx, "rim", soft ? 0.55f : 0.9f),
+                          rimWidth_);                                                                    // 4. liseré
+        if (L.highlight && !soft) fill(L.highlight, Brush(ctx, "highlight"));                            // 5. reflets
+        if (L.details) stroke(L.details, Brush(ctx, "outline", 0.85f), innerLine_);                      // 6. détails
         ctx->PopLayer();
-        stroke(geom, Brush(ctx, "outline"), outline_);                                                  // 7. trait
-        stroke(shifted(geom, weightOffset_), Brush(ctx, "outline"), outline_ * weightRatio_);           //    côté ombre
+        stroke(geom, Brush(ctx, "outline"), outline_);                                                   // 7. trait
+        stroke(shifted(geom, weightOffset_), Brush(ctx, "outline"), outline_ * weightRatio_);            //    côté ombre
     };
+    const auto part = [&](const ComPtr<ID2D1Geometry>& geom, bool back, bool big, const Layers& L) {
+        paint(geom, back ? "backBase" : "base", back ? "backShadow" : "shadow", nullptr, back, big, L);
+    };
+
+    // Accessoires (rig.json > props), placés dans le repère d'un os, dessinés avec le même rendu.
+    const auto boneFrame = [&](const std::string& bone, D2D1_POINT_2F& o, float& ang) {
+        if (bone == "head") { o = k.hc; ang = k.ha; return; }
+        if (bone == "torso") { o = k.H; ang = k.T; return; }
+        const int i = (bone.back() == 'A' || bone.back() == 'a') ? 0 : 1;
+        if (bone.rfind("upper", 0) == 0) { o = k.shoulder[i]; ang = -k.up[i]; return; }
+        if (bone.rfind("fore", 0) == 0) { o = k.elbow[i]; ang = -k.fore[i]; return; }
+        o = k.hand[i];
+        ang = -k.fore[i];
+    };
+    const auto drawProp = [&](const Prop& prop, float sc) {
+        for (const PropPart& q : prop.parts) {
+            D2D1_POINT_2F o;
+            float ang;
+            boneFrame(q.bone, o, ang);
+            const auto bone = D2D1::Matrix3x2F::Scale(sc, sc) * D2D1::Matrix3x2F::Rotation(ang) *
+                              D2D1::Matrix3x2F::Translation(o.x, o.y);
+            if (q.type == "glow") {  // trait lumineux : halo large, trait, cœur blanc
+                std::vector<D2D1_POINT_2F> pts;
+                for (const auto& pt : q.points) pts.push_back(bone.TransformPoint(pt));
+                std::vector<std::vector<D2D1_POINT_2F>> segs;
+                for (size_t i = 0; i + 1 < pts.size(); ++i) segs.push_back({pts[i], pts[i + 1]});
+                const auto g = Strokes(factory, segs);
+                stroke(g, Brush(ctx, q.color.c_str(), 0.22f), q.width * 3.2f * sc);
+                stroke(g, Brush(ctx, q.color.c_str()), q.width * sc);
+                stroke(g, Brush(ctx, "highlight", 0.9f), q.width * 0.35f * sc);
+                continue;
+            }
+            if (q.type == "arc") {  // bande courbe (arceau de casque, bandeau)
+                const D2D1_POINT_2F cc = bone.TransformPoint(q.c);
+                const float rr = q.radius * sc, ww = q.width * sc;
+                const auto g = Arc(factory, cc, rr, q.a0 + ang, q.a1 + ang);
+                stroke(g, Brush(ctx, "outline"), ww + 2.f * outline_);
+                stroke(g, Brush(ctx, q.fill.c_str()), ww);
+                stroke(Arc(factory, cc, rr - ww * 0.2f, q.a0 + ang + 8.6f, (q.a0 + q.a1) / 2.f + ang),
+                       Brush(ctx, "airbrush", 0.35f), std::max(1.5f, ww * 0.25f));
+                continue;
+            }
+            ComPtr<ID2D1Geometry> geom;
+            if (q.type == "ellipse" || q.type == "rrect") {
+                const auto local = D2D1::Matrix3x2F::Rotation(q.angle) * D2D1::Matrix3x2F::Translation(q.c.x, q.c.y) * bone;
+                ComPtr<ID2D1Geometry> shape;
+                if (q.type == "ellipse") {
+                    ComPtr<ID2D1EllipseGeometry> e;
+                    factory->CreateEllipseGeometry(D2D1::Ellipse({0, 0}, q.rx, q.ry), &e);
+                    shape = e;
+                } else {
+                    ComPtr<ID2D1RoundedRectangleGeometry> rr;
+                    factory->CreateRoundedRectangleGeometry(
+                        D2D1::RoundedRect(D2D1::RectF(-q.size.x / 2, -q.size.y / 2, q.size.x / 2, q.size.y / 2), q.radius, q.radius), &rr);
+                    shape = rr;
+                }
+                ComPtr<ID2D1TransformedGeometry> t;
+                if (shape) factory->CreateTransformedGeometry(shape.Get(), local, &t);
+                geom = t;
+            } else if (q.type == "capsule") {
+                geom = Capsule(factory, bone.TransformPoint(q.p0), bone.TransformPoint(q.p1), q.r0 * sc, q.r1 * sc);
+            } else if (q.type == "poly" && q.points.size() >= 3) {
+                ComPtr<ID2D1PathGeometry> path;
+                ComPtr<ID2D1GeometrySink> sk;
+                if (SUCCEEDED(factory->CreatePathGeometry(&path)) && SUCCEEDED(path->Open(&sk))) {
+                    sk->BeginFigure(bone.TransformPoint(q.points[0]), D2D1_FIGURE_BEGIN_FILLED);
+                    for (size_t i = 1; i < q.points.size(); ++i) sk->AddLine(bone.TransformPoint(q.points[i]));
+                    sk->EndFigure(D2D1_FIGURE_END_CLOSED);
+                    sk->Close();
+                    geom = path;
+                }
+            }
+            if (!geom) continue;
+            Layers L;
+            L.rim = q.fill != "neon" && q.fill != "led";
+            if (q.highlight) {  // reflet : petite ellipse en haut à gauche de la forme
+                D2D1_RECT_F b{};
+                geom->GetBounds(nullptr, &b);
+                const float bw = b.right - b.left, bh = b.bottom - b.top;
+                L.highlight = Ellipse(factory, {b.left + bw * 0.3f, b.top + bh * 0.25f}, std::max(1.5f, bw * 0.16f),
+                                      std::max(1.2f, bh * 0.09f), -25.f);
+            }
+            const std::string fillName = q.blink && (frame_ / 6) % 2 ? std::string("propDark") : q.fill;
+            paint(geom, fillName, fillName + "#shade", nullptr, false, false, L);
+        }
+    };
+    const auto layer = [&](const char* name) {
+        for (const auto& [pname, st] : pops_)
+            if (st.first > 0.01f)
+                if (const auto it = props_.find(pname); it != props_.end() && it->second.layer == name) drawProp(it->second, st.first);
+    };
+
     const auto streak = [&](D2D1_POINT_2F p0, D2D1_POINT_2F p1, float r) {
         const D2D1_POINT_2F o{-r * 0.35f, -r * 0.35f};
         return Group(factory, {Capsule(factory, Add(Lerp(p0, p1, 0.18f), o), Add(Lerp(p0, p1, 0.55f), o), 2.6f, 2.0f),
@@ -485,7 +700,9 @@ void CartoonAvatar::Draw(ID2D1DeviceContext* ctx, ID2D1Factory1* factory, const 
         part(Ellipse(factory, fc, fw, fh, ang), back, false, ft);
     };
 
-    // Ordre : bras arrière, jambe arrière, jambe avant, cou, torse, tête, bras avant.
+    // Ordre : accessoires « back », bras arrière, jambes, cou, torse, « preHead », tête, « head »,
+    // bras avant, « front ».
+    layer("back");
     arm(1, true);
     leg(1, true);
     leg(0, false);
@@ -526,9 +743,12 @@ void CartoonAvatar::Draw(ID2D1DeviceContext* ctx, ID2D1Factory1* factory, const 
     hl.highlight = Group(factory, {Ellipse(factory, Add(hc, Rot(ha, {-26, -28})), 20.f, 10.5f, ha - 38.f),
                                    Ellipse(factory, Add(hc, Rot(ha, {-6, -44})), 4.5f, 4.5f),
                                    Ellipse(factory, Add(hc, Rot(ha, {-38, -6})), 3.f, 7.f, ha - 10.f)});
+    layer("preHead");
     part(Ellipse(factory, hc, hr, hr), false, true, hl);
+    layer("head");
 
     arm(0, false);
+    layer("front");
 
     // Effets et émotes : hors écrasement, à la position écrasée de la tête.
     ctx->SetTransform(global);

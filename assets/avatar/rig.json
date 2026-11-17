@@ -56,17 +56,32 @@
   "neck": "#545B66",
   "speed": "#FFFFFF",
   "groundShadow": "#5C6F8C",
-  "groundCore": "#41506A"
+  "groundCore": "#41506A",
+  "propDark": "#2E333D",
+  "propMid": "#4A515E",
+  "propLight": "#7B8494",
+  "neon": "#3EF2FF",
+  "led": "#FF5A7A",
+  "airbrush": "#FFFFFF",
+  "bounce": "#9CC8FF",
+  "fabric": "#5B6B8C",
+  "fabricShade": "#3E4A63",
+  "pompom": "#F2F2F2",
+  "glass": "#BFE9FF",
+  "wood": "#8A5A3C",
+  "cushion": "#23272E"
  },
  "style": {
-  "outline": 3.7,
+  "outline": 3.4,
   "shadowOffset": [14, 12],
   "limbShadowOffset": [5, 4],
   "innerLine": 1.7,
   "rimOffset": [3.2, 2.8],
   "rimWidth": 2.2,
   "weightOffset": [0.9, 0.9],
-  "weightRatio": 0.7
+  "weightRatio": 0.7,
+  "airbrush": 0.32,
+  "bounce": 0.28
  },
  "rest": {
   "x": 0,
@@ -1187,5 +1202,370 @@
   }
  },
  "_style": "Rendu anime : aplat, ombre nette (forme décalée), liseré de lumière dans l'ombre (contour décalé, découpé), bande de reflet chromé, reflets francs, trait plus épais côté ombre, détails en traits fins.",
- "_channels": "x, y (hanches), sq (écrasement), torso, head (inclinaison), headX/headY (décalage de la tête : hochements), aU/aF bU/bF (bras), aT/aS bT/bS (jambes), aFoot/bFoot"
+ "_channels": "x, y (hanches), sq (écrasement), torso, head (inclinaison), headX/headY (décalage de la tête : hochements), aU/aF bU/bF (bras), aT/aS bT/bS (jambes), aFoot/bFoot",
+ "_springs": "Physique secondaire : chaque canal suit sa cible comme un ressort amorti [fréquence Hz, amortissement]. Amortissement < 1 = léger dépassement puis stabilisation (tête, avant-bras).",
+ "springs": {
+  "default": [6.0, 0.85],
+  "torso": [4.5, 0.6],
+  "head": [3.8, 0.45],
+  "headX": [4.5, 0.45],
+  "headY": [4.5, 0.45],
+  "aU": [5.0, 0.6],
+  "bU": [5.0, 0.6],
+  "aF": [4.2, 0.42],
+  "bF": [4.2, 0.42],
+  "x": [5.5, 0.75],
+  "y": [6.5, 0.7],
+  "sq": [7.0, 0.55]
+ },
+ "_props": "Accessoires dessinés avec le même rendu que le corps. Os : head (centre de la tête, y vers le bas), torso (hanches), upperA/upperB (épaule, +y le long du bras), foreA/foreB (coude, +y vers la main), handA/handB (main). Calques : back, preHead (derrière la tête), head (sur la tête), front (sur le bras avant).",
+ "props": {
+  "cyberArm": {
+   "layer": "front",
+   "parts": [
+    {
+     "type": "ellipse",
+     "bone": "upperA",
+     "c": [0, 4],
+     "r": [21, 16],
+     "fill": "propDark",
+     "highlight": true
+    },
+    {
+     "type": "rrect",
+     "bone": "upperA",
+     "c": [0, 30],
+     "size": [33, 34],
+     "radius": 9,
+     "fill": "propMid",
+     "highlight": true
+    },
+    {
+     "type": "glow",
+     "bone": "upperA",
+     "points": [
+      [-11, 16],
+      [-11, 44]
+     ],
+     "color": "neon",
+     "width": 2.4
+    },
+    {
+     "type": "ellipse",
+     "bone": "foreA",
+     "c": [0, 1],
+     "r": [16, 9],
+     "fill": "propMid"
+    },
+    {
+     "type": "rrect",
+     "bone": "foreA",
+     "c": [0, 13],
+     "size": [29, 13],
+     "radius": 5,
+     "fill": "propDark",
+     "highlight": true
+    },
+    {
+     "type": "rrect",
+     "bone": "foreA",
+     "c": [0, 26],
+     "size": [28, 12],
+     "radius": 5,
+     "fill": "propMid",
+     "highlight": true
+    },
+    {
+     "type": "rrect",
+     "bone": "foreA",
+     "c": [0, 38],
+     "size": [27, 12],
+     "radius": 5,
+     "fill": "propDark",
+     "highlight": true
+    },
+    {
+     "type": "glow",
+     "bone": "foreA",
+     "points": [
+      [-9, 7],
+      [-9, 44]
+     ],
+     "color": "neon",
+     "width": 2.2
+    },
+    {
+     "type": "glow",
+     "bone": "foreA",
+     "points": [
+      [7, 9],
+      [7, 20]
+     ],
+     "color": "neon",
+     "width": 1.6
+    },
+    {
+     "type": "ellipse",
+     "bone": "handA",
+     "c": [0, 2],
+     "r": [18, 17],
+     "fill": "propDark",
+     "highlight": true
+    },
+    {
+     "type": "glow",
+     "bone": "handA",
+     "points": [
+      [-8, 8],
+      [8, 8]
+     ],
+     "color": "neon",
+     "width": 1.8
+    },
+    {
+     "type": "ellipse",
+     "bone": "handA",
+     "c": [0, -1],
+     "r": [3.2, 3.2],
+     "fill": "neon"
+    }
+   ]
+  },
+  "headphones": {
+   "layer": "head",
+   "parts": [
+    {
+     "type": "arc",
+     "bone": "head",
+     "c": [0, 0],
+     "radius": 71,
+     "a0": 200,
+     "a1": 340,
+     "width": 9,
+     "fill": "propDark"
+    },
+    {
+     "type": "rrect",
+     "bone": "head",
+     "c": [-64, 4],
+     "size": [20, 40],
+     "radius": 9,
+     "fill": "propDark",
+     "highlight": true
+    },
+    {
+     "type": "rrect",
+     "bone": "head",
+     "c": [64, 4],
+     "size": [20, 40],
+     "radius": 9,
+     "fill": "propDark",
+     "highlight": true
+    },
+    {
+     "type": "ellipse",
+     "bone": "head",
+     "c": [-67, -8],
+     "r": [2.6, 2.6],
+     "fill": "led",
+     "blink": true
+    }
+   ]
+  },
+  "headset": {
+   "layer": "head",
+   "parts": [
+    {
+     "type": "arc",
+     "bone": "head",
+     "c": [0, 0],
+     "radius": 71,
+     "a0": 200,
+     "a1": 340,
+     "width": 9,
+     "fill": "propDark"
+    },
+    {
+     "type": "rrect",
+     "bone": "head",
+     "c": [-64, 4],
+     "size": [20, 40],
+     "radius": 9,
+     "fill": "propDark",
+     "highlight": true
+    },
+    {
+     "type": "rrect",
+     "bone": "head",
+     "c": [64, 4],
+     "size": [20, 40],
+     "radius": 9,
+     "fill": "propDark",
+     "highlight": true
+    },
+    {
+     "type": "capsule",
+     "bone": "head",
+     "p0": [-60, 18],
+     "p1": [-26, 50],
+     "r0": 3.4,
+     "r1": 3.0,
+     "fill": "propDark"
+    },
+    {
+     "type": "ellipse",
+     "bone": "head",
+     "c": [-23, 52],
+     "r": [8, 6],
+     "angle": -20,
+     "fill": "propMid",
+     "highlight": true
+    },
+    {
+     "type": "ellipse",
+     "bone": "head",
+     "c": [-67, -8],
+     "r": [2.6, 2.6],
+     "fill": "neon",
+     "blink": true
+    }
+   ]
+  },
+  "headband": {
+   "layer": "head",
+   "parts": [
+    {
+     "type": "arc",
+     "bone": "head",
+     "c": [0, 44],
+     "radius": 88,
+     "a0": 227,
+     "a1": 313,
+     "width": 15,
+     "fill": "fabric"
+    },
+    {
+     "type": "capsule",
+     "bone": "head",
+     "p0": [55, -34],
+     "p1": [80, -20],
+     "r0": 5,
+     "r1": 3.5,
+     "fill": "fabric"
+    },
+    {
+     "type": "capsule",
+     "bone": "head",
+     "p0": [55, -34],
+     "p1": [84, -34],
+     "r0": 5,
+     "r1": 3.5,
+     "fill": "fabric"
+    }
+   ]
+  },
+  "magnifier": {
+   "layer": "front",
+   "parts": [
+    {
+     "type": "capsule",
+     "bone": "handA",
+     "p0": [0, 6],
+     "p1": [0, 34],
+     "r0": 4.6,
+     "r1": 4.0,
+     "fill": "wood"
+    },
+    {
+     "type": "ellipse",
+     "bone": "handA",
+     "c": [0, 56],
+     "r": [23, 23],
+     "fill": "propDark",
+     "highlight": true
+    },
+    {
+     "type": "ellipse",
+     "bone": "handA",
+     "c": [0, 56],
+     "r": [17, 17],
+     "fill": "glass",
+     "highlight": true
+    }
+   ]
+  },
+  "antenna": {
+   "layer": "preHead",
+   "parts": [
+    {
+     "type": "capsule",
+     "bone": "head",
+     "p0": [12, -58],
+     "p1": [18, -94],
+     "r0": 2.6,
+     "r1": 2.2,
+     "fill": "propDark"
+    },
+    {
+     "type": "ellipse",
+     "bone": "head",
+     "c": [19, -99],
+     "r": [6.5, 6.5],
+     "fill": "led",
+     "blink": true,
+     "highlight": true
+    }
+   ]
+  },
+  "nightcap": {
+   "layer": "head",
+   "parts": [
+    {
+     "type": "poly",
+     "bone": "head",
+     "points": [
+      [-60, -26],
+      [-34, -60],
+      [4, -72],
+      [44, -62],
+      [80, -24],
+      [92, 6],
+      [74, 8],
+      [52, -30],
+      [10, -44],
+      [-52, -14]
+     ],
+     "fill": "fabric",
+     "highlight": true
+    },
+    {
+     "type": "capsule",
+     "bone": "head",
+     "p0": [-62, -20],
+     "p1": [50, -36],
+     "r0": 7,
+     "r1": 7,
+     "fill": "pompom"
+    },
+    {
+     "type": "ellipse",
+     "bone": "head",
+     "c": [86, 12],
+     "r": [11, 11],
+     "fill": "pompom",
+     "highlight": true
+    }
+   ]
+  }
+ },
+ "contexts": {
+  "cyberpunk": ["cyberArm"],
+  "studio": ["headphones"],
+  "lol": ["headset"],
+  "fps": ["headset"],
+  "train": ["headband"],
+  "research": ["magnifier"],
+  "cloud": ["antenna"],
+  "sleep": ["nightcap"]
+ }
 }
