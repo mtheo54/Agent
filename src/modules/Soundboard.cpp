@@ -25,6 +25,18 @@ std::string Soundboard::Key(const std::string& name) {
     return k;
 }
 
+std::string Soundboard::KeyFor(const std::string& nameOrUrl) {
+    if (!IsUrl(nameOrUrl)) return Key(nameOrUrl);
+    std::string path = nameOrUrl;
+    while (!path.empty() && path.back() == '/') path.pop_back();
+    std::string slug = path.substr(path.find_last_of('/') + 1);
+    // « salut-cest-frank-leboeuf-complet-97159 » : l'identifiant numérique final n'est pas un mot du nom
+    if (const auto dash = slug.find_last_of('-'); dash != std::string::npos &&
+        slug.find_first_not_of("0123456789", dash + 1) == std::string::npos && dash + 1 < slug.size())
+        slug.erase(dash);
+    return Key(slug);
+}
+
 const std::vector<std::string>& Soundboard::StarterPack() {
     static const std::vector<std::string> pack{
         "vine boom", "bruh", "c'est vrai", "fahhh", "anime wow", "sad violin",
@@ -55,7 +67,7 @@ std::vector<std::string> Soundboard::Names() const {
 
 bool Soundboard::Has(const std::string& name) const {
     std::scoped_lock lock(mutex_);
-    return files_.count(Key(name)) > 0;
+    return files_.count(KeyFor(name)) > 0;
 }
 
 std::optional<std::pair<std::string, std::string>> ParseMyInstantsFirst(const std::string& html) {
@@ -70,10 +82,18 @@ std::optional<std::pair<std::string, std::string>> ParseMyInstantsFirst(const st
 }
 
 std::optional<std::string> Soundboard::Fetch(const std::string& query, std::string* error) {
-    const std::string key = Key(query);
+    const std::string key = KeyFor(query);
     if (key.empty()) return std::nullopt;
     if (Has(key)) return key;
-    const auto page = http_.Get("https://www.myinstants.com/fr/search/?name=" + HttpClient::UrlEncode(query), 10000);
+    // Lien direct vers un son (page « instant ») : son 1er lecteur est le son lui-même. Seul myinstants.com
+    // est accepté (pas de téléchargement depuis n'importe quel site).
+    const std::string url = IsUrl(query) ? (query.rfind("https://www.myinstants.com/", 0) == 0 ? query : std::string{})
+                                         : "https://www.myinstants.com/fr/search/?name=" + HttpClient::UrlEncode(query);
+    if (url.empty()) {
+        if (error) *error = "lien non pris en charge";
+        return std::nullopt;
+    }
+    const auto page = http_.Get(url, 10000);
     if (!page.Ok()) {
         if (error) *error = page.error.empty() ? "recherche impossible" : page.error;
         return std::nullopt;
@@ -107,7 +127,7 @@ std::optional<std::string> Soundboard::Fetch(const std::string& query, std::stri
 }
 
 std::shared_ptr<const std::vector<float>> Soundboard::Get(const std::string& name) {
-    const std::string key = Key(name);
+    const std::string key = KeyFor(name);
     std::filesystem::path file;
     {
         std::scoped_lock lock(mutex_);

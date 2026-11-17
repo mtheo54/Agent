@@ -90,7 +90,16 @@ void AgentOrchestrator::Post(Job job) {
     cv_.notify_one();
 }
 
+void AgentOrchestrator::OnComeback() {
+    Post([this](std::stop_token) {
+        PlayEventSound("comeback");
+        if (mode_.load() != SystemMode::Gaming) Say(Line("comeback", {}, "Ah, te revoilà."));
+    });
+}
+
 void AgentOrchestrator::OnModeChanged(SystemMode mode) {
+    if (mode == SystemMode::Studio && mode_.load() != SystemMode::Studio)
+        Post([this](std::stop_token) { PlayEventSound("studioStart"); });
     mode_ = mode;
     deviceDirty_ = true;  // GPU <-> CPU appliqué par le worker avant la prochaine génération
     cv_.notify_one();
@@ -434,9 +443,14 @@ void AgentOrchestrator::CheckGameEvents() {
     const auto lol = d_.coach.Latest();
     if (!lol) {
         lastKills_ = lastDeaths_ = -1;
+        inLolGame_ = false;
         return;
     }
     const auto now = std::chrono::steady_clock::now();
+    if (!inLolGame_) {  // la partie vient de commencer (ou on vient de s'y raccrocher en début de partie)
+        inLolGame_ = true;
+        if (lol->gameTimeSec < 120) PlayEventSound("gameStart");
+    }
     if (!lol->result.empty() && lol->result != lastResult_) {
         PlayEventSound(lol->result == "Win" ? "gameWin" : "gameDeath");
         lastResult_ = lol->result;
@@ -722,6 +736,16 @@ bool AgentOrchestrator::HandleLevel0(const std::string& text, std::stop_token st
         return true;
     }
 
+    // « bonne nuit », « à plus », « je me casse » : bruitage de départ + au revoir
+    // Formules sans ambiguïté, ou formules courtes seulement dans un message très court
+    // (« il y a plus de basse » n'est pas un au revoir).
+    if ((ContainsAny(lower, {"bonne nuit", "je vais dormir", "je vais me coucher", "je me casse", "je me barre",
+                             "je déco", "je deco", "à demain"}) && lower.size() < 60) ||
+        (ContainsAny(lower, {"à plus", "a plus", "a demain", "bye", "ciao", "salut je"}) && lower.size() < 20)) {
+        PlayEventSound("goodbye");
+        Say(Line("goodbye", {}, "À plus."));
+        return true;
+    }
     if (HandleSystemCommand(text, lower, stop)) return true;  // volume d'abord : « monte le son » n'est pas un bruitage
     if (HandleSoundboard(text, lower, stop)) return true;
 

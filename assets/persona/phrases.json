@@ -441,5 +441,35 @@
     "sansFiltre": [
       "« {name} » ? Ça existe pas, ton truc. Même myinstants te connaît pas."
     ]
+  },
+  "comeback": {
+    "poli": [
+      "Ah, te revoilà.",
+      "Rebonjour."
+    ],
+    "pote": [
+      "Ah, te revoilà !",
+      "Re ! T'étais passé où ?"
+    ],
+    "sansFiltre": [
+      "Ah, le revenant. J'ai cru que t'étais mort.",
+      "Re. T'étais où, bouffon ? J'ai parlé tout seul pendant une heure.",
+      "Te revoilà. Mentalement j'étais déjà décédé."
+    ]
+  },
+  "goodbye": {
+    "poli": [
+      "Bonne nuit, à demain.",
+      "À plus tard."
+    ],
+    "pote": [
+      "Allez, à plus !",
+      "Bonne nuit frère."
+    ],
+    "sansFiltre": [
+      "Vas-y, casse-toi. Non je rigole, à demain.",
+      "Bonne nuit. Rêve de ton master qui clippe.",
+      "Ciao. Je reste là, dans le noir, tout seul. Tranquille."
+    ]
   }
 }

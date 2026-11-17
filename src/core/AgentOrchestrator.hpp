@@ -95,7 +95,9 @@ public:
         backchannels_ = backchannels;
         expressiveness_ = expressiveness;
     }
-    void OnModeChanged(SystemMode mode);  // thread-safe
+    void OnModeChanged(SystemMode mode);
+    // Retour devant le PC après une absence (fin du mode veille) : bruitage + petit mot.
+    void OnComeback();  // thread-safe
 
     [[nodiscard]] AgentActivity Activity() const noexcept { return activity_.load(); }
     [[nodiscard]] EmotionEstimate LastEmotion() const {
@@ -163,6 +165,7 @@ private:
     // Bruitage choisi pour un moment (cfg.soundEvents) ; rien s'il n'est pas encore téléchargé.
     void PlayEventSound(const std::string& event);
     void CheckGameEvents();  // morts, kills, victoire / défaite (LoL, données live)
+    bool inLolGame_ = false;
     int lastKills_ = -1, lastDeaths_ = -1;
     std::string lastResult_;
     std::chrono::steady_clock::time_point lastGameSound_{};

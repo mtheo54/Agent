@@ -255,8 +255,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
         {cfg, governor, voice, db, brain, gate, web, claude, coach, system, loopback, analyzer, trainer, phrases, soundboard, dataDir, root / L"assets"});
 
     std::atomic<SystemMode> mode{SystemMode::Interactive};
-    governor.SetModeListener([&](SystemMode, SystemMode current) {
+    governor.SetModeListener([&](SystemMode previous, SystemMode current) {
         mode = current;
+        if (previous == SystemMode::Idle && current != SystemMode::Idle) orchestrator.OnComeback();
         voice.SetGamingMode(current == SystemMode::Gaming);
         orchestrator.OnModeChanged(current);
         SetEcoQoS(current == SystemMode::Gaming);

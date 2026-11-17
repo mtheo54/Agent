@@ -111,7 +111,10 @@ Il a ses animations selon ce qu'il fait :
   **Sons aux moments clés** (`soundEvents`, à ton goût) : démarrage « anime wow », mix qui clippe « fahhh »,
   rage bait mordu « emotional damage », mort ou défaite en LoL « oh no », kill / victoire « c'est vrai »
   (au plus un toutes les 45 s, toujours pour un multi-kill), erreur « windows error », fin d'entraînement
-  « suspense ». En partie : sons seulement, il ne te parle pas en plein combat.
+  « suspense », retour après une absence : Frank Lebœuf (« salut c'est Frank Leboeuf »), « bonne nuit » /
+  « à plus » : « windows shutdown », début d'une partie de LoL : « emotional damage ». En partie : sons
+  seulement, il ne te parle pas en plein combat. Un son peut être un nom (recherche) ou un **lien
+  myinstants** exact (`https://www.myinstants.com/fr/instant/…`).
 - **Memes TikTok du moment** (`assets/persona/memes.json`, français surtout, anglais aussi, quelques-uns
   sombres) : de temps en temps, 2-3 lui sont proposés et il en place un si ça colle. Mis à jour en
   novembre 2026 ; les memes meurent vite, édite le fichier pour en ajouter ou en retirer. Toutes ses répliques toutes faites (alertes, confirmations, relances)

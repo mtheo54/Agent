@@ -46,6 +46,10 @@ struct CompanionConfig {
         {"error", "windows error"},       // bug, rien trouvé, réseau, crash
         {"blunder", ""},                  // grosse bêtise : pas de son
         {"trainingDone", "suspense"},     // fin d'entraînement
+        {"studioStart", ""},              // FL Studio lancé : pas de son
+        {"comeback", "https://www.myinstants.com/fr/instant/salut-cest-frank-leboeuf-complet-97159/"},  // retour après absence
+        {"goodbye", "windows shutdown"},  // « bonne nuit », « à plus »
+        {"gameStart", "emotional damage"},  // début d'une partie de LoL
     };
     float micEffect = 0.7f;         // effet « vrai micro » sur sa voix (0 … 1)
     float pitchLife = 0.5f;         // hauteur vivante : dérive et virages (0 … 1)

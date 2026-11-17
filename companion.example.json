@@ -10,7 +10,9 @@
   "soundEvents": {
     "greeting": "anime wow", "clipping": "fahhh", "rageBaitBite": "emotional damage",
     "gameDeath": "oh no", "gameWin": "c'est vrai", "error": "windows error",
-    "blunder": "", "trainingDone": "suspense"
+    "blunder": "", "trainingDone": "suspense", "studioStart": "",
+    "comeback": "https://www.myinstants.com/fr/instant/salut-cest-frank-leboeuf-complet-97159/",
+    "goodbye": "windows shutdown", "gameStart": "emotional damage"
   },
   "neuralVoiceInGame": false,
   "neuralVoiceDevice": "",

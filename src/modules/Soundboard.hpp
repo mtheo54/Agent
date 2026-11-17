@@ -33,6 +33,9 @@ public:
     // Sons proposés par « installe les sons » (recherches myinstants).
     static const std::vector<std::string>& StarterPack();
     static std::string Key(const std::string& name);  // « Vine Boom ! » -> « vine boom »
+    // Nom OU lien myinstants (…/instant/salut-cest-frank-leboeuf-complet-97159/) -> clé de rangement.
+    static std::string KeyFor(const std::string& nameOrUrl);
+    static bool IsUrl(const std::string& s) { return s.rfind("http", 0) == 0 && s.find("myinstants.com") != std::string::npos; }
 
     // Décodage + mise en forme (exposé pour les tests) : MP3 -> mono, rééchantillonné, coupé, normalisé.
     static std::vector<float> DecodeMp3(const std::vector<unsigned char>& mp3, int sampleRate);
