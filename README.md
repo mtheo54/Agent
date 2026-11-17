@@ -82,9 +82,14 @@ Il a ses animations selon ce qu'il fait :
 - **En jeu**, la voix passe sur Piper (CPU) pour ne pas prendre de GPU au jeu ; les relances (« hmm… ») et
   répliques courtes restent celles de la voix neuronale, pré-calculées. `neuralVoiceInGame: true` pour la garder.
   Le grain 8-bit est discret par défaut (`fxIntensity` 0,15).
-- **Trois tons** (réglage `TON`, clé `tone`) : *poli*, *pote*, *sans filtre* (par défaut : argot, verlan,
-  jargon de studio, un gros mot pour l'emphase, vannes ; jamais d'insulte envers toi, et pas de vannes si tu
-  as l'air triste ou fatigué). Toutes ses répliques toutes faites (alertes, confirmations, relances)
+- **Trois tons** (réglage `TON`, clé `tone`) : *poli*, *pote*, *sans filtre*. Sans filtre (par défaut), il
+  parle comme un pote en vocal à 2 h du mat', pas comme un héros de série : ton plat, pince-sans-rire,
+  gros mots normaux, il te chambre et t'insulte gentiment (bouffon, gros naze, « -1000 aura »), jamais sur
+  tes origines, ta religion, ta sexualité, ton physique ou un handicap. Humour un peu sombre, jamais sur le
+  suicide ni quand tu vas vraiment mal (là, pas de vannes).
+- **Memes TikTok du moment** (`assets/persona/memes.json`, français surtout, anglais aussi, quelques-uns
+  sombres) : de temps en temps, 2-3 lui sont proposés et il en place un si ça colle. Mis à jour en
+  novembre 2026 ; les memes meurent vite, édite le fichier pour en ajouter ou en retirer. Toutes ses répliques toutes faites (alertes, confirmations, relances)
   sont dans `assets/persona/phrases.json` : modifiables sans recompiler.
 - **Avis sur ton son, dans le langage d'OMNIS** (dépôt `mtheo54/Mix-master`) :
   - il comprend le jargon de beatmaker grâce au **lexique d'OMNIS** (`assets/omnis/lexique_fr.txt`) :
@@ -184,10 +189,10 @@ nlohmann_json et SQLite sont récupérés automatiquement (FetchContent). Chaque
 
 ## Modèles (`assets/models/`, copiés à côté de l'exe)
 
-- `qwen2.5-3b-instruct-q4_k_m.gguf` : cerveau local (~2 Go) — ou tout autre 3B instruct GGUF (`llmModel` dans `companion.json`)
-- *(optionnel, vision locale)* un modèle vision-langage **et** son projecteur, ex. `Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf`
-  + `mmproj-Qwen2.5-VL-3B-Instruct-f16.gguf` (dépôt `ggml-org/Qwen2.5-VL-3B-Instruct-GGUF`). Il remplace alors le
-  modèle texte (`llmModel` + `llmMmproj`) : un seul modèle pour parler et voir.
+- `Qwen3.5-9B-Q4_K_M.gguf` : cerveau local (~5,7 Go, dépôt `unsloth/Qwen3.5-9B-GGUF`, Apache 2.0). Testé face au
+  3B d'avant : il parle vraiment comme un pote, chambre juste, ne valide plus n'importe quoi. Sa réflexion
+  interne est coupée d'office (réponse immédiate). PC plus modeste : `Qwen3.5-4B-Q4_K_M.gguf`.
+- *(optionnel, vision locale)* `mmproj-F16.gguf` du même dépôt (`llmMmproj`) : le même modèle voit l'écran.
 - `ggml-base-q5_1.bin` : Whisper base quantifié (~60 Mo)
 - **Voix neuronale** (dépôt Hugging Face `Serveurperso/Qwen3-TTS-GGUF`) : `qwen-talker-0.6b-base-Q8_0.gguf`
   (~1 Go) + `qwen-tokenizer-12hz-Q8_0.gguf` (~0,3 Go). Environ 1,5 Go de VRAM.

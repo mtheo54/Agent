@@ -120,6 +120,9 @@ std::string LocalBrain::ApplyTemplate(const std::vector<ChatTurn>& messages) con
     }
     if (n < 0) return {};
     buf.resize(static_cast<size_t>(n));
+    // Modèles « à réflexion » (Qwen3 / Qwen3.5…) : bloc de réflexion vide d'office, comme leur template avec
+    // enable_thinking=false. À l'oral on veut la réponse tout de suite, pas un monologue interne.
+    if (tmpl && std::string_view(tmpl).find("<think>") != std::string_view::npos) buf += "<think>\n\n</think>\n\n";
     return buf;
 }
 

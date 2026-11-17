@@ -55,7 +55,33 @@ std::string NumberToWordsFr(std::int64_t n) {
 }
 
 std::string NormalizeForSpeechFr(const std::string& input) {
-    std::string text = input;
+    std::string text;
+    // Emojis : quelques-uns se disent (« 💀 » = mort de rire), les autres sont retirés (la voix les lirait mal).
+    static const std::pair<const char*, const char*> spoken[] = {
+        {"\xF0\x9F\x92\x80", " je suis mort "},   // 💀
+        {"\xF0\x9F\x98\xAD", " je pleure "},      // 😭
+        {"\xF0\x9F\x98\x82", " mdr "},            // 😂
+        {"\xF0\x9F\xA4\xA3", " mdr "},            // 🤣
+        {"\xF0\x9F\x94\xA5", " ça brûle "},       // 🔥
+    };
+    for (size_t i = 0; i < input.size();) {
+        const unsigned char c = static_cast<unsigned char>(input[i]);
+        bool done = false;
+        for (const auto& [emoji, words] : spoken)
+            if (input.compare(i, 4, emoji) == 0) { text += words; i += 4; done = true; break; }
+        if (done) continue;
+        if (c >= 0xF0) { i += 4; continue; }  // autres emojis (4 octets)
+        if (c == 0xE2 && i + 2 < input.size() && (static_cast<unsigned char>(input[i + 1]) & 0xFC) == 0x9C) {
+            i += 3;  // pictogrammes U+2700-27BF (✨, ❤…)
+            continue;
+        }
+        if (c == 0xEF && i + 2 < input.size() && static_cast<unsigned char>(input[i + 1]) == 0xB8 &&
+            static_cast<unsigned char>(input[i + 2]) == 0x8F) {
+            i += 3;  // sélecteur de variante emoji
+            continue;
+        }
+        text += input[i++];
+    }
     // « 2 980 » ou « 2 980 » (espace insécable) → 2980
     static const std::regex thousands(R"((\d{1,3})(?:[  ]|\xE2\x80\xAF)(\d{3})(?!\d))");
     for (int i = 0; i < 3; ++i) text = std::regex_replace(text, thousands, "$1$2");

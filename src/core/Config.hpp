@@ -47,7 +47,8 @@ struct CompanionConfig {
     bool voiceActivity = false;     // écoute continue (VAD) au lieu du push-to-talk
 
     // --- Niveau 1 : cerveau local (llama.cpp) ---
-    std::filesystem::path llmModel = L"assets/models/qwen2.5-3b-instruct-q4_k_m.gguf";
+    // Qwen3.5 9B (Apache 2.0, ~5,7 Go en Q4_K_M) : bien plus naturel que les 3B pour parler en pote.
+    std::filesystem::path llmModel = L"assets/models/Qwen3.5-9B-Q4_K_M.gguf";
     // Projecteur de vision (mmproj) du MÊME modèle, ex. Qwen2.5-VL-3B. Vide = pas de vision locale
     // (une capture d'écran part alors vers Claude Vision, avec ta permission).
     std::filesystem::path llmMmproj;

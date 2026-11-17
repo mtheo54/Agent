@@ -19,6 +19,7 @@
 #include "audio/VoiceEngine.hpp"
 #include "audio/WasapiLoopback.hpp"
 #include "core/Config.hpp"
+#include "core/MemeBank.hpp"
 #include "core/MixLexicon.hpp"
 #include "core/Phrases.hpp"
 #include "core/LocalBrain.hpp"
@@ -153,6 +154,8 @@ private:
     // Ses dernières façons d'attaquer une réponse : interdites la fois suivante (pas de « Ah ouais ? » en boucle).
     std::deque<std::string> recentOpeners_;
     MixLexicon lexicon_;  // jargon de beatmaker (lexique d'OMNIS)
+    MemeBank memes_;      // memes TikTok FR / EN du moment (assets/persona/memes.json)
+    [[nodiscard]] std::string MemeHint();
     bool studioFocus_ = false;  // question studio ciblée en cours (thread de l'orchestrateur)
     void RememberOpener(const std::string& reply);
     [[nodiscard]] std::string OpenerHint() const;

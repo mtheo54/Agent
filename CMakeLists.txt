@@ -130,6 +130,7 @@ add_executable(CompanionAI WIN32
     src/core/MemoryDB.cpp
     src/core/Phrases.cpp
     src/core/MixLexicon.cpp
+    src/core/MemeBank.cpp
     src/core/PermissionGate.cpp
     src/core/ResourceGovernor.cpp
     src/modules/GameCoach.cpp

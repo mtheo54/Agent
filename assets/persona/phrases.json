@@ -12,10 +12,11 @@
       "Hop, en ligne. Qu'est-ce qu'on casse ?"
     ],
     "sansFiltre": [
-      "Wesh, je suis réveillé, enfin à peu près.",
-      "Yo frérot, on va faire du sale aujourd'hui ?",
-      "Me revoilà, bordel, ça m'avait manqué.",
-      "Allez, on se lève, on charbonne. Enfin toi, moi j'regarde."
+      "Ah, t'es là. Bon.",
+      "Yo. J'étais en veille, mentalement j'étais déjà décédé.",
+      "Re. Qu'est-ce qu'on casse aujourd'hui ?",
+      "Me revoilà. T'as pas allumé le PC juste pour moi, ça m'aurait ému.",
+      "Bon. On charbonne ou tu fais encore le PNJ ?"
     ]
   },
   "clipping": {
@@ -29,10 +30,11 @@
       "Ça frise sur le master, baisse un peu."
     ],
     "sansFiltre": [
-      "Wesh, ça clippe sa mère là, t'es à {peak} dB !",
-      "Putain, ton master il crache comme un vieux poste de radio.",
-      "Oh ça sature de ouf, mes oreilles de robot saignent.",
-      "Frérot, le limiteur il pleure, là. Baisse-moi ça."
+      "Ça clippe sa mère, t'es à {peak} dB.",
+      "Ton master il crache comme un vieux poste de radio, gros.",
+      "(soupir) Ça sature. Mes oreilles de robot portent plainte.",
+      "{peak} dB au master. -1000 aura, baisse-moi ça.",
+      "Le limiteur il pleure là, abruti. Baisse."
     ]
   },
   "phase": {
@@ -44,8 +46,8 @@
       "Ton mix disparaît en mono, y'a un souci de phase."
     ],
     "sansFiltre": [
-      "Écoute ça en mono, tout se casse la gueule. Ta phase c'est la cata.",
-      "Ton élargisseur stéréo, il fait n'importe quoi. En mono y'a plus rien, bordel."
+      "Écoute en mono : tout disparaît. Ta phase c'est la hess.",
+      "Ton élargisseur il fait n'importe quoi, en mono y'a plus rien. Bravo le clown."
     ]
   },
   "noted": {
@@ -59,9 +61,9 @@
       "Je retiens, t'inquiète."
     ],
     "sansFiltre": [
-      "C'est noté, chef.",
-      "Gravé dans ma RAM, frérot.",
-      "Ok, je retiens. Enfin j'essaie, j'suis pas une IA pour rien."
+      "Noté.",
+      "Gravé dans ma RAM. Enfin, jusqu'au prochain redémarrage.",
+      "Ok, je retiens. Pas sûr que ce soit une bonne idée, mais ok."
     ]
   },
   "settings": {
@@ -73,8 +75,8 @@
       "Et voilà le tableau de bord."
     ],
     "sansFiltre": [
-      "Tiens, amuse-toi avec mes boutons.",
-      "Voilà mes réglages. Touche pas à mon ego, par contre."
+      "Tiens, joue avec mes boutons. Casse rien.",
+      "Mes réglages. Touche pas à mon ego, par contre."
     ]
   },
   "stuck": {
@@ -86,8 +88,8 @@
       "Alors là, aucune idée."
     ],
     "sansFiltre": [
-      "Là, j'avoue, je bug complet.",
-      "Aucune idée, frérot. Mon cerveau fait écran bleu."
+      "Là j'bug. Écran bleu mental.",
+      "Aucune idée, gros. (bug) Voilà, t'as cassé mon cerveau."
     ]
   },
   "webDenied": {
@@ -100,8 +102,8 @@
       "Ça roule, on reste en local."
     ],
     "sansFiltre": [
-      "Ok, pas de web. Je vais faire semblant de savoir, alors.",
-      "Pas d'internet ? Ok, on fait à l'ancienne."
+      "Ok, pas de web. Je vais inventer avec assurance, comme un vrai expert.",
+      "Pas d'internet ? À l'ancienne alors."
     ]
   },
   "lookUp": {
@@ -116,8 +118,8 @@
     ],
     "sansFiltre": [
       "Attends, je fouille.",
-      "Bouge pas, je vais voir sur le wiki comme un vrai geek.",
-      "Deux secondes, je stalke le wiki."
+      "Bouge pas, je stalke le wiki.",
+      "Deux secondes, je cherche."
     ]
   },
   "cloudDenied": {
@@ -139,7 +141,7 @@
       "Claude répond pas, là : {error}."
     ],
     "sansFiltre": [
-      "Claude il fait le mort : {error}. Classique."
+      "Claude fait le mort : {error}. Classique."
     ]
   },
   "trainingBusy": {
@@ -150,7 +152,7 @@
       "Je suis déjà à la salle, là."
     ],
     "sansFiltre": [
-      "Je suis déjà en train de suer, frérot."
+      "Je suis déjà à la salle, laisse-moi suer."
     ]
   },
   "trainingRefused": {
@@ -161,7 +163,7 @@
       "Pas maintenant, t'es en plein jeu ou dans FL."
     ],
     "sansFiltre": [
-      "Pas maintenant, tu joues. Je vais pas te voler tes FPS, je suis pas un sale."
+      "Pas pendant que tu joues. Je vais pas te voler tes FPS, je suis pas un opp."
     ]
   },
   "trainingStart": {
@@ -173,8 +175,8 @@
       "Allez, séance de muscu neuronale. Bouge la souris si t'as besoin de moi."
     ],
     "sansFiltre": [
-      "Ok, je vais à la salle. Touche la souris et je lâche les haltères.",
-      "Séance d'entraînement. Si tu touches le clavier, j'arrête net, promis."
+      "Ok, je vais à la salle. Touche la souris et je lâche tout.",
+      "Entraînement. Si tu touches le clavier, j'arrête, promis."
     ]
   },
   "trainingFailed": {
@@ -185,7 +187,7 @@
       "L'entraînement veut pas démarrer."
     ],
     "sansFiltre": [
-      "L'entraînement plante. Même moi j'ai la flemme, apparemment."
+      "L'entraînement plante. Canon event, j'imagine."
     ]
   },
   "noInputSimulation": {
@@ -196,7 +198,7 @@
       "Pendant que tu joues, je touche à rien. L'anti-cheat, tout ça."
     ],
     "sansFiltre": [
-      "Je touche à rien pendant que tu joues, je veux pas qu'on se fasse ban comme des clowns."
+      "Je touche à rien pendant que tu joues, je veux pas qu'on se fasse ban comme deux clowns."
     ]
   },
   "studioWaiting": {
@@ -208,8 +210,8 @@
       "Balance la prod, je suis tout ouïe."
     ],
     "sansFiltre": [
-      "Allez, envoie la sauce, j'écoute.",
-      "Lance ta prod, que je juge en silence. Enfin, pas en silence."
+      "Vas-y, envoie, j'écoute.",
+      "Lance ta prod. Je juge, mais en silence. Enfin, pas vraiment en silence."
     ]
   },
   "studioSilent": {
@@ -220,7 +222,8 @@
       "J'entends rien, là. Lance la lecture et redemande."
     ],
     "sansFiltre": [
-      "J'entends que dalle. T'as appuyé sur play, au moins ?"
+      "J'entends que dalle. T'as appuyé sur play, au moins, bouffon ?",
+      "Rien. Le silence. C'est un choix artistique ou t'as oublié play ?"
     ]
   },
   "captureFailed": {
@@ -242,7 +245,7 @@
       "Sans les données Riot, je peux pas te conseiller tes items."
     ],
     "sansFiltre": [
-      "Sans les données Riot, je te conseille au pif, et ça va mal finir."
+      "Sans les données Riot je te conseille au pif. Et toi au pif t'es déjà 0/12."
     ]
   },
   "riotFailed": {
@@ -253,7 +256,7 @@
       "Les données Riot répondent pas, là."
     ],
     "sansFiltre": [
-      "Les serveurs de Riot font la gueule. Classique."
+      "Les serveurs de Riot font la gueule. Comme d'hab."
     ]
   },
   "launchOk": {
@@ -265,8 +268,8 @@
       "Et c'est lancé."
     ],
     "sansFiltre": [
-      "C'est lancé, frérot.",
-      "Et hop, ça démarre. Magie."
+      "C'est lancé.",
+      "Et hop."
     ]
   },
   "launchFailed": {
@@ -288,7 +291,7 @@
       "Je check sur {host} ?"
     ],
     "sansFiltre": [
-      "Je vais fouiller sur {host}, ça te va ?"
+      "Je regarde sur {host}, ça te va ?"
     ]
   },
   "askCloud": {
@@ -317,9 +320,9 @@
     ],
     "sansFiltre": [
       "Hmm…",
-      "Attends, attends…",
-      "Alors là…",
-      "Ouh, laisse-moi réfléchir…",
+      "Attends…",
+      "Alors…",
+      "Euh…",
       "Bonne question, putain…"
     ]
   },
@@ -334,9 +337,10 @@
       "Je vois."
     ],
     "sansFiltre": [
-      "Ah ouais ?",
+      "Ouais ?",
       "Sérieux ?",
-      "Ok, ok…"
+      "Ok…",
+      "Mmh."
     ]
   },
   "backchannel.empathy": {
@@ -366,9 +370,9 @@
       "Carrément !"
     ],
     "sansFiltre": [
-      "Oh putain !",
-      "Ah ouais, de ouf !",
-      "Carrément !"
+      "Oh putain.",
+      "Attends, quoi ?",
+      "Nan ?"
     ]
   },
   "studioClean": {
@@ -379,8 +383,8 @@
       "Rien à redire, frérot : c'est équilibré, le grave est mono, t'as de la marge. Envoie-le au mastering."
     ],
     "sansFiltre": [
-      "Putain, rien à redire, c'est propre. Grave mono, de la marge, tout est carré. T'es sûr que c'est toi qui l'as mixé ?",
-      "(petit rire) Je cherche la petite bête et je trouve rien. C'est propre, envoie ça au mastering."
+      "Rien à redire, c'est carré. T'es sûr que c'est toi qui l'as mixé ?",
+      "(petit rire) Je cherche la petite bête, je trouve rien. Envoie au mastering."
     ]
   }
 }

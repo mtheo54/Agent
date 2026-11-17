@@ -56,6 +56,7 @@ bool Relevant(const KnowledgeHit& hit, const std::string& subject) {
 
 AgentOrchestrator::AgentOrchestrator(OrchestratorDeps deps) : d_(deps), cfg_(deps.cfg) {
     lexicon_.Load(d_.assetsDir / L"omnis" / L"lexique_fr.txt");
+    memes_.Load(d_.assetsDir / L"persona" / L"memes.json");
     backchannels_ = cfg_.backchannels;
     expressiveness_ = cfg_.expressiveness;
     d_.analyzer.SetAlertCallback([this](MixAlert a, const MixMetrics& m) { OnMixAlert(a, m); });
@@ -348,6 +349,24 @@ std::string AgentOrchestrator::DropRepeatedOpener(const std::string& chunk) cons
     return chunk;
 }
 
+// Memes « de temps en temps » : jamais en ton poli, jamais si l'utilisateur a l'air triste, fatigué ou
+// énervé (là on ne rigole pas), humour noir seulement s'il va bien.
+std::string AgentOrchestrator::MemeHint() {
+    if (cfg_.tone == 0 || memes_.Empty()) return {};
+    bool down = false, joyful = false;
+    {
+        std::scoped_lock lock(emotionMutex_);
+        if (std::chrono::steady_clock::now() - emotionAt_ < std::chrono::seconds(90) && lastEmotion_.confidence >= 0.35f) {
+            down = lastEmotion_.label == VoiceEmotion::Sad || lastEmotion_.label == VoiceEmotion::Tired ||
+                   lastEmotion_.label == VoiceEmotion::Angry || lastEmotion_.label == VoiceEmotion::Stressed;
+            joyful = lastEmotion_.label == VoiceEmotion::Joyful;
+        }
+    }
+    if (down) return {};
+    const float chance = (cfg_.tone == 2 ? 0.35f : 0.2f) + (joyful ? 0.15f : 0.f);
+    return memes_.Hint(chance, /*allowDark=*/cfg_.tone == 2);
+}
+
 std::string AgentOrchestrator::OpenerHint() const {
     if (recentOpeners_.empty()) return {};
     std::string s = "[Style] Ne commence PAS ta réponse par :";
@@ -541,7 +560,7 @@ void AgentOrchestrator::HandleLevel1(const std::string& text, const std::vector<
     }
     std::vector<ChatTurn> messages{{"system", PersonaPrompt()}};
     messages.insert(messages.end(), history.begin(), history.end());
-    const std::string ctx = LiveContext(text) + extraContext + OpenerHint();
+    const std::string ctx = LiveContext(text) + extraContext + OpenerHint() + MemeHint();
     messages.push_back({"user", ctx.empty() ? text : "[Contexte]\n" + ctx + "\n[Message]\n" + text});
 
     bool escalation = false;
