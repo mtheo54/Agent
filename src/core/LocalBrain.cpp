@@ -11,6 +11,9 @@
 #endif
 
 #include <algorithm>
+#include <cstdint>
+#include <cstdio>
+#include <fstream>
 
 namespace companion {
 
@@ -66,6 +69,9 @@ bool LocalBrain::Load(const LocalBrainConfig& cfg) {
         return false;
     }
     cachedTokens_.clear();
+    snapTokens_.clear();
+    snapState_.clear();
+    recurrent_ = llama_model_is_recurrent(model_) || llama_model_is_hybrid(model_);
     if (!cfg.lora.empty() && std::filesystem::exists(cfg.lora)) {
         // Libéré automatiquement avec le modèle.
         if (llama_adapter_lora* adapter = llama_adapter_lora_init(model_, log::Narrow(cfg.lora.wstring()).c_str())) {
@@ -90,13 +96,17 @@ void LocalBrain::Unload() {
     ctx_ = nullptr;
     model_ = nullptr;
     cachedTokens_.clear();
+    snapTokens_.clear();
+    snapState_.clear();
 }
 
 bool LocalBrain::Configure(bool useGpu, int threads) {
     cfg_.threads = threads;
     if (useGpu != useGpu_) {
         useGpu_ = useGpu;
-        if (IsLoaded()) return Load(cfg_);  // rechargement sur le bon périphérique
+        // Changement de périphérique : on libère tout de suite (la VRAM revient au jeu) et on ne recharge
+        // que si on parle au compagnon. Pas de lecture de 5 Go sur le disque pendant que le jeu se lance.
+        if (IsLoaded()) Unload();
     } else if (ctx_) {
         llama_set_n_threads(ctx_, threads, threads);
     }
@@ -146,6 +156,26 @@ std::optional<std::string> LocalBrain::Generate(const std::vector<ChatTurn>& mes
         return std::nullopt;
     }
 
+    // Longueur du prompt système (personnalité) : frontière de la photo d'état. Utile aux modèles récurrents
+    // (leur cache ne se rembobine pas) et à tout modèle sur CPU (en jeu : préremplir 800 tokens = 15 s).
+    size_t sysLen = 0;
+    const bool useSnapshots = recurrent_ || !useGpu_;
+    if (useSnapshots && !messages.empty() && messages.front().role == "system") {
+        const llama_chat_message sys{messages.front().role.c_str(), messages.front().content.c_str()};
+        const char* tmpl = llama_model_chat_template(model_, nullptr);
+        std::string s(messages.front().content.size() * 2 + 256, '\0');
+        int32_t k = llama_chat_apply_template(tmpl, &sys, 1, false, s.data(), static_cast<int32_t>(s.size()));
+        if (k > static_cast<int32_t>(s.size())) { s.resize(static_cast<size_t>(k)); k = llama_chat_apply_template(tmpl, &sys, 1, false, s.data(), k); }
+        if (k > 0) {
+            s.resize(static_cast<size_t>(k));
+            const int m = -llama_tokenize(vocab, s.c_str(), k, nullptr, 0, true, true);
+            std::vector<llama_token> st(static_cast<size_t>(std::max(m, 0)));
+            if (m > 0 && llama_tokenize(vocab, s.c_str(), k, st.data(), m, true, true) > 0 && st.size() < tokens.size() &&
+                std::equal(st.begin(), st.end(), tokens.begin()))
+                sysLen = st.size();
+        }
+    }
+
     // Réutilisation du cache KV : on garde le plus long préfixe commun avec l'appel précédent.
     size_t common = 0;
     while (common < cachedTokens_.size() && common < tokens.size() && cachedTokens_[common] == tokens[common]) ++common;
@@ -155,23 +185,111 @@ std::optional<std::string> LocalBrain::Generate(const std::vector<ChatTurn>& mes
         llama_memory_clear(mem, true);
         common = 0;
     }
+    // Personnalité pas (ou plus) dans le cache : on repart de la photo prise juste après elle — en mémoire,
+    // sinon sur le disque (d'une session à l'autre : même la 1re question d'une partie part tout de suite).
+    if (sysLen > 0 && common < sysLen) {
+        const std::vector<int> sysTokens(tokens.begin(), tokens.begin() + static_cast<std::ptrdiff_t>(sysLen));
+        if (snapTokens_ != sysTokens) LoadSnapshot(sysTokens);
+        if (snapTokens_ == sysTokens && !snapState_.empty()) {
+            llama_memory_clear(mem, true);
+            if (llama_state_seq_set_data(ctx_, snapState_.data(), snapState_.size(), 0) == snapState_.size()) {
+                common = sysLen;
+            } else {
+                llama_memory_clear(mem, true);
+                common = 0;
+                snapState_.clear();
+                snapTokens_.clear();
+            }
+        }
+    }
     cachedTokens_.assign(tokens.begin(), tokens.begin() + static_cast<std::ptrdiff_t>(common));
 
-    for (size_t i = common; i < tokens.size(); i += 512) {
+    for (size_t i = common; i < tokens.size();) {
         if (opt.stop.stop_requested()) return std::nullopt;
-        const int32_t chunk = static_cast<int32_t>(std::min<size_t>(512, tokens.size() - i));
+        // On s'arrête pile à la fin de la personnalité pour en prendre la photo (une seule fois par personnalité).
+        size_t end = std::min(tokens.size(), i + 512);
+        const bool snapHere = sysLen > i && sysLen < end && (snapTokens_.size() != sysLen ||
+                                                             !std::equal(snapTokens_.begin(), snapTokens_.end(), tokens.begin()));
+        if (snapHere) end = sysLen;
+        const int32_t chunk = static_cast<int32_t>(end - i);
         if (llama_decode(ctx_, llama_batch_get_one(tokens.data() + i, chunk)) != 0) {
             llama_memory_clear(mem, true);
             cachedTokens_.clear();
             return std::nullopt;
         }
         cachedTokens_.insert(cachedTokens_.end(), tokens.begin() + static_cast<std::ptrdiff_t>(i),
-                             tokens.begin() + static_cast<std::ptrdiff_t>(i + static_cast<size_t>(chunk)));
+                             tokens.begin() + static_cast<std::ptrdiff_t>(end));
+        i = end;
+        if (snapHere || (sysLen > 0 && i == sysLen && snapTokens_.size() != sysLen)) {
+            snapState_.resize(llama_state_seq_get_size(ctx_, 0));
+            snapState_.resize(llama_state_seq_get_data(ctx_, snapState_.data(), snapState_.size(), 0));
+            snapTokens_.assign(tokens.begin(), tokens.begin() + static_cast<std::ptrdiff_t>(sysLen));
+            SaveSnapshot();
+            log::Info("LocalBrain: photo d'état {} tokens, {} Ko", sysLen, snapState_.size() / 1024);
+        }
     }
 
     return SampleLoop(opt, nCtx, /*trackTokens=*/true);
 }
 
+
+// Photo d'état sur disque : en-tête, tokens de la personnalité, état llama. Le nom porte une empreinte du
+// modèle (nom, taille), du périphérique et des tokens : une personnalité ou un modèle changés = autre fichier.
+std::filesystem::path LocalBrain::SnapshotFile(const std::vector<int>& sysTokens) const {
+    std::uint64_t h = 1469598103934665603ull;
+    const auto mix = [&](const void* p, size_t n) {
+        for (size_t i = 0; i < n; ++i) h = (h ^ static_cast<const unsigned char*>(p)[i]) * 1099511628211ull;
+    };
+    const auto name = cfg_.model.filename().u8string();
+    mix(name.data(), name.size());
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(cfg_.model, ec);
+    mix(&size, sizeof(size));
+    mix(&useGpu_, sizeof(useGpu_));
+    mix(sysTokens.data(), sysTokens.size() * sizeof(int));
+    char buf[40];
+    std::snprintf(buf, sizeof(buf), "brain-%016llx.state", static_cast<unsigned long long>(h));
+    return stateDir_ / buf;
+}
+
+void LocalBrain::SaveSnapshot() const {
+    if (stateDir_.empty() || snapState_.empty()) return;
+    std::error_code ec;
+    std::filesystem::create_directories(stateDir_, ec);
+    const auto file = SnapshotFile(snapTokens_);
+    auto tmp = file;
+    tmp += ".tmp";
+    {
+        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        if (!f) return;
+        const std::uint32_t magic = 0x54534243u, version = 1;  // « CBST »
+        const std::uint64_t nt = snapTokens_.size(), nb = snapState_.size();
+        f.write(reinterpret_cast<const char*>(&magic), 4).write(reinterpret_cast<const char*>(&version), 4);
+        f.write(reinterpret_cast<const char*>(&nt), 8).write(reinterpret_cast<const char*>(snapTokens_.data()), static_cast<std::streamsize>(nt * sizeof(int)));
+        f.write(reinterpret_cast<const char*>(&nb), 8).write(reinterpret_cast<const char*>(snapState_.data()), static_cast<std::streamsize>(nb));
+        if (!f) return;
+    }
+    std::filesystem::rename(tmp, file, ec);  // écriture atomique : jamais de fichier à moitié écrit
+}
+
+void LocalBrain::LoadSnapshot(const std::vector<int>& sysTokens) {
+    if (stateDir_.empty()) return;
+    std::ifstream f(SnapshotFile(sysTokens), std::ios::binary);
+    if (!f) return;
+    std::uint32_t magic = 0, version = 0;
+    std::uint64_t nt = 0, nb = 0;
+    f.read(reinterpret_cast<char*>(&magic), 4).read(reinterpret_cast<char*>(&version), 4).read(reinterpret_cast<char*>(&nt), 8);
+    if (!f || magic != 0x54534243u || version != 1 || nt != sysTokens.size()) return;
+    std::vector<int> toks(nt);
+    f.read(reinterpret_cast<char*>(toks.data()), static_cast<std::streamsize>(nt * sizeof(int))).read(reinterpret_cast<char*>(&nb), 8);
+    if (!f || toks != sysTokens || nb == 0 || nb > (1ull << 32)) return;
+    std::vector<uint8_t> state(nb);
+    f.read(reinterpret_cast<char*>(state.data()), static_cast<std::streamsize>(nb));
+    if (!f) return;
+    snapTokens_ = std::move(toks);
+    snapState_ = std::move(state);
+    log::Info("LocalBrain: photo d'état relue depuis le disque ({} Ko)", snapState_.size() / 1024);
+}
 
 std::string LocalBrain::SampleLoop(const GenerateOptions& opt, int nCtx, bool trackTokens) {
     const llama_vocab* vocab = llama_model_get_vocab(model_);

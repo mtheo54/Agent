@@ -11,6 +11,12 @@
   //   "llmMmproj": "assets/models/mmproj-F16.gguf",
   // PC plus modeste : Qwen3.5-4B-Q4_K_M.gguf (~2,7 Go).
   "llmModel": "assets/models/Qwen3.5-9B-Q4_K_M.gguf",
+  // En jeu : petit modèle sur CPU, chargé seulement si tu lui parles (unsloth/Qwen3.5-2B-GGUF).
+  "llmGamingModel": "assets/models/Qwen3.5-2B-Q4_K_M.gguf",
+  // En jeu, l'avatar : 0 caché, 1 seulement quand il parle ou t'écoute, 2 toujours.
+  "avatarInGame": 1,
+  // En jeu : confiné au dernier cœur, priorité et mémoire basses (le jeu garde le reste).
+  "gameIsolation": true,
   "llmContext": 4096,
   "llmThreads": 4,
   "llmThreadsGaming": 2,

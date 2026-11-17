@@ -111,6 +111,22 @@ Il a ses animations selon ce qu'il fait :
     est dit mot pour mot. Un 3B à qui on confie le conseil technique le déforme.
   Simulation reproductible : `tools/sim/beat.py` (beat raté exprès) + `tools/sim/studiosim.cpp`.
 
+## En jeu : 0 FPS perdu (rapport §2)
+
+Dès qu'un jeu est détecté (processus connu ou appli plein écran) :
+
+| Ressource | Ce que fait le compagnon |
+|---|---|
+| **VRAM** | Le cerveau (≈ 5,7 Go) et la voix neuronale (≈ 1,5 Go) **quittent la carte graphique** immédiatement. Rien n'est rechargé tant que tu ne lui parles pas. |
+| **Cerveau** | Si tu lui parles en jeu : petit modèle (`llmGamingModel`, Qwen3.5 2B ≈ 1,3 Go) **sur CPU**, 2 threads. Une **photo de l'état** après sa personnalité est gardée sur disque (`%LOCALAPPDATA%\CompanionAI\brain-cache`, ~30 Mo) : 1er mot en **0,8 s au lieu de 15 s**, dès la 1re question de la partie (mesuré sur 2 threads). Après la partie, le gros modèle revient sur GPU à la première question. |
+| **CPU** | Processus **confiné au dernier cœur physique** (ses 2 threads SMT) : le jeu garde les 5 autres cœurs pour lui seul. Priorité « inférieure à la normale », EcoQoS (Windows 11). Le fil audio garde MMCSS : pas de craquements. |
+| **RAM** | Priorité mémoire basse et working set rogné à l'entrée en jeu : sous pression, ce sont ses pages qui partent, pas celles du jeu. |
+| **Affichage** | L'avatar est **caché** (une fenêtre posée sur le jeu peut le sortir du *flip indépendant* : latence, FPS) ; il n'apparaît que quand il parle ou t'écoute (`avatarInGame`). Caché, rien n'est dessiné et la boucle ne se réveille que 10 fois par seconde. |
+| **Voix** | Piper sur CPU (relances pré-calculées avec la voix neuronale) ; bugs, émotions et grain 8-bit : 0,045 % d'un cœur, aucune allocation dans la boucle audio. Sortie audio arrêtée quand il ne parle pas (zéro réveil). |
+| **Fond** | Pas d'auto-entraînement, pas d'écoute du mix ; écoute micro seulement en push-to-talk ou VAD (2 threads Whisper). |
+
+Tout se rétablit automatiquement à la sortie du jeu. `gameIsolation: false` pour désactiver le confinement.
+
 ## Réglages
 
 `Ctrl+Alt+O` (ou « ouvre les réglages ») : fenêtre au style du site abrasion — nom, taille, opacité et coin
@@ -203,6 +219,8 @@ nlohmann_json et SQLite sont récupérés automatiquement (FetchContent). Chaque
 - `Qwen3.5-9B-Q4_K_M.gguf` : cerveau local (~5,7 Go, dépôt `unsloth/Qwen3.5-9B-GGUF`, Apache 2.0). Testé face au
   3B d'avant : il parle vraiment comme un pote, chambre juste, ne valide plus n'importe quoi. Sa réflexion
   interne est coupée d'office (réponse immédiate). PC plus modeste : `Qwen3.5-4B-Q4_K_M.gguf`.
+- `Qwen3.5-2B-Q4_K_M.gguf` (≈ 1,3 Go, dépôt `unsloth/Qwen3.5-2B-GGUF`) : cerveau **en jeu**, sur CPU
+  (`llmGamingModel`). Absent : le modèle principal tourne sur CPU en jeu (plus lent).
 - *(optionnel, vision locale)* `mmproj-F16.gguf` du même dépôt (`llmMmproj`) : le même modèle voit l'écran.
 - `ggml-base-q5_1.bin` : Whisper base quantifié (~60 Mo)
 - **Voix neuronale** (dépôt Hugging Face `Serveurperso/Qwen3-TTS-GGUF`) : `qwen-talker-0.6b-base-Q8_0.gguf`

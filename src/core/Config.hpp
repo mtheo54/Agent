@@ -56,6 +56,11 @@ struct CompanionConfig {
     int llmGpuLayers = 99;       // hors jeu : tout sur la RX 9060 XT (Vulkan)
     int llmThreads = 4;
     int llmThreadsGaming = 2;    // en jeu : CPU uniquement, 2 threads, 0 Mo de VRAM
+    // En jeu : petit modèle sur CPU, chargé seulement si tu lui parles (VRAM laissée au jeu). Absent :
+    // le modèle principal sur CPU (plus lent).
+    std::filesystem::path llmGamingModel = L"assets/models/Qwen3.5-2B-Q4_K_M.gguf";
+    int avatarInGame = 1;        // en jeu : 0 caché, 1 seulement quand il parle / t'écoute, 2 toujours
+    bool gameIsolation = true;   // en jeu : confiné au dernier cœur, priorité et mémoire basses
     int llmUnloadAfterMinutes = 10;  // retour sous 80 Mo de RAM en veille (rapport §2)
 
     // --- Recherche web locale (0 token Claude) ---

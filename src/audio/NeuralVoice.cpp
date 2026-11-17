@@ -95,6 +95,7 @@ struct NeuralVoice::Impl {
 NeuralVoice::NeuralVoice() = default;
 NeuralVoice::~NeuralVoice() = default;
 bool NeuralVoice::Ready() const noexcept { return impl_ && impl_->ctx && impl_->styles[0].ok; }
+void NeuralVoice::Unload() noexcept { impl_.reset(); }
 
 bool NeuralVoice::Load(const NeuralVoiceConfig& cfg) {
     impl_.reset();
@@ -202,6 +203,7 @@ struct NeuralVoice::Impl {};
 NeuralVoice::NeuralVoice() = default;
 NeuralVoice::~NeuralVoice() = default;
 bool NeuralVoice::Ready() const noexcept { return false; }
+void NeuralVoice::Unload() noexcept {}
 bool NeuralVoice::Load(const NeuralVoiceConfig&) { return false; }
 bool NeuralVoice::Speak(const std::string&, SpeakingStyle, const ChunkFn&, float) { return false; }
 

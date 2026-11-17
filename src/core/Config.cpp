@@ -35,6 +35,12 @@ CompanionConfig LoadConfig(const std::filesystem::path& jsonFile) {
             const auto utf8 = j["llmModel"].get<std::string>();
             cfg.llmModel = std::filesystem::path(std::u8string(utf8.begin(), utf8.end()));
         }
+        if (j.contains("llmGamingModel")) {
+            const auto utf8 = j["llmGamingModel"].get<std::string>();
+            cfg.llmGamingModel = std::filesystem::path(std::u8string(utf8.begin(), utf8.end()));
+        }
+        cfg.avatarInGame = std::clamp(j.value("avatarInGame", cfg.avatarInGame), 0, 2);
+        cfg.gameIsolation = j.value("gameIsolation", cfg.gameIsolation);
         if (j.contains("llmMmproj")) {
             const auto utf8 = j["llmMmproj"].get<std::string>();
             cfg.llmMmproj = std::filesystem::path(std::u8string(utf8.begin(), utf8.end()));

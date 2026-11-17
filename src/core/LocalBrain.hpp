@@ -58,6 +58,10 @@ public:
     bool Load(const LocalBrainConfig& cfg);
     void Unload();
     [[nodiscard]] bool IsLoaded() const noexcept { return ctx_ != nullptr; }
+    [[nodiscard]] const std::filesystem::path& ModelPath() const noexcept { return cfg_.model; }
+    [[nodiscard]] size_t SnapshotBytes() const noexcept { return snapState_.size(); }
+    // Dossier où garder les photos d'état (une par modèle + personnalité, ~30 Mo) ; vide = mémoire seulement.
+    void SetStateCacheDir(std::filesystem::path dir) { stateDir_ = std::move(dir); }
     [[nodiscard]] bool Available() const;  // fichier modèle présent et llama.cpp compilé
 
     // Bascule GPU <-> CPU (recharge si nécessaire). threads s'applique immédiatement.
@@ -81,6 +85,16 @@ private:
     llama_context* ctx_ = nullptr;
     mtmd_context* mtmd_ = nullptr;
     std::vector<int> cachedTokens_;  // tokens présents dans le cache KV (séquence 0)
+    // Modèles récurrents / hybrides (Qwen3.5…) : leur état ne se « rembobine » pas, la réutilisation du
+    // préfixe échoue. On garde donc une photo de l'état juste après la personnalité (prompt système,
+    // stable) et on la restaure : seule la fin du prompt est recalculée (rapport : réponses instantanées).
+    bool recurrent_ = false;
+    std::vector<int> snapTokens_;
+    std::vector<uint8_t> snapState_;
+    std::filesystem::path stateDir_;
+    [[nodiscard]] std::filesystem::path SnapshotFile(const std::vector<int>& sysTokens) const;
+    void SaveSnapshot() const;
+    void LoadSnapshot(const std::vector<int>& sysTokens);
 };
 
 }  // namespace companion

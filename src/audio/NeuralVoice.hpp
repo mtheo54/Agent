@@ -41,6 +41,7 @@ public:
     NeuralVoice& operator=(const NeuralVoice&) = delete;
 
     bool Load(const NeuralVoiceConfig& cfg);
+    void Unload() noexcept;  // libère la VRAM (contexte GGML, prises de référence, DLL)
     [[nodiscard]] bool Ready() const noexcept;
 
     // Bloquant (thread de synthèse). Texte déjà normalisé ou non : on le normalise ici.

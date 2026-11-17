@@ -305,11 +305,14 @@ std::string AgentOrchestrator::LiveContext(const std::string& question) const {
 
 bool AgentOrchestrator::EnsureBrain() {
     lastBrainUse_ = std::chrono::steady_clock::now();
-    if (d_.brain.IsLoaded()) return true;
     const bool gaming = mode_.load() == SystemMode::Gaming;
+    // En jeu : petit modèle sur CPU (le jeu garde la VRAM et 5 cœurs sur 6) ; sinon le modèle principal.
+    const bool small = gaming && std::filesystem::exists(cfg_.llmGamingModel);
+    const auto& wanted = small ? cfg_.llmGamingModel : cfg_.llmModel;
+    if (d_.brain.IsLoaded() && d_.brain.ModelPath() == wanted) return true;
     LocalBrainConfig bc;
-    bc.model = cfg_.llmModel;
-    bc.mmproj = cfg_.llmMmproj;
+    bc.model = wanted;
+    bc.mmproj = small ? std::filesystem::path{} : cfg_.llmMmproj;  // pas de vision en jeu
     bc.lora = cfg_.loraAdapter;
     bc.contextTokens = cfg_.llmContext;
     bc.gpuLayers = cfg_.llmGpuLayers;

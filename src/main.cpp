@@ -43,6 +43,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <cstring>
 #include <chrono>
 #include <filesystem>
 #include <mutex>
@@ -87,6 +88,73 @@ void SetEcoQoS(bool on) {
     SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &s, sizeof(s));
 }
 
+// Isolation en jeu (rapport : 0 % de FPS perdus) :
+//  - CPU : le processus est confiné au DERNIER cœur physique (ses 2 threads SMT) via les « CPU sets » de
+//    Windows 10+ ; sur un CPU hybride, un cœur de la classe la plus économe. Le jeu garde tous les autres.
+//  - priorité « inférieure à la normale » (le fil audio garde MMCSS pour ne pas craquer) ;
+//  - mémoire en priorité basse + rognage du working set : sous pression, ce sont nos pages qui partent.
+// API résolues dynamiquement (absentes des vieux en-têtes MinGW, et de Windows < 10) : sinon, ignoré.
+void SetGameIsolation(bool on) {
+    using GetInfoFn = BOOL(WINAPI*)(void*, ULONG, PULONG, HANDLE, ULONG);
+    using SetDefaultFn = BOOL(WINAPI*)(HANDLE, const ULONG*, ULONG);
+    HMODULE k32 = GetModuleHandleW(L"kernel32.dll");
+    const auto getInfo = reinterpret_cast<GetInfoFn>(reinterpret_cast<void*>(GetProcAddress(k32, "GetSystemCpuSetInformation")));
+    const auto setDefault = reinterpret_cast<SetDefaultFn>(reinterpret_cast<void*>(GetProcAddress(k32, "SetProcessDefaultCpuSets")));
+    if (getInfo && setDefault) {
+        if (on) {
+            ULONG len = 0;
+            getInfo(nullptr, 0, &len, GetCurrentProcess(), 0);
+            std::vector<BYTE> buf(len);
+            std::vector<ULONG> ids;
+            if (len && getInfo(buf.data(), len, &len, GetCurrentProcess(), 0)) {
+                // SYSTEM_CPU_SET_INFORMATION (disposition documentée) : Size@0, Type@4, Id@8, Group@12,
+                // CoreIndex@15, EfficiencyClass@18. On vise le cœur d'indice max dans la classe la plus basse.
+                struct Entry { ULONG id; BYTE core, eff; WORD group; };
+                std::vector<Entry> all;
+                for (ULONG off = 0; off + 24 <= len;) {
+                    const BYTE* e = buf.data() + off;
+                    DWORD size = 0, type = 0;
+                    std::memcpy(&size, e, 4);
+                    std::memcpy(&type, e + 4, 4);
+                    if (size < 24) break;
+                    if (type == 0) {  // CpuSetInformation
+                        Entry x{};
+                        std::memcpy(&x.id, e + 8, 4);
+                        std::memcpy(&x.group, e + 12, 2);
+                        x.core = e[15];
+                        x.eff = e[18];
+                        all.push_back(x);
+                    }
+                    off += size;
+                }
+                if (!all.empty()) {
+                    BYTE minEff = 255;
+                    for (const auto& x : all) minEff = std::min(minEff, x.eff);
+                    int bestCore = -1;
+                    WORD bestGroup = 0;
+                    for (const auto& x : all)
+                        if (x.eff == minEff && (x.group > bestGroup || (x.group == bestGroup && x.core > bestCore))) {
+                            bestGroup = x.group;
+                            bestCore = x.core;
+                        }
+                    for (const auto& x : all)
+                        if (x.eff == minEff && x.group == bestGroup && x.core == bestCore) ids.push_back(x.id);
+                    // Machine à 1 ou 2 cœurs : on ne confine pas (rien à protéger, tout à perdre).
+                    if (all.size() <= 2) ids.clear();
+                }
+            }
+            if (!ids.empty()) setDefault(GetCurrentProcess(), ids.data(), static_cast<ULONG>(ids.size()));
+        } else {
+            setDefault(GetCurrentProcess(), nullptr, 0);  // retour à tous les cœurs
+        }
+    }
+    SetPriorityClass(GetCurrentProcess(), on ? BELOW_NORMAL_PRIORITY_CLASS : NORMAL_PRIORITY_CLASS);
+    MEMORY_PRIORITY_INFORMATION mp{};
+    mp.MemoryPriority = on ? MEMORY_PRIORITY_LOW : MEMORY_PRIORITY_NORMAL;
+    SetProcessInformation(GetCurrentProcess(), ProcessMemoryPriority, &mp, sizeof(mp));
+    if (on) SetProcessWorkingSetSize(GetCurrentProcess(), static_cast<SIZE_T>(-1), static_cast<SIZE_T>(-1));  // rend la RAM inutilisée
+}
+
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
@@ -115,6 +183,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     CompanionConfig cfg = LoadConfig(root / L"companion.json");
     if (cfg.llmModel.is_relative()) cfg.llmModel = root / cfg.llmModel;
     if (!cfg.llmMmproj.empty() && cfg.llmMmproj.is_relative()) cfg.llmMmproj = root / cfg.llmMmproj;
+    if (cfg.llmGamingModel.is_relative()) cfg.llmGamingModel = root / cfg.llmGamingModel;
     if (cfg.loraAdapter.is_relative()) cfg.loraAdapter = root / cfg.loraAdapter;
 
     // --- Overlay + avatar ---------------------------------------------------
@@ -166,6 +235,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     if (auto baseline = db.GetProfile("voice.baseline")) voice.LoadVoiceBaseline(*baseline);  // ta voix habituelle
     HttpClient http(cfg.userAgent);
     LocalBrain brain;
+    brain.SetStateCacheDir(dataDir / L"brain-cache");  // photos d'état : réponses instantanées dès la 1re question
     PermissionGate gate(db, [&voice](const std::string& question) { voice.Speak(question); });
     WebResearcher web(http, cfg.wikis);
     ClaudeClient claude(http, cfg.claudeModel, cfg.claudeEffort);
@@ -184,6 +254,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
         voice.SetGamingMode(current == SystemMode::Gaming);
         orchestrator.OnModeChanged(current);
         SetEcoQoS(current == SystemMode::Gaming);
+        if (cfg.gameIsolation) SetGameIsolation(current == SystemMode::Gaming);
     });
     // Réactions et humeurs décidées par l'orchestrateur -> personnage (thread de rendu).
     AvatarCommands avatarCmds;
@@ -287,12 +358,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     // --- Boucle principale : messages + rendu cadencé -------------------------
     using clock = std::chrono::steady_clock;
     auto last = clock::now();
+    auto lastTalk = clock::time_point{};
+    bool userVisible = true;  // Ctrl+Alt+H ; en jeu, avatarInGame décide en plus
     bool running = true;
     while (running) {
         const SystemMode m = mode.load();
         // L'animation est à 24 i/s (12 en jeu) : on se réveille au rythme de 24 Hz et l'avatar
         // dit lui-même quand une nouvelle image est due. Rien n'est redessiné entre deux images.
-        const auto frameBudget = std::chrono::microseconds(41'667);
+        // Avatar caché (jeu, ou Ctrl+Alt+H) : réveil 10 fois par seconde seulement, rien n'est dessiné.
+        const auto frameBudget = overlay.IsVisible() ? std::chrono::microseconds(41'667) : std::chrono::microseconds(100'000);
         const auto waitMs =
             std::chrono::duration_cast<std::chrono::milliseconds>(frameBudget - (clock::now() - last)).count();
         MsgWaitForMultipleObjectsEx(0, nullptr, static_cast<DWORD>(std::max<long long>(0, waitMs)), QS_ALLINPUT,
@@ -307,7 +381,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
                         if (voice.IsListening()) voice.EndListening();
                         else voice.BeginListening();
                         break;
-                    case kHotkeyToggle: overlay.SetVisible(!overlay.IsVisible()); break;
+                    case kHotkeyToggle: userVisible = !userVisible; break;
                     case kHotkeyQuit: running = false; break;
                     case kHotkeySettings: openSettings(); break;
                     case kHotkeyVad:
@@ -368,7 +442,19 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
             avatar.SetContexts(contexts);
         }
         settings.Tick(dt);
-        const bool newFrame = avatar.Update(dt, voice.VoiceRms());
+        // En jeu, une fenêtre posée sur le jeu peut le sortir du « flip indépendant » (latence, FPS) :
+        // l'avatar n'apparaît que quand il parle ou t'écoute (avatarInGame = 1), et disparaît 2 s après.
+        const bool talking = voice.IsSpeaking() || voice.IsListening();
+        if (talking) lastTalk = now;
+        bool wantVisible = userVisible;
+        if (m == SystemMode::Gaming)
+            wantVisible = userVisible && (cfg.avatarInGame == 2 || (cfg.avatarInGame == 1 && now - lastTalk < std::chrono::seconds(2)));
+        bool forceFrame = false;
+        if (wantVisible != overlay.IsVisible()) {
+            overlay.SetVisible(wantVisible);
+            forceFrame = wantVisible;  // réapparition : une image tout de suite
+        }
+        const bool newFrame = avatar.Update(dt, voice.VoiceRms()) || forceFrame;
 
         if (newFrame && overlay.IsVisible()) {
             if (ID2D1DeviceContext* ctx = overlay.BeginFrame()) {

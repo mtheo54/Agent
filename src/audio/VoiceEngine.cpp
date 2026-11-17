@@ -996,7 +996,15 @@ void VoiceEngine::SetMood(float mood01) noexcept {
     impl_->fx.SetMood(impl_->baseMood.load());
 }
 float VoiceEngine::VoiceRms() const noexcept { return impl_->rms.load(std::memory_order_relaxed); }
-void VoiceEngine::SetGamingMode(bool gaming) noexcept { impl_->gaming = gaming; }
+void VoiceEngine::SetGamingMode(bool gaming) noexcept {
+    auto& d = *impl_;
+    if (d.gaming.exchange(gaming) == gaming) return;
+    // En jeu, la voix neuronale rend sa VRAM (~1,5 Go) au jeu ; elle revient en arrière-plan après la partie
+    // (Piper répond en attendant). Fait sur le thread de synthèse : jamais pendant une phrase.
+    if (!d.neuralEnabled.load() || d.neuralInGame.load()) return;
+    if (gaming) d.Post([&d] { if (d.gaming.load()) d.neural.Unload(); });
+    else d.Post([&d] { if (!d.gaming.load() && d.neuralEnabled.load() && !d.neural.Ready()) d.neural.Load(d.cfg.neural); });
+}
 void VoiceEngine::SetNeuralVoice(bool enabled, bool inGame) noexcept {
     auto& d = *impl_;
     d.neuralInGame = inGame;
