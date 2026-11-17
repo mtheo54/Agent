@@ -8,12 +8,15 @@
 //
 // Le RMS est mesuré au moment du rendu : l'animation est synchronisée avec ce que l'on entend.
 
+#include "audio/VoiceEmotion.hpp"
 #include "audio/VoiceFX.hpp"
 
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <map>
+#include <vector>
 #include <memory>
 #include <string>
 
@@ -36,9 +39,18 @@ enum class ListenMode : std::uint8_t {
     VoiceActivity,  // micro ouvert en continu, segments de parole détectés automatiquement
 };
 
+// Style de diction appliqué à la synthèse : vitesse et expressivité de Piper, grain 8-bit.
+enum class SpeakingStyle : std::uint8_t {
+    Normal,
+    Bright,  // enthousiaste : un peu plus vif et plus expressif
+    Soft,    // doux : plus lent, plus posé, moins de grain
+    Calm,    // apaisant : posé, régulier
+};
+
 class VoiceEngine {
 public:
-    using TranscriptCallback = std::function<void(std::string text)>;
+    // Texte reconnu + émotion perçue dans la voix (ton, intonation, énergie, débit).
+    using TranscriptCallback = std::function<void(std::string text, EmotionEstimate emotion)>;
 
     VoiceEngine();
     ~VoiceEngine();
@@ -59,12 +71,24 @@ public:
     [[nodiscard]] bool IsListening() const noexcept;
 
     // --- TTS ---
-    void Speak(std::string text);  // asynchrone, mis en file
+    void Speak(std::string text, SpeakingStyle style = SpeakingStyle::Normal);  // asynchrone, mis en file
+
+    // --- Parole humaine ---
+    // Relances courtes (« Hmm… », « Attends… ») synthétisées à l'avance par catégorie, puis jouées
+    // instantanément pendant que le modèle prépare sa réponse. Catégories : think, ack, empathy, excited.
+    void PrepareBackchannels(std::map<std::string, std::vector<std::string>> phrases);
+    bool PlayBackchannel(const std::string& category);  // false si rien de prêt ou s'il parle déjà
+    // Interruption : en écoute continue, si l'utilisateur parle par-dessus, il se tait.
+    void SetBargeIn(bool enabled, std::function<void()> onBargeIn = {});
+    void SetEmotionDetection(bool enabled) noexcept;
+    void SetBaseSpeechRate(float lengthScale) noexcept;  // 0,85 rapide … 1,2 lent
+    [[nodiscard]] std::string VoiceBaseline() const;     // voix habituelle apprise (à persister)
+    void LoadVoiceBaseline(const std::string& s);
     void StopSpeaking();           // vide la file et coupe la voix immédiatement
     [[nodiscard]] bool IsSpeaking() const noexcept;
 
     // --- Expression ---
-    void SetMood(float mood01) noexcept;           // module l'intensité 8-bit
+    void SetMood(float mood01) noexcept;           // grain 8-bit de base (les styles le modulent)
     [[nodiscard]] float VoiceRms() const noexcept;  // pour CartoonAvatar (thread-safe)
     void SetGamingMode(bool gaming) noexcept;       // réduit les threads STT
 

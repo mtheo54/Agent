@@ -103,6 +103,7 @@ endif()
 add_executable(CompanionAI WIN32
     src/main.cpp
     src/audio/OmnisAnalyzer.cpp
+    src/audio/VoiceEmotion.cpp
     src/audio/WasapiLoopback.cpp
     src/core/AgentOrchestrator.cpp
     src/core/Config.cpp
@@ -120,6 +121,8 @@ add_executable(CompanionAI WIN32
     src/audio/VoiceEngine.cpp
     src/render/OverlayWindow.cpp
     src/render/CartoonAvatar.cpp
+    src/ui/ConfigView.cpp
+    src/ui/ConfigWindow.cpp
 )
 
 target_include_directories(CompanionAI PRIVATE src)
@@ -145,7 +148,7 @@ endif()
 target_link_libraries(CompanionAI PRIVATE
     nlohmann_json::nlohmann_json
     sqlite3
-    d3d11 dxgi dcomp d2d1
+    d3d11 dxgi dcomp d2d1 dwrite
     ole32 oleaut32 uuid avrt pdh shell32 user32 windowscodecs winhttp advapi32
     $<$<BOOL:${COMPANION_WITH_LLAMA}>:llama>
     $<$<BOOL:${COMPANION_WITH_LLAMA}>:mtmd>

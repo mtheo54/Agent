@@ -27,6 +27,20 @@ struct AppShortcut {
 struct CompanionConfig {
     std::string name = "Omnis";  // nom du personnage
 
+    // --- Personnage (fenêtre de configuration) ---
+    float avatarScale = 1.f;        // 0,6 … 1,6
+    float avatarOpacity = 1.f;      // 0,3 … 1
+    int avatarCorner = 3;           // 0 haut-gauche, 1 haut-droite, 2 bas-gauche, 3 bas-droite
+    float expressiveness = 0.8f;    // fréquence des gestes et réactions (0 … 1)
+
+    // --- Voix ---
+    float fxIntensity = 0.5f;       // grain 8-bit de base (0 … 1)
+    float speechRate = 1.f;         // 0,85 rapide … 1,2 lent
+    bool backchannels = true;       // relances orales instantanées (« Hmm… »)
+    bool bargeIn = true;            // on peut lui couper la parole (écoute continue)
+    bool emotionDetection = true;   // émotion perçue dans la voix
+    bool voiceActivity = false;     // écoute continue (VAD) au lieu du push-to-talk
+
     // --- Niveau 1 : cerveau local (llama.cpp) ---
     std::filesystem::path llmModel = L"assets/models/qwen2.5-3b-instruct-q4_k_m.gguf";
     // Projecteur de vision (mmproj) du MÊME modèle, ex. Qwen2.5-VL-3B. Vide = pas de vision locale
@@ -79,5 +93,7 @@ struct CompanionConfig {
 
 // Charge companion.json s'il existe (clés optionnelles, mêmes noms que ci-dessus).
 CompanionConfig LoadConfig(const std::filesystem::path& jsonFile);
+// Enregistre les réglages modifiables dans companion.json (les autres clés du fichier sont conservées).
+bool SaveConfig(const CompanionConfig& cfg, const std::filesystem::path& jsonFile);
 
 }  // namespace companion

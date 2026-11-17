@@ -54,7 +54,9 @@ bool Relevant(const KnowledgeHit& hit, const std::string& subject) {
 
 }  // namespace
 
-AgentOrchestrator::AgentOrchestrator(OrchestratorDeps deps) : d_(deps) {
+AgentOrchestrator::AgentOrchestrator(OrchestratorDeps deps) : d_(deps), cfg_(deps.cfg) {
+    backchannels_ = cfg_.backchannels;
+    expressiveness_ = cfg_.expressiveness;
     d_.analyzer.SetAlertCallback([this](MixAlert a, const MixMetrics& m) { OnMixAlert(a, m); });
 }
 AgentOrchestrator::~AgentOrchestrator() { Stop(); }
@@ -92,9 +94,82 @@ void AgentOrchestrator::OnModeChanged(SystemMode mode) {
     cv_.notify_one();
 }
 
-void AgentOrchestrator::OnTranscript(std::string text) {
+void AgentOrchestrator::SetAvatarCallbacks(AvatarFn onExpression, AvatarFn onMood) {
+    onExpression_ = std::move(onExpression);
+    onMood_ = std::move(onMood);
+}
+
+void AgentOrchestrator::React(const std::string& clip) {
+    if (clip.empty() || !onExpression_) return;
+    // Un humain ne ponctue pas chaque phrase d'un geste : l'expressivité règle la fréquence.
+    const unsigned r = rng_.fetch_add(0x9E3779B9u) * 2654435761u;
+    if (static_cast<float>((r >> 8) % 1000) / 1000.f < expressiveness_.load()) onExpression_(clip);
+}
+
+void AgentOrchestrator::SetMoodFor(const std::string& clip, int seconds) {
+    if (!onMood_) return;
+    onMood_(clip);
+    std::scoped_lock lock(emotionMutex_);
+    moodUntil_ = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+    moodActive_ = clip != "idle";
+}
+
+std::string AgentOrchestrator::ToneContext() const {
+    std::scoped_lock lock(emotionMutex_);
+    if (std::chrono::steady_clock::now() - emotionAt_ > std::chrono::seconds(90) || lastEmotion_.confidence < 0.35f ||
+        lastEmotion_.label == VoiceEmotion::Neutral)
+        return {};
+    return std::format("[Ton de voix] Il semble {} ({}).\n", ToString(lastEmotion_.label), lastEmotion_.description);
+}
+
+void AgentOrchestrator::UpdateConfig(const CompanionConfig& cfg) {
+    SetHumanizer(cfg.backchannels, cfg.expressiveness);
+    Post([this, cfg](std::stop_token) { cfg_ = cfg; });  // cfg arrive avec les chemins déjà résolus
+}
+
+void AgentOrchestrator::OnBargeIn() {
+    {
+        std::scoped_lock lock(mutex_);
+        currentJob_.request_stop();  // la génération en cours s'arrête ; la nouvelle phrase arrive
+    }
+    React("nod");  // « oui, vas-y »
+}
+
+void AgentOrchestrator::OnTranscript(std::string text, EmotionEstimate emotion) {
     text = Trim(std::move(text));
     if (text.empty()) return;
+
+    // Émotion : la voix donne l'activation, les mots tranchent la tonalité.
+    const EmotionEstimate e = FuseWithText(std::move(emotion), text);
+    {
+        std::scoped_lock lock(emotionMutex_);
+        lastEmotion_ = e;
+        emotionAt_ = std::chrono::steady_clock::now();
+    }
+    d_.db.SetProfile("voice.baseline", d_.voice.VoiceBaseline());
+    if (e.confidence >= 0.35f) {
+        switch (e.label) {
+            case VoiceEmotion::Joyful:
+                style_ = SpeakingStyle::Bright;
+                React(TextSentiment(text) > 0.5f && ContainsAny(Lower(text), {"haha", "mdr", "ahah"}) ? "laugh" : "happy");
+                break;
+            case VoiceEmotion::Sad:
+            case VoiceEmotion::Tired:
+                style_ = SpeakingStyle::Soft;
+                SetMoodFor("empathy", 120);
+                break;
+            case VoiceEmotion::Angry:
+            case VoiceEmotion::Stressed:
+                style_ = SpeakingStyle::Calm;
+                SetMoodFor("soothe", 90);
+                break;
+            default:
+                style_ = SpeakingStyle::Normal;
+                break;
+        }
+    } else {
+        style_ = SpeakingStyle::Normal;
+    }
     // Réponse à une question du Permission Gate : consommée immédiatement (le worker attend).
     if (d_.gate.OnUserReply(text)) return;
 
@@ -133,7 +208,7 @@ void AgentOrchestrator::WorkerMain(std::stop_token st) {
         UpdateStudioCapture();
         if (deviceDirty_.exchange(false)) {
             const bool gaming = mode_.load() == SystemMode::Gaming;
-            d_.brain.Configure(!gaming, gaming ? d_.cfg.llmThreadsGaming : d_.cfg.llmThreads);
+            d_.brain.Configure(!gaming, gaming ? cfg_.llmThreadsGaming : cfg_.llmThreads);
         }
         if (job) {
             std::stop_token jobStop;
@@ -144,16 +219,30 @@ void AgentOrchestrator::WorkerMain(std::stop_token st) {
             job(jobStop);
             activity_ = AgentActivity::Idle;
         }
+        // Fin d'une humeur temporaire (empathie, apaisement) : retour à la posture normale.
+        {
+            bool expire = false;
+            {
+                std::scoped_lock lock(emotionMutex_);
+                expire = moodActive_ && std::chrono::steady_clock::now() > moodUntil_;
+                if (expire) moodActive_ = false;
+            }
+            if (expire) {
+                if (onMood_) onMood_("idle");
+                style_ = SpeakingStyle::Normal;
+            }
+        }
+
         // Auto-entraînement : PC inactif (> 5 min, charge < 25 %), des sujets à apprendre, pas trop souvent.
-        if (d_.cfg.autoTraining && !d_.trainer.Running() &&
-            std::chrono::steady_clock::now() - lastAutoTraining_ > std::chrono::minutes(d_.cfg.autoTrainingEveryMinutes) &&
+        if (cfg_.autoTraining && !d_.trainer.Running() &&
+            std::chrono::steady_clock::now() - lastAutoTraining_ > std::chrono::minutes(cfg_.autoTrainingEveryMinutes) &&
             d_.governor.CanStartAutoTraining() &&
-            !d_.db.PendingTrainingTopics(1, d_.cfg.knowledgeMaxAgeDays * 86400LL, 86400).empty())
+            !d_.db.PendingTrainingTopics(1, cfg_.knowledgeMaxAgeDays * 86400LL, 86400).empty())
             StartTraining(/*manual=*/false);
 
         // Budget RAM veille (< 80 Mo) : on décharge le modèle après une période sans conversation.
         if (d_.brain.IsLoaded() &&
-            std::chrono::steady_clock::now() - lastBrainUse_ > std::chrono::minutes(d_.cfg.llmUnloadAfterMinutes)) {
+            std::chrono::steady_clock::now() - lastBrainUse_ > std::chrono::minutes(cfg_.llmUnloadAfterMinutes)) {
             d_.brain.Unload();
             log::Info("Orchestrator: modèle local déchargé (inactivité)");
         }
@@ -170,7 +259,7 @@ void AgentOrchestrator::UpdateStudioCapture() {
         d_.analyzer.Reset();
         d_.analyzer.Start();
         auto sink = [this](const float* data, std::size_t frames) { d_.analyzer.Push(data, frames); };
-        const std::wstring proc(d_.cfg.studioProcess.begin(), d_.cfg.studioProcess.end());
+        const std::wstring proc(cfg_.studioProcess.begin(), cfg_.studioProcess.end());
         // FL Studio seul si possible (la voix du compagnon n'est pas captée), sinon le mix système.
         if (!(studio && d_.loopback.Start(proc, sink))) d_.loopback.Start(L"", sink);
     } else if (!wanted && d_.loopback.Running()) {
@@ -181,7 +270,7 @@ void AgentOrchestrator::UpdateStudioCapture() {
 
 void AgentOrchestrator::OnMixAlert(MixAlert alert, const MixMetrics& m) {
     // Thread d'analyse. Niveau 0 : pas de modèle, phrase fixe, limitée dans le temps par l'analyseur.
-    if (!d_.cfg.studioAlerts || mode_.load() != SystemMode::Studio || d_.voice.IsSpeaking()) return;
+    if (!cfg_.studioAlerts || mode_.load() != SystemMode::Studio || d_.voice.IsSpeaking()) return;
     if (alert == MixAlert::Clipping)
         d_.voice.Speak(std::format("Attention, ça clippe : crête à {:.1f} dB.", m.peakDb));
     else
@@ -189,10 +278,10 @@ void AgentOrchestrator::OnMixAlert(MixAlert alert, const MixMetrics& m) {
 }
 
 // ---------------------------------------------------------------------------
-std::string AgentOrchestrator::PersonaPrompt() const { return companion::PersonaPrompt(d_.cfg.name); }
+std::string AgentOrchestrator::PersonaPrompt() const { return companion::PersonaPrompt(cfg_.name); }
 
 std::string AgentOrchestrator::LiveContext(const std::string& question) const {
-    std::string ctx;
+    std::string ctx = ToneContext();
     if (auto lol = d_.coach.Latest()) ctx += lol->ToPromptSummary() + "\n";
     if (d_.loopback.Running()) {
         const auto mix = d_.analyzer.Snapshot();
@@ -210,19 +299,20 @@ bool AgentOrchestrator::EnsureBrain() {
     if (d_.brain.IsLoaded()) return true;
     const bool gaming = mode_.load() == SystemMode::Gaming;
     LocalBrainConfig bc;
-    bc.model = d_.cfg.llmModel;
-    bc.mmproj = d_.cfg.llmMmproj;
-    bc.lora = d_.cfg.loraAdapter;
-    bc.contextTokens = d_.cfg.llmContext;
-    bc.gpuLayers = d_.cfg.llmGpuLayers;
-    bc.threads = gaming ? d_.cfg.llmThreadsGaming : d_.cfg.llmThreads;
+    bc.model = cfg_.llmModel;
+    bc.mmproj = cfg_.llmMmproj;
+    bc.lora = cfg_.loraAdapter;
+    bc.contextTokens = cfg_.llmContext;
+    bc.gpuLayers = cfg_.llmGpuLayers;
+    bc.threads = gaming ? cfg_.llmThreadsGaming : cfg_.llmThreads;
     d_.brain.Configure(!gaming, bc.threads);
     return d_.brain.Load(bc);
 }
 
 void AgentOrchestrator::Say(const std::string& text) {
     if (text.empty()) return;
-    d_.voice.Speak(text);
+    React(ExpressionForReply(text));
+    d_.voice.Speak(text, style_.load());
     d_.db.AddMessage("assistant", text);
 }
 
@@ -232,7 +322,42 @@ std::string AgentOrchestrator::GenerateSpoken(const std::vector<ChatTurn>& messa
     // de la génération. Une balise [ESCALATE…] n'est jamais prononcée.
     std::string pending;
     bool decided = false;
+    bool spoken = false;
     isEscalation = false;
+
+    // Réponse « quasi instantanée » : si rien n'est prêt à dire au bout de 650 ms, une courte relance
+    // pré-synthétisée (« Hmm… », « Oh… ») part tout de suite, comme quelqu'un qui réfléchit en parlant.
+    std::mutex bcMutex;
+    std::condition_variable bcCv;
+    bool bcCancel = false;
+    std::string category = "think";
+    {
+        std::scoped_lock lock(emotionMutex_);
+        if (std::chrono::steady_clock::now() - emotionAt_ < std::chrono::seconds(10) && lastEmotion_.confidence >= 0.35f) {
+            if (lastEmotion_.label == VoiceEmotion::Sad || lastEmotion_.label == VoiceEmotion::Tired) category = "empathy";
+            else if (lastEmotion_.label == VoiceEmotion::Joyful) category = "excited";
+        }
+    }
+    std::jthread backchannel;
+    if (backchannels_.load())
+        backchannel = std::jthread([&] {
+            std::unique_lock lock(bcMutex);
+            if (!bcCv.wait_for(lock, std::chrono::milliseconds(650), [&] { return bcCancel; })) d_.voice.PlayBackchannel(category);
+        });
+    const auto cancelBackchannel = [&] {
+        {
+            std::scoped_lock lock(bcMutex);
+            bcCancel = true;
+        }
+        bcCv.notify_all();
+    };
+    const auto speak = [&](const std::string& chunk) {
+        cancelBackchannel();
+        if (!spoken) React(ExpressionForReply(chunk));  // geste porté par le début de la réponse
+        spoken = true;
+        d_.voice.Speak(chunk, style_.load());
+    };
+
     GenerateOptions opt;
     opt.grammar = grammar;
     opt.stop = stop;
@@ -247,10 +372,18 @@ std::string AgentOrchestrator::GenerateSpoken(const std::vector<ChatTurn>& messa
             decided = true;
             isEscalation = head[0] == '[' || head.starts_with("ESCALATE");
         }
-        if (isEscalation) return true;
-        const auto cut = pending.find_last_of(".!?\n");
+        if (isEscalation) {
+            cancelBackchannel();  // « Je regarde. » prendra le relais
+            return true;
+        }
+        auto cut = pending.find_last_of(".!?\n");
+        // Première prise de parole : on part dès la première proposition (virgule), pour démarrer vite.
+        if ((cut == std::string::npos || cut < 25) && !spoken) {
+            const auto comma = pending.find_last_of(",;:");
+            if (comma != std::string::npos && comma >= 30) cut = comma;
+        }
         if (cut != std::string::npos && cut >= 25) {
-            d_.voice.Speak(Trim(pending.substr(0, cut + 1)));
+            speak(Trim(pending.substr(0, cut + 1)));
             pending.erase(0, cut + 1);
         }
         return true;
@@ -259,12 +392,13 @@ std::string AgentOrchestrator::GenerateSpoken(const std::vector<ChatTurn>& messa
     const auto out = image ? d_.brain.GenerateWithImage(messages, image->rgb.data(), image->width, image->height, opt)
                            : d_.brain.Generate(messages, opt);
     lastBrainUse_ = std::chrono::steady_clock::now();
+    cancelBackchannel();
     if (!out) return {};
     if (!isEscalation && std::regex_search(*out, EscalateTag())) {
         isEscalation = true;  // balise en fin de réponse : on escalade (et on ne la prononce pas)
         return Trim(*out);
     }
-    if (!isEscalation && !Trim(pending).empty() && !stop.stop_requested()) d_.voice.Speak(Trim(pending));
+    if (!isEscalation && !Trim(pending).empty() && !stop.stop_requested()) speak(Trim(pending));
     return Trim(*out);
 }
 
@@ -325,6 +459,13 @@ bool AgentOrchestrator::HandleLevel0(const std::string& text, std::stop_token st
         return true;
     }
 
+    if (ContainsAny(lower, {"réglages", "reglages", "paramètres", "parametres", "configuration"}) &&
+        ContainsAny(lower, {"ouvre", "affiche", "montre", "lance"})) {
+        if (onOpenSettings_) onOpenSettings_();
+        Say("Voilà les réglages.");
+        return true;
+    }
+
     if (HandleSystemCommand(text, lower, stop)) return true;
 
     // Partie LoL en cours + question de build : conseiller local (données live + données officielles Riot).
@@ -374,7 +515,7 @@ void AgentOrchestrator::ResearchLocally(const std::string& subject, const std::s
     activity_ = AgentActivity::Researching;
 
     // 1) Déjà appris ? (cache SQLite FTS5, récent) -> 100 % local, aucun réseau.
-    const auto maxAge = static_cast<std::int64_t>(d_.cfg.knowledgeMaxAgeDays) * 86400;
+    const auto maxAge = static_cast<std::int64_t>(cfg_.knowledgeMaxAgeDays) * 86400;
     std::string sources;
     std::string origin;
     for (const auto& l : d_.db.SearchLessons(subject + " " + question, 2)) {
@@ -438,13 +579,13 @@ void AgentOrchestrator::AnswerFromSources(const std::string& question, const std
 void AgentOrchestrator::EscalateCloud(const std::string& type, const std::string& subject,
                                       const std::string& question, std::stop_token stop,
                                       const std::vector<std::uint8_t>* jpeg) {
-    if (!d_.cfg.cloudEnabled || !d_.claude.HasCredentials()) {
+    if (!cfg_.cloudEnabled || !d_.claude.HasCredentials()) {
         Say(d_.brain.Available() ? "Je ne trouve pas en local, et Claude n'est pas configuré."
                                  : "Mon modèle local n'est pas installé, et Claude n'est pas configuré.");
         d_.db.LogEscalation(type, subject, "non-resolu", "", question);
         return;
     }
-    if (d_.cfg.cloudAsksPermission &&
+    if (cfg_.cloudAsksPermission &&
         !d_.gate.Request(PermissionScope::Cloud, "claude", "Je ne trouve pas en local. Je demande à Claude ?",
                          std::chrono::seconds(20), stop)) {
         if (!stop.stop_requested()) Say("Ok, on reste en local.");
@@ -599,7 +740,7 @@ void AgentOrchestrator::HandleVision(const std::string& question, std::stop_toke
     }
 
     // 1) Vision LOCALE si le modèle de vision est installé : l'image ne quitte pas le PC.
-    if (!d_.cfg.llmMmproj.empty() && EnsureBrain() && d_.brain.HasVision()) {
+    if (!cfg_.llmMmproj.empty() && EnsureBrain() && d_.brain.HasVision()) {
         std::vector<ChatTurn> messages{
             {"system", PersonaPrompt()},
             {"user", std::string("[Capture de l'écran du joueur]\n") + LocalBrain::MediaMarker() +

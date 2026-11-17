@@ -224,10 +224,11 @@ CartoonAvatar::Pose CartoonAvatar::Sample(const Clip& clip, int frame) const {
 std::string CartoonAvatar::ClipForState() const {
     switch (state_) {
         case AvatarState::Listening: return "listen";
-        case AvatarState::Studio: return "studio";
+        case AvatarState::Studio: return moodClip_ == "dance" ? "dance" : "studio";
         case AvatarState::Escalating: return "think";
         case AvatarState::Training: return "train";
-        default: return "idle";
+        case AvatarState::Gaming: return "idle";
+        default: return clips_.contains(moodClip_) ? moodClip_ : "idle";
     }
 }
 
@@ -242,12 +243,25 @@ bool CartoonAvatar::Update(float dt, float voiceRms) noexcept {
     auto find = [&](const std::string& n) -> const Clip& { return clips_.contains(n) ? clips_.at(n) : clips_.at("idle"); };
     const Clip& cur = find(clip_);
     const bool oneShotRunning = !cur.loop && frame_ + advance < cur.frames;
+    const bool speaking = rmsEnv_ > 0.03f;
     std::string next = clip_;
     if (waveRequested_ && clips_.contains("wave")) {
         next = "wave";
         waveRequested_ = false;
+    } else if (!pendingExpression_.empty() && (!oneShotRunning || clip_ == "talk" || clip_ == "talk2")) {
+        if (clips_.contains(pendingExpression_)) next = pendingExpression_;
+        pendingExpression_.clear();
     } else if (!oneShotRunning) {
-        next = rmsEnv_ > 0.03f && clips_.contains("talk") ? "talk" : ClipForState();
+        if (speaking) {
+            // Gestes variés : à chaque nouvelle prise de parole, une variante tirée au hasard.
+            if (clip_ != "talk" && clip_ != "talk2") {
+                rng_ = rng_ * 1664525u + 1013904223u;
+                talkVariant_ = (rng_ >> 16) % 3 == 0 && clips_.contains("talk2") ? "talk2" : "talk";
+            }
+            next = clips_.contains(talkVariant_) ? talkVariant_ : ClipForState();
+        } else {
+            next = ClipForState();
+        }
     }
 
     if (next != clip_ || (!cur.loop && !oneShotRunning)) {
@@ -301,11 +315,12 @@ CartoonAvatar::Skeleton CartoonAvatar::Solve(const Pose& pose) const {
     }
     k.neck = at({0, b.neckY});
     k.ha = k.T + P("head");
-    k.hc = Add(k.neck, Rot(k.ha, {0, -(b.headRadius + b.headGap)}));
+    k.hc = Add(Add(k.neck, Rot(k.ha, {0, -(b.headRadius + b.headGap)})), {P("headX"), P("headY")});
+    k.headOffset = {P("headX"), P("headY")};
     return k;
 }
 
-void CartoonAvatar::Render(ID2D1DeviceContext* ctx, ID2D1Factory1* factory, float scale) {
+void CartoonAvatar::Render(ID2D1DeviceContext* ctx, ID2D1Factory1* factory, float scale, D2D1_POINT_2F offset) {
     if (!ctx || !factory || clips_.empty()) return;
     auto find = [&](const std::string& n) -> const Clip& { return clips_.contains(n) ? clips_.at(n) : clips_.at("idle"); };
     Pose pose = Sample(find(clip_), frame_);
@@ -324,22 +339,24 @@ void CartoonAvatar::Render(ID2D1DeviceContext* ctx, ID2D1Factory1* factory, floa
         p.transformType = D2D1_STROKE_TRANSFORM_TYPE_NORMAL;
         factory->CreateStrokeStyle(p, nullptr, 0, &roundStroke_);
     }
-    const bool dim = state_ == AvatarState::Gaming;
+    const float alpha = opacity_ * (state_ == AvatarState::Gaming ? 0.55f : 1.f);
+    const bool dim = alpha < 0.999f;
     if (dim) ctx->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
-                                                   D2D1::IdentityMatrix(), 0.55f), nullptr);
-    Draw(ctx, factory, pose, find(clip_), scale);
+                                                   D2D1::IdentityMatrix(), alpha), nullptr);
+    Draw(ctx, factory, pose, find(clip_), scale, offset);
     if (dim) ctx->PopLayer();
     dirty_ = false;
 }
 
-void CartoonAvatar::Draw(ID2D1DeviceContext* ctx, ID2D1Factory1* factory, const Pose& pose, const Clip& clip, float scale) {
+void CartoonAvatar::Draw(ID2D1DeviceContext* ctx, ID2D1Factory1* factory, const Pose& pose, const Clip& clip, float scale,
+                         D2D1_POINT_2F offset) {
     const auto P = [&](const char* ch) { const auto it = pose.find(ch); return it != pose.end() ? it->second : 0.f; };
     const Body& b = body_;
     const Skeleton k = Solve(pose);
     const auto at = [&](D2D1_POINT_2F v) { return Add(k.H, Rot(k.T, v)); };
     const D2D1_POINT_2F g{hips_.x, ground_};
     const float sq = P("sq");
-    const auto global = D2D1::Matrix3x2F::Scale(scale, scale);
+    const auto global = D2D1::Matrix3x2F::Scale(scale, scale) * D2D1::Matrix3x2F::Translation(offset.x, offset.y);
     const auto squash = D2D1::Matrix3x2F::Translation(-g.x, -g.y) * D2D1::Matrix3x2F::Scale(1.f + sq * 0.6f, 1.f - sq) *
                         D2D1::Matrix3x2F::Translation(g.x, g.y);
     const auto stroke = [&](const ComPtr<ID2D1Geometry>& geom, ID2D1Brush* br, float w) {
@@ -475,7 +492,8 @@ void CartoonAvatar::Draw(ID2D1DeviceContext* ctx, ID2D1Factory1* factory, const 
 
     Layers neck;
     neck.rim = false;
-    part(Capsule(factory, Add(k.neck, Rot(k.T, {0, 6})), Add(k.neck, Rot(k.ha, {0, -16})), 13.f, 12.f), true, false, neck);
+    part(Capsule(factory, Add(k.neck, Rot(k.T, {0, 6})), Add(Add(k.neck, Rot(k.ha, {0, -16})), k.headOffset, 0.5f), 13.f, 12.f),
+         true, false, neck);
 
     ComPtr<ID2D1PathGeometry> torso;
     ComPtr<ID2D1GeometrySink> sink;
@@ -568,6 +586,59 @@ void CartoonAvatar::DrawEmote(ID2D1DeviceContext* ctx, ID2D1Factory1* factory, c
                 ctx->DrawLine({hc.x + 18.f + ca * r0, hc.y + sa * r0}, {hc.x + 18.f + ca * r1, hc.y + sa * r1},
                               Brush(ctx, "emote"), 3.2f, stroke);
             }
+    } else if (emote == "joy") {  // éclats de joie autour de la tête
+        const float spots[3][3] = {{-hr - 22.f, -hr * 0.5f, 0.f}, {hr + 20.f, -hr * 0.7f, 20.f}, {hr + 30.f, hr * 0.1f, 40.f}};
+        for (int i = 0; i < 3; ++i) {
+            const float s = 0.6f + 0.4f * std::sin((frame + i * 5) * 0.5f);
+            if (auto st = Star(factory, {hc.x + spots[i][0], hc.y + spots[i][1]}, 11.f * s, spots[i][2])) {
+                ctx->FillGeometry(st.Get(), Brush(ctx, "highlight"));
+                ctx->DrawGeometry(st.Get(), Brush(ctx, "accent", 0.9f), 1.4f, stroke);
+            }
+        }
+    } else if (emote == "laugh") {  // traits de vibration de chaque côté
+        if (frame < 26)
+            for (float side : {-1.f, 1.f})
+                for (int k = 0; k < 3; ++k) {
+                    const float x = hc.x + side * (hr + 10.f + k * 7.f), y0 = hc.y - 18.f + k * 4.f;
+                    ctx->DrawLine({x, y0}, {x + side * 4.f, y0 + 14.f - k * 3.f}, Brush(ctx, "emote"), 3.2f, stroke);
+                }
+    } else if (emote == "exclaim") {  // « ! » qui surgit
+        if (frame >= 1) {
+            const float s = std::min(1.f, frame / 4.f) * (frame < 22 ? 1.f : std::max(0.f, 1.f - (frame - 22) / 6.f));
+            const float x = hc.x + hr * 1.08f, y = hc.y - hr * 0.35f;
+            ctx->DrawLine({x, y - 26.f * s}, {x + 2.f, y - 6.f * s}, Brush(ctx, "accent", s), 6.f * s + 0.1f, stroke);
+            ctx->FillEllipse(D2D1::Ellipse({x + 2.5f, y + 3.f}, 3.4f * s + 0.1f, 3.4f * s + 0.1f), Brush(ctx, "accent", s));
+        }
+    } else if (emote == "question") {  // « ? »
+        if (frame >= 4) {
+            const float s = std::min(1.f, (frame - 4) / 4.f);
+            const float x = hc.x + hr * 0.9f, y = topY - 6.f;
+            ComPtr<ID2D1PathGeometry> q;
+            ComPtr<ID2D1GeometrySink> sk;
+            if (SUCCEEDED(factory->CreatePathGeometry(&q)) && SUCCEEDED(q->Open(&sk))) {
+                sk->BeginFigure({x + 8.f * std::cos(Rad(200)), y - 16.f + 8.f * std::sin(Rad(200))}, D2D1_FIGURE_BEGIN_HOLLOW);
+                AddArcBeziers(sk.Get(), {x, y - 16.f}, 8.f, Rad(200), Rad(400));
+                sk->AddLine({x, y - 3.f});
+                sk->EndFigure(D2D1_FIGURE_END_OPEN);
+                sk->Close();
+                ctx->DrawGeometry(q.Get(), Brush(ctx, "emote", s), 4.f, stroke);
+            }
+            ctx->FillEllipse(D2D1::Ellipse({x, y + 5.f}, 2.8f, 2.8f), Brush(ctx, "emote", s));
+        }
+    } else if (emote == "gloom") {  // lignes verticales de déprime (manga)
+        for (int i = 0; i < 5; ++i) {
+            const float x = hc.x - hr * 0.7f + i * hr * 0.35f, ln = 16.f + (i % 2) * 10.f;
+            const float y = topY - 6.f - ((frame + i * 9) % 32) * 0.4f;
+            ctx->DrawLine({x, y - ln}, {x, y}, Brush(ctx, "emote", 0.55f), 2.2f, stroke);
+        }
+    } else if (emote == "zzz") {
+        for (int i = 0; i < 3; ++i) {
+            const float ph = std::fmod(frame / 48.f + i / 3.f, 1.f);
+            const float x = hc.x + hr * 0.6f + ph * 30.f, y = topY - ph * 50.f, s = 6.f + ph * 8.f;
+            auto* br = Brush(ctx, "emote", 1.f - ph);
+            if (auto z = Strokes(factory, {{{x, y}, {x + s, y}}, {{x + s, y}, {x, y + s}}, {{x, y + s}, {x + s, y + s}}}))
+                ctx->DrawGeometry(z.Get(), br, 2.6f, stroke);
+        }
     } else if (emote == "sparkle") {  // étincelle sur le chrome au sommet du geste
         if (frame >= 8 && frame <= 20) {
             const float s = 1.f - std::abs(frame - 13) / 7.f;

@@ -31,6 +31,29 @@ Il a ses animations selon ce qu'il fait :
 | `think` | recherche / Claude : main au menton, « … » |
 | `train` | auto-entraînement : footing sur place, goutte de sueur |
 | `studio` | dans FL Studio : la tête suit le rythme, notes de musique |
+| `happy`, `laugh`, `surprised`, `shrug`, `nod`, `shake`, `clap`, `point` | réactions ponctuelles (à ton émotion, ou au début de sa propre phrase : « Ouais » → hoche la tête, « J'sais pas » → hausse les épaules) |
+| `sad`, `empathy`, `soothe`, `dance`, `sleep` | postures d'humeur : empathique si tu es triste, apaisant si tu es énervé, somnolent quand le PC est inactif |
+| `talk2` | variante de gestes quand il parle (tirée au hasard, pour ne pas répéter) |
+
+## Façon de parler et émotions
+
+- **Réponses quasi instantanées** : si sa réponse n'est pas prête en 650 ms, une courte relance
+  pré-synthétisée part tout de suite (« Hmm… », « Attends… », « Oh… » selon ton humeur), puis il démarre
+  dès la première proposition de sa phrase.
+- **Style oral** : français parlé, contractions, réactions avant la réponse, hésitations naturelles et rares.
+- **Émotions dans ta voix**, 100 % locales : hauteur (YIN), étendue mélodique, intonation finale,
+  énergie et débit, comparés à **ta voix habituelle** (apprise au fil des conversations, mémorisée).
+  La voix donne l'agitation, les mots tranchent entre joie et colère. Il adapte alors sa réponse, sa
+  diction (plus vive, plus douce ou plus posée) et sa posture.
+- **Tu peux lui couper la parole** en écoute continue : il se tait et t'écoute.
+
+## Réglages
+
+`Ctrl+Alt+O` (ou « ouvre les réglages ») : fenêtre au style du site abrasion — nom, taille, opacité et coin
+de l'écran du personnage, grain 8-bit, débit, mode d'écoute, relances, interruption, lecture des émotions,
+expressivité, auto-entraînement, Claude. Aperçu animé avec boutons d'expressions, état du cerveau et de la
+voix, jauge d'émotion en direct. Tout s'applique immédiatement et s'enregistre dans `companion.json`.
+Polices Space Grotesk et Space Mono fournies dans `assets/fonts` (licence SIL OFL, voir `OFL.txt`).
 
 Tout est dans `assets/avatar/rig.json` (squelette, formes, palette, images clés). Pour régler une
 animation sans recompiler, rends-la en vidéo avec le même algorithme de dessin :
@@ -132,6 +155,7 @@ cmake --build build --config Release
 - `Ctrl+Alt+C` : push-to-talk (appuyer pour parler, ré-appuyer pour envoyer)
 - `Ctrl+Alt+V` : bascule push-to-talk ↔ détection de voix (VAD, micro ouvert en continu)
 - `Ctrl+Alt+H` : afficher / masquer l'avatar
+- `Ctrl+Alt+O` : réglages du personnage
 - `Ctrl+Alt+Q` : quitter
 
 Logs : `OutputDebugString` (DebugView de Sysinternals, ou la fenêtre Sortie de VS).

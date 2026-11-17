@@ -2,6 +2,7 @@
 
 #include "core/Log.hpp"
 
+#include <algorithm>
 #include <array>
 
 using Microsoft::WRL::ComPtr;
@@ -58,6 +59,23 @@ void OverlayWindow::Destroy() {
     swapChain_.Reset(); context_.Reset(); device_.Reset();
     if (hwnd_) { DestroyWindow(hwnd_); hwnd_ = nullptr; }
     if (instance_) { UnregisterClassW(kWindowClass, instance_); instance_ = nullptr; }
+}
+
+void OverlayWindow::SetLayout(float userScale, int corner) {
+    if (!hwnd_ || !swapChain_) return;
+    userScale_ = std::clamp(userScale, 0.5f, 2.f);
+    corner_ = std::clamp(corner, 0, 3);
+    pixelWidth_ = static_cast<int>(desc_.width * scale_ * userScale_);
+    pixelHeight_ = static_cast<int>(desc_.height * scale_ * userScale_);
+    RECT work{};
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
+    const int mx = static_cast<int>(desc_.marginX * scale_), my = static_cast<int>(desc_.marginY * scale_);
+    const int x = (corner_ % 2 == 0) ? work.left + mx : work.right - pixelWidth_ - mx;
+    const int y = (corner_ < 2) ? work.top + my : work.bottom - pixelHeight_ - my;
+    d2dContext_->SetTarget(nullptr);  // aucune référence au back buffer avant ResizeBuffers
+    swapChain_->ResizeBuffers(2, static_cast<UINT>(pixelWidth_), static_cast<UINT>(pixelHeight_), kColorFormat, 0);
+    SetWindowPos(hwnd_, HWND_TOPMOST, x, y, pixelWidth_, pixelHeight_, SWP_NOACTIVATE);
+    dcompDevice_->Commit();
 }
 
 void OverlayWindow::SetVisible(bool visible) {

@@ -73,10 +73,26 @@ public:
     void Start();
     void Stop();
 
-    void OnTranscript(std::string text);  // thread-safe
+    void OnTranscript(std::string text, EmotionEstimate emotion = {});  // thread-safe
+    void OnBargeIn();  // l'utilisateur lui coupe la parole : il s'arrête et écoute
+    void UpdateConfig(const CompanionConfig& cfg);  // appliquée sur le thread de l'orchestrateur
+    void SetOpenSettingsCallback(std::function<void()> cb) { onOpenSettings_ = std::move(cb); }
+
+    // Réactions de l'avatar (appelées depuis les threads de travail ; à relayer au thread de rendu).
+    using AvatarFn = std::function<void(const std::string& clip)>;
+    void SetAvatarCallbacks(AvatarFn onExpression, AvatarFn onMood);
+    // Réglages modifiables à chaud (fenêtre de configuration).
+    void SetHumanizer(bool backchannels, float expressiveness) noexcept {
+        backchannels_ = backchannels;
+        expressiveness_ = expressiveness;
+    }
     void OnModeChanged(SystemMode mode);  // thread-safe
 
     [[nodiscard]] AgentActivity Activity() const noexcept { return activity_.load(); }
+    [[nodiscard]] EmotionEstimate LastEmotion() const {
+        std::scoped_lock lock(emotionMutex_);
+        return lastEmotion_;
+    }
 
 private:
     using Job = std::function<void(std::stop_token)>;
@@ -106,8 +122,13 @@ private:
     std::string GenerateSpoken(const std::vector<ChatTurn>& messages, const char* grammar, std::stop_token stop,
                                bool& isEscalation, const ScreenShot* image = nullptr);
     void Say(const std::string& text);
+    void React(const std::string& clip);              // geste, filtré par l'expressivité
+    void SetMoodFor(const std::string& clip, int seconds);
+    std::string ToneContext() const;
 
     OrchestratorDeps d_;
+    CompanionConfig cfg_;  // copie propre au thread de l'orchestrateur (mise à jour par UpdateConfig)
+    std::function<void()> onOpenSettings_;
     std::jthread worker_;
     std::mutex mutex_;
     std::condition_variable_any cv_;
@@ -115,6 +136,18 @@ private:
     std::stop_source currentJob_;
     std::atomic<AgentActivity> activity_{AgentActivity::Idle};
     std::atomic<SystemMode> mode_{SystemMode::Interactive};
+
+    // Humanisation
+    mutable std::mutex emotionMutex_;
+    EmotionEstimate lastEmotion_;
+    std::chrono::steady_clock::time_point emotionAt_{};
+    std::atomic<SpeakingStyle> style_{SpeakingStyle::Normal};
+    std::chrono::steady_clock::time_point moodUntil_{};
+    bool moodActive_ = false;
+    AvatarFn onExpression_, onMood_;
+    std::atomic<bool> backchannels_{true};
+    std::atomic<float> expressiveness_{0.8f};
+    std::atomic<unsigned> rng_{0x51F15EEDu};
     std::atomic<bool> deviceDirty_{true};
     std::chrono::steady_clock::time_point lastBrainUse_{};
     std::chrono::steady_clock::time_point lastAutoTraining_{};

@@ -278,7 +278,7 @@ public:
 
     [[nodiscard]] int SampleRate() const noexcept { return sampleRate_; }
 
-    bool Synthesize(std::string_view sentence, std::vector<float>& out) {
+    bool Synthesize(std::string_view sentence, std::vector<float>& out, float lengthMul = 1.f, float noiseMul = 1.f) {
         std::vector<int64_t> ids = PhonemeIds(Phonemize(sentence));
         if (ids.size() <= 3) return false;
 
@@ -286,7 +286,7 @@ public:
         const std::array<int64_t, 2> idShape{1, static_cast<int64_t>(ids.size())};
         std::array<int64_t, 1> lengths{static_cast<int64_t>(ids.size())};
         const std::array<int64_t, 1> oneShape{1};
-        std::array<float, 3> scales{noiseScale_, lengthScale_, noiseW_};
+        std::array<float, 3> scales{noiseScale_ * noiseMul, lengthScale_ * lengthMul, noiseW_};
         const std::array<int64_t, 1> scaleShape{3};
         std::array<int64_t, 1> sid{0};
 
@@ -396,6 +396,40 @@ struct VoiceEngine::Impl {
 
     std::mutex cbMutex;
     TranscriptCallback onTranscript;
+
+    // Émotion dans la voix
+    std::mutex emotionMutex;
+    VoiceEmotionAnalyzer emotion;
+    std::atomic<bool> emotionEnabled{true};
+
+    // Diction
+    std::atomic<float> baseMood{0.5f};
+    std::atomic<float> baseLength{1.f};
+
+    // Relances pré-synthétisées
+    std::mutex backchannelMutex;
+    std::map<std::string, std::vector<std::vector<float>>> backchannels;
+    std::map<std::string, size_t> lastBackchannel;
+    unsigned rng = 0x9E3779B9u;
+
+    // Interruption
+    std::atomic<bool> bargeIn{true};
+    std::function<void()> onBargeIn;
+
+    static void StyleParams(SpeakingStyle st, float& lengthMul, float& noiseMul, float& moodDelta) {
+        switch (st) {
+            case SpeakingStyle::Bright: lengthMul = 0.93f; noiseMul = 1.2f; moodDelta = 0.2f; break;
+            case SpeakingStyle::Soft: lengthMul = 1.12f; noiseMul = 0.75f; moodDelta = -0.25f; break;
+            case SpeakingStyle::Calm: lengthMul = 1.06f; noiseMul = 0.85f; moodDelta = -0.15f; break;
+            default: lengthMul = 1.f; noiseMul = 1.f; moodDelta = 0.f; break;
+        }
+    }
+
+    void StopSpeakingNow() {
+        ++speechGeneration;
+        flushMark = ring.WriteIndex();
+        if (renderWake) SetEvent(renderWake);
+    }
 
 #if COMPANION_WITH_WHISPER
     whisper_context* whisper = nullptr;
@@ -507,6 +541,8 @@ struct VoiceEngine::Impl {
     // --- Capture micro : pendant le push-to-talk, ou en continu en mode VAD ---
     void CaptureMain(std::stop_token st, bool vadMode) {
         EnergyVad vad;
+        size_t loudSamples = 0;
+        ULONGLONG bargedAt = 0;
         log::SetCurrentThreadName(L"Companion.AudioIn");
         ComScope com;
         HANDLE event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
@@ -534,9 +570,28 @@ struct VoiceEngine::Impl {
                         if (silent) captured.insert(captured.end(), frames, 0.f);
                         else captured.insert(captured.end(), f, f + frames);
                     }
-                } else if (SpeakingNow()) {
-                    // Semi-duplex : on ne s'écoute pas parler (pas d'annulation d'écho à ce stade).
-                    vad.Reset();
+                } else if (SpeakingNow() && GetTickCount64() - bargedAt > 1500) {
+                    // Semi-duplex : on ne s'écoute pas parler (pas d'annulation d'écho). Exception : si la
+                    // voix au micro est nettement plus forte que la fuite des haut-parleurs pendant 150 ms,
+                    // c'est l'utilisateur qui lui coupe la parole -> il se tait et écoute.
+                    double sum = 0;
+                    for (UINT32 i = 0; !silent && i < frames; ++i) sum += static_cast<double>(f[i]) * f[i];
+                    const float level = frames ? static_cast<float>(std::sqrt(sum / frames)) : 0.f;
+                    loudSamples = bargeIn.load() && level > 0.05f ? loudSamples + frames : 0;
+                    if (loudSamples >= kSttSampleRate * 15 / 100) {
+                        loudSamples = 0;
+                        bargedAt = GetTickCount64();
+                        StopSpeakingNow();
+                        std::function<void()> cb;
+                        {
+                            std::scoped_lock lock(cbMutex);
+                            cb = onBargeIn;
+                        }
+                        if (cb) cb();
+                        log::Info("VoiceEngine: interrompu par l'utilisateur");
+                    } else {
+                        vad.Reset();
+                    }
                 } else {
                     std::vector<float> zeros;
                     if (silent) zeros.assign(frames, 0.f);
@@ -556,6 +611,12 @@ struct VoiceEngine::Impl {
     void Transcribe(std::vector<float> pcm) {
 #if COMPANION_WITH_WHISPER
         if (!whisper || pcm.size() < kSttSampleRate / 4) return;  // < 250 ms : ignoré
+        // Émotion : analysée sur la phrase brute (avant le remplissage de silence pour Whisper).
+        EmotionEstimate emo;
+        if (emotionEnabled.load()) {
+            std::scoped_lock lock(emotionMutex);
+            emo = emotion.Analyze(pcm);
+        }
         if (pcm.size() < kSttSampleRate + kSttSampleRate / 10) pcm.resize(kSttSampleRate + kSttSampleRate / 10, 0.f);
 
         whisper_full_params wp = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
@@ -586,26 +647,52 @@ struct VoiceEngine::Impl {
             std::scoped_lock lock(cbMutex);
             cb = onTranscript;
         }
-        if (cb) cb(std::move(text));
+        if (emo.features.valid) log::Info("Émotion vocale : {} ({:+.2f}, {})", ToString(emo.label), emo.arousal, emo.description);
+        if (cb) cb(std::move(text), std::move(emo));
 #else
         (void)pcm;
 #endif
     }
 
-    void Synthesize(const std::string& text, uint32_t generation) {
+    void Synthesize(const std::string& text, uint32_t generation, SpeakingStyle style) {
 #if COMPANION_WITH_ONNX && COMPANION_WITH_ESPEAK
         if (tts) {
+            float lengthMul, noiseMul, moodDelta;
+            StyleParams(style, lengthMul, noiseMul, moodDelta);
+            fx.SetMood(std::clamp(baseMood.load() + moodDelta, 0.f, 1.f));
             std::vector<float> pcm;
             for (const auto& sentence : SplitSentences(text)) {
                 if (speechGeneration.load() != generation) break;
-                if (tts->Synthesize(sentence, pcm)) PushAudio(pcm, generation);
+                if (tts->Synthesize(sentence, pcm, lengthMul * baseLength.load(), noiseMul)) PushAudio(pcm, generation);
             }
         }
 #else
         (void)text;
         (void)generation;
+        (void)style;
 #endif
         --pendingSpeech;
+    }
+
+    void SynthesizeBackchannels(const std::map<std::string, std::vector<std::string>>& phrases) {
+#if COMPANION_WITH_ONNX && COMPANION_WITH_ESPEAK
+        if (!tts) return;
+        for (const auto& [category, list] : phrases) {
+            SpeakingStyle st = category == "empathy" ? SpeakingStyle::Soft
+                               : category == "excited" ? SpeakingStyle::Bright : SpeakingStyle::Normal;
+            float lengthMul, noiseMul, moodDelta;
+            StyleParams(st, lengthMul, noiseMul, moodDelta);
+            for (const auto& phrase : list) {
+                std::vector<float> pcm;
+                if (!tts->Synthesize(phrase, pcm, lengthMul * baseLength.load(), noiseMul)) continue;
+                std::scoped_lock lock(backchannelMutex);
+                backchannels[category].push_back(std::move(pcm));
+            }
+        }
+        log::Info("VoiceEngine: relances prêtes");
+#else
+        (void)phrases;
+#endif
     }
 };
 
@@ -709,24 +796,67 @@ void VoiceEngine::EndListening() {
 
 bool VoiceEngine::IsListening() const noexcept { return impl_->listening.load() || impl_->vadInSpeech.load(); }
 
-void VoiceEngine::Speak(std::string text) {
+void VoiceEngine::Speak(std::string text, SpeakingStyle style) {
     auto& d = *impl_;
     if (!HasTts()) { log::Info("VoiceEngine (TTS absent): {}", text); return; }
     const uint32_t gen = d.speechGeneration.load();
     ++d.pendingSpeech;
-    d.Post([&d, text = std::move(text), gen] { d.Synthesize(text, gen); });
+    d.Post([&d, text = std::move(text), gen, style] { d.Synthesize(text, gen, style); });
 }
 
-void VoiceEngine::StopSpeaking() {
+void VoiceEngine::PrepareBackchannels(std::map<std::string, std::vector<std::string>> phrases) {
     auto& d = *impl_;
-    ++d.speechGeneration;  // invalide les synthèses en file / en cours
-    d.flushMark = d.ring.WriteIndex();
-    if (d.renderWake) SetEvent(d.renderWake);
+    d.Post([&d, phrases = std::move(phrases)] { d.SynthesizeBackchannels(phrases); });
 }
+
+bool VoiceEngine::PlayBackchannel(const std::string& category) {
+    auto& d = *impl_;
+    if (d.SpeakingNow()) return false;
+    std::vector<float> pcm;
+    {
+        std::scoped_lock lock(d.backchannelMutex);
+        const auto it = d.backchannels.find(category);
+        if (it == d.backchannels.end() || it->second.empty()) return false;
+        // Jamais deux fois la même relance d'affilée.
+        d.rng = d.rng * 1664525u + 1013904223u;
+        size_t idx = (d.rng >> 8) % it->second.size();
+        auto& last = d.lastBackchannel[category];
+        if (it->second.size() > 1 && idx == last) idx = (idx + 1) % it->second.size();
+        last = idx;
+        pcm = it->second[idx];
+    }
+    d.PushAudio(pcm, d.speechGeneration.load());
+    return true;
+}
+
+void VoiceEngine::SetBargeIn(bool enabled, std::function<void()> onBargeIn) {
+    auto& d = *impl_;
+    d.bargeIn = enabled;
+    std::scoped_lock lock(d.cbMutex);
+    d.onBargeIn = std::move(onBargeIn);
+}
+
+void VoiceEngine::SetEmotionDetection(bool enabled) noexcept { impl_->emotionEnabled = enabled; }
+void VoiceEngine::SetBaseSpeechRate(float lengthScale) noexcept { impl_->baseLength = std::clamp(lengthScale, 0.7f, 1.4f); }
+
+std::string VoiceEngine::VoiceBaseline() const {
+    std::scoped_lock lock(impl_->emotionMutex);
+    return impl_->emotion.SaveBaseline();
+}
+
+void VoiceEngine::LoadVoiceBaseline(const std::string& s) {
+    std::scoped_lock lock(impl_->emotionMutex);
+    impl_->emotion.LoadBaseline(s);
+}
+
+void VoiceEngine::StopSpeaking() { impl_->StopSpeakingNow(); }  // invalide les synthèses en file et coupe la voix
 
 bool VoiceEngine::IsSpeaking() const noexcept { return impl_->SpeakingNow(); }
 
-void VoiceEngine::SetMood(float mood01) noexcept { impl_->fx.SetMood(mood01); }
+void VoiceEngine::SetMood(float mood01) noexcept {
+    impl_->baseMood = std::clamp(mood01, 0.f, 1.f);
+    impl_->fx.SetMood(impl_->baseMood.load());
+}
 float VoiceEngine::VoiceRms() const noexcept { return impl_->rms.load(std::memory_order_relaxed); }
 void VoiceEngine::SetGamingMode(bool gaming) noexcept { impl_->gaming = gaming; }
 

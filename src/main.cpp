@@ -11,6 +11,7 @@
 //   Ctrl+Alt+C : push-to-talk (bascule : appuyer pour parler, ré-appuyer pour envoyer)
 //   Ctrl+Alt+V : bascule Push-to-Talk <-> détection de voix (VAD)
 //   Ctrl+Alt+H : afficher / masquer l'avatar
+//   Ctrl+Alt+O : réglages du personnage (aussi : « ouvre les réglages »)
 //   Ctrl+Alt+Q : quitter
 
 #include "audio/OmnisAnalyzer.hpp"
@@ -30,7 +31,9 @@
 #include "network/HttpClient.hpp"
 #include "network/WebResearcher.hpp"
 #include "render/OverlayWindow.hpp"
+#include "core/Persona.hpp"
 #include "render/CartoonAvatar.hpp"
+#include "ui/ConfigWindow.hpp"
 
 #include <windows.h>
 #include <objbase.h>
@@ -41,6 +44,8 @@
 #include <cctype>
 #include <chrono>
 #include <filesystem>
+#include <mutex>
+#include <vector>
 #include <string>
 #include <string_view>
 
@@ -48,7 +53,15 @@ using namespace companion;
 
 namespace {
 
-enum HotkeyId : int { kHotkeyTalk = 1, kHotkeyToggle = 2, kHotkeyQuit = 3, kHotkeyVad = 4 };
+enum HotkeyId : int { kHotkeyTalk = 1, kHotkeyToggle = 2, kHotkeyQuit = 3, kHotkeyVad = 4, kHotkeySettings = 5 };
+constexpr UINT WM_APP_OPEN_SETTINGS = WM_APP + 2;
+
+// Commandes de l'avatar émises par les threads de travail, appliquées par le thread de rendu.
+struct AvatarCommands {
+    std::mutex mutex;
+    std::vector<std::string> expressions;
+    std::string mood = "idle";
+};
 
 std::filesystem::path ExeDir() {
     wchar_t buf[MAX_PATH];
@@ -122,12 +135,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     vcfg.piperModel = root / L"assets" / L"models" / L"fr_FR-siwis-medium.onnx";
     vcfg.espeakDataDir = root / L"espeak-ng-data";
     voice.Initialize(vcfg);
-    voice.SetMood(0.5f);  // humeur neutre = 9 bits, 35 % wet (rapport §4.B)
+    voice.SetMood(cfg.fxIntensity);  // 0,5 = 9 bits, 35 % wet (rapport §4.B)
+    voice.SetBaseSpeechRate(cfg.speechRate);
+    voice.SetEmotionDetection(cfg.emotionDetection);
+    voice.PrepareBackchannels(BackchannelPhrases());  // relances jouées sans latence
 
     // --- Cerveau --------------------------------------------------------------
     MemoryDB db;
     const auto dataDir = DataDir();
     db.Open(dataDir / L"companion.db");
+    if (auto baseline = db.GetProfile("voice.baseline")) voice.LoadVoiceBaseline(*baseline);  // ta voix habituelle
     HttpClient http(cfg.userAgent);
     LocalBrain brain;
     PermissionGate gate(db, [&voice](const std::string& question) { voice.Speak(question); });
@@ -149,14 +166,79 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
         orchestrator.OnModeChanged(current);
         SetEcoQoS(current == SystemMode::Gaming);
     });
+    // Réactions et humeurs décidées par l'orchestrateur -> personnage (thread de rendu).
+    AvatarCommands avatarCmds;
+    orchestrator.SetAvatarCallbacks(
+        [&avatarCmds](const std::string& clip) {
+            std::scoped_lock lock(avatarCmds.mutex);
+            avatarCmds.expressions.push_back(clip);
+        },
+        [&avatarCmds](const std::string& clip) {
+            std::scoped_lock lock(avatarCmds.mutex);
+            avatarCmds.mood = clip;
+        });
+    voice.SetBargeIn(cfg.bargeIn, [&orchestrator] { orchestrator.OnBargeIn(); });
+    if (cfg.voiceActivity) voice.SetListenMode(ListenMode::VoiceActivity);
+    overlay.SetLayout(cfg.avatarScale, cfg.avatarCorner);
+    avatar.SetOpacity(cfg.avatarOpacity);
+
+    const DWORD mainThread = GetCurrentThreadId();
+    orchestrator.SetOpenSettingsCallback([mainThread] { PostThreadMessageW(mainThread, WM_APP_OPEN_SETTINGS, 0, 0); });
+
+    // Fenêtre de réglages : enregistrement dans companion.json et application immédiate.
+    ConfigWindow settings;
+    const auto applySettings = [&](const CompanionConfig& edited) {
+        // Seuls les champs de la fenêtre sont recopiés (les chemins résolus restent ceux de cfg).
+        cfg.name = edited.name;
+        cfg.avatarScale = edited.avatarScale;
+        cfg.avatarOpacity = edited.avatarOpacity;
+        cfg.avatarCorner = edited.avatarCorner;
+        cfg.expressiveness = edited.expressiveness;
+        cfg.fxIntensity = edited.fxIntensity;
+        cfg.speechRate = edited.speechRate;
+        cfg.backchannels = edited.backchannels;
+        cfg.bargeIn = edited.bargeIn;
+        cfg.emotionDetection = edited.emotionDetection;
+        cfg.voiceActivity = edited.voiceActivity;
+        cfg.autoTraining = edited.autoTraining;
+        cfg.cloudEnabled = edited.cloudEnabled;
+        cfg.cloudAsksPermission = edited.cloudAsksPermission;
+        SaveConfig(cfg, root / L"companion.json");
+        voice.SetMood(cfg.fxIntensity);
+        voice.SetBaseSpeechRate(cfg.speechRate);
+        voice.SetEmotionDetection(cfg.emotionDetection);
+        voice.SetBargeIn(cfg.bargeIn, [&orchestrator] { orchestrator.OnBargeIn(); });
+        voice.SetListenMode(cfg.voiceActivity ? ListenMode::VoiceActivity : ListenMode::PushToTalk);
+        overlay.SetLayout(cfg.avatarScale, cfg.avatarCorner);
+        avatar.SetOpacity(cfg.avatarOpacity);
+        orchestrator.UpdateConfig(cfg);
+    };
+    const auto settingsStatus = [&]() {
+        ConfigStatus st;
+        st.brainReady = std::filesystem::exists(cfg.llmModel);
+        st.sttReady = voice.HasStt();
+        st.ttsReady = voice.HasTts();
+        st.claudeKey = claude.HasCredentials();
+        const std::string baseline = voice.VoiceBaseline();
+        st.voiceSamples = std::atoi(baseline.substr(0, baseline.find(';')).c_str());
+        const EmotionEstimate e = orchestrator.LastEmotion();
+        st.emotion = ToString(e.label);
+        st.arousal = e.arousal;
+        return st;
+    };
+    const auto openSettings = [&] {
+        settings.Open(instance, cfg, root / L"assets" / L"fonts", root / L"assets" / L"avatar" / L"rig.json", applySettings,
+                      settingsStatus);
+    };
+
     std::atomic<bool> waveRequested{true};  // il salue au démarrage
-    voice.SetTranscriptCallback([&orchestrator, &waveRequested](std::string text) {
+    voice.SetTranscriptCallback([&orchestrator, &waveRequested](std::string text, EmotionEstimate emotion) {
         std::string lower(text);
         std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         if (lower.find("salut") != std::string::npos || lower.find("bonjour") != std::string::npos ||
             lower.find("coucou") != std::string::npos || lower.find("hello") != std::string::npos)
             waveRequested = true;  // il te rend ton salut
-        orchestrator.OnTranscript(std::move(text));
+        orchestrator.OnTranscript(std::move(text), std::move(emotion));
     });
 
     orchestrator.Start();
@@ -167,6 +249,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     RegisterHotKey(nullptr, kHotkeyToggle, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'H');
     RegisterHotKey(nullptr, kHotkeyQuit, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'Q');
     RegisterHotKey(nullptr, kHotkeyVad, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'V');
+    RegisterHotKey(nullptr, kHotkeySettings, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'O');
 
     voice.Speak("Salut. Je suis en ligne.");
 
@@ -195,6 +278,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
                         break;
                     case kHotkeyToggle: overlay.SetVisible(!overlay.IsVisible()); break;
                     case kHotkeyQuit: running = false; break;
+                    case kHotkeySettings: openSettings(); break;
                     case kHotkeyVad:
                         voice.SetListenMode(voice.GetListenMode() == ListenMode::PushToTalk ? ListenMode::VoiceActivity
                                                                                             : ListenMode::PushToTalk);
@@ -202,6 +286,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
                                                                                        : "Retour au push-to-talk.");
                         break;
                 }
+                continue;
+            }
+            if (msg.message == WM_APP_OPEN_SETTINGS) {
+                openSettings();
                 continue;
             }
             TranslateMessage(&msg);
@@ -224,6 +312,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
         else if (m == SystemMode::Studio) state = AvatarState::Studio;
         avatar.SetState(state);
         if (waveRequested.exchange(false)) avatar.Wave();
+        {
+            std::scoped_lock lock(avatarCmds.mutex);
+            for (const auto& clip : avatarCmds.expressions) avatar.Express(clip);
+            avatarCmds.expressions.clear();
+            // PC inactif depuis 5 min (et pas d'entraînement) : il pique du nez.
+            avatar.SetMood(m == SystemMode::Idle && state == AvatarState::Idle ? std::string("sleep") : avatarCmds.mood);
+        }
+        settings.Tick(dt);
         const bool newFrame = avatar.Update(dt, voice.VoiceRms());
 
         if (newFrame && overlay.IsVisible()) {
@@ -234,7 +330,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
         }
     }
 
-    for (int id : {kHotkeyTalk, kHotkeyToggle, kHotkeyQuit, kHotkeyVad}) UnregisterHotKey(nullptr, id);
+    for (int id : {kHotkeyTalk, kHotkeyToggle, kHotkeyQuit, kHotkeyVad, kHotkeySettings}) UnregisterHotKey(nullptr, id);
+    settings.Close();
     governor.Stop();      // révoque un éventuel bail d'entraînement
     orchestrator.Stop();  // interrompt la génération en cours
     coach.Stop();

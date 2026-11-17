@@ -41,6 +41,8 @@ public:
     void Destroy();
 
     void SetVisible(bool visible);
+    // Taille (facteur utilisateur) et coin de l'écran : 0 haut-gauche, 1 haut-droite, 2 bas-gauche, 3 bas-droite.
+    void SetLayout(float userScale, int corner);
     [[nodiscard]] bool IsVisible() const noexcept { return visible_; }
 
     // Cible Direct2D = back buffer, effacée en transparent. Retourne le contexte de dessin.
@@ -51,7 +53,7 @@ public:
     [[nodiscard]] HWND Hwnd() const noexcept { return hwnd_; }
     [[nodiscard]] ID3D11Device* Device() const noexcept { return device_.Get(); }
     [[nodiscard]] ID2D1Factory1* D2DFactory() const noexcept { return d2dFactory_.Get(); }
-    [[nodiscard]] float Scale() const noexcept { return scale_; }  // DPI / 96
+    [[nodiscard]] float Scale() const noexcept { return scale_ * userScale_; }  // DPI / 96 × taille choisie
 
 private:
     bool CreateDevice();
@@ -74,7 +76,8 @@ private:
     Microsoft::WRL::ComPtr<ID2D1Factory1> d2dFactory_;
     Microsoft::WRL::ComPtr<ID2D1Device> d2dDevice_;
     Microsoft::WRL::ComPtr<ID2D1DeviceContext> d2dContext_;
-    float scale_ = 1.f;
+    float scale_ = 1.f, userScale_ = 1.f;
+    int corner_ = 3;
     int pixelWidth_ = 0, pixelHeight_ = 0;
 };
 

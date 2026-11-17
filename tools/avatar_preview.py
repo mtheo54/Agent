@@ -70,7 +70,7 @@ def skeleton(rig, pose, rms=0.0):
         j[side + "Hip"], j[side + "Knee"], j[side + "Ankle"], j[side + "ShinA"] = hp, k, an, sh
     j["neck"] = at((0, b["neckY"]))
     j["ha"] = T + pose["head"]
-    j["hc"] = add(j["neck"], rot(j["ha"], (0, -(b["headRadius"] + b["headGap"]))))
+    j["hc"] = add(add(j["neck"], rot(j["ha"], (0, -(b["headRadius"] + b["headGap"])))), (pose.get("headX", 0), pose.get("headY", 0)))
     return j
 
 
@@ -213,7 +213,8 @@ def draw(ctx, rig, pose, frame, clip, rms=0.0, history=()):
     leg("a", False)
 
     neck = j["neck"]
-    pn.part(lambda c: capsule(c, add(neck, rot(T, (0, 6))), add(neck, rot(j["ha"], (0, -16))), 13, 12),
+    neck_top = add(add(neck, rot(j["ha"], (0, -16))), (pose.get("headX", 0) * 0.5, pose.get("headY", 0) * 0.5))
+    pn.part(lambda c: capsule(c, add(neck, rot(T, (0, 6))), neck_top, 13, 12),
             back=True, rim=False)
 
     pts = [at(p) for p in b["torso"]]
@@ -285,6 +286,43 @@ def emote(ctx, P, kind, frame, hc, hr):
                 r0, r1 = hr + 10, hr + 24
                 ca, sa = math.cos(math.radians(a - 90)), math.sin(math.radians(a - 90))
                 ctx.move_to(hc[0] + 18 + ca * r0, hc[1] + sa * r0); ctx.line_to(hc[0] + 18 + ca * r1, hc[1] + sa * r1); ctx.stroke()
+    elif kind == "joy":  # éclats de joie autour de la tête
+        for i, (dx, dy, a0) in enumerate(((-hr - 22, -hr * 0.5, 0), (hr + 20, -hr * 0.7, 20), (hr + 30, hr * 0.1, 40))):
+            s = 0.6 + 0.4 * math.sin((frame + i * 5) * 0.5)
+            ctx.set_source_rgb(*P["highlight"]); star(ctx, (hc[0] + dx, hc[1] + dy), 11 * s, a0); ctx.fill_preserve()
+            ctx.set_source_rgba(*P["accent"], 0.9); ctx.set_line_width(1.4); ctx.stroke()
+    elif kind == "laugh":  # traits de vibration de chaque côté
+        if frame < 26:
+            for side in (-1, 1):
+                for k in range(3):
+                    x = hc[0] + side * (hr + 10 + k * 7); y0 = hc[1] - 18 + k * 4
+                    ctx.move_to(x, y0); ctx.line_to(x + side * 4, y0 + 14 - k * 3); ctx.stroke()
+    elif kind == "exclaim":  # « ! » qui surgit
+        if frame >= 1:
+            s = min(1.0, frame / 4.0) * (1.0 if frame < 22 else max(0.0, 1 - (frame - 22) / 6.0))
+            x, y = hc[0] + hr * 1.08, hc[1] - hr * 0.35
+            ctx.set_source_rgba(*P["accent"], s); ctx.set_line_width(6 * s + 0.1)
+            ctx.move_to(x, y - 26 * s); ctx.line_to(x + 2, y - 6 * s); ctx.stroke()
+            ctx.new_sub_path(); ctx.arc(x + 2.5, y + 3, 3.4 * s + 0.1, 0, 2 * math.pi); ctx.fill()
+    elif kind == "question":  # « ? »
+        if frame >= 4:
+            s = min(1.0, (frame - 4) / 4.0)
+            x, y = hc[0] + hr * 0.9, top[1] - 6
+            ctx.set_source_rgba(*P["emote"], s); ctx.set_line_width(4)
+            ctx.arc(x, y - 16, 8, math.radians(200), math.radians(400)); ctx.line_to(x, y - 3); ctx.stroke()
+            ctx.new_sub_path(); ctx.arc(x, y + 5, 2.8, 0, 2 * math.pi); ctx.fill()
+    elif kind == "gloom":  # lignes verticales de déprime (manga)
+        ctx.set_source_rgba(*P["emote"], 0.55); ctx.set_line_width(2.2)
+        for i in range(5):
+            x = hc[0] - hr * 0.7 + i * hr * 0.35; ln = 16 + (i % 2) * 10
+            y = top[1] - 6 - ((frame + i * 9) % 32) * 0.4
+            ctx.move_to(x, y - ln); ctx.line_to(x, y); ctx.stroke()
+    elif kind == "zzz":
+        for i in range(3):
+            ph = ((frame / 48.0) + i / 3.0) % 1.0
+            x, y, s = hc[0] + hr * 0.6 + ph * 30, top[1] - ph * 50, 6 + ph * 8
+            ctx.set_source_rgba(*P["emote"], 1 - ph); ctx.set_line_width(2.6)
+            ctx.move_to(x, y); ctx.line_to(x + s, y); ctx.line_to(x, y + s); ctx.line_to(x + s, y + s); ctx.stroke()
     elif kind == "sparkle":  # étincelle sur le chrome, au sommet du geste
         if 8 <= frame <= 20:
             s = 1 - abs(frame - 13) / 7.0
@@ -319,14 +357,17 @@ def main():
     a = ap.parse_args()
     rig = json.load(open(a.rig, encoding="utf-8"))
     if a.sheet:
-        names = list(rig["clips"]); w, h = rig["canvas"]
-        sheet = cairo.ImageSurface(cairo.FORMAT_ARGB32, w * len(names) * 2, (h + 30) * 2)
+        names = list(rig["clips"]); w, h = rig["canvas"]; cols = 7; rows = (len(names) + cols - 1) // cols
+        sheet = cairo.ImageSurface(cairo.FORMAT_ARGB32, w * cols * 2, (h + 30) * 2 * rows)
         c = cairo.Context(sheet); c.set_source_rgb(1, 1, 1); c.paint()
-        for i, n in enumerate(names):
-            f = {"wave": 13, "train": 6, "talk": 6, "idle": 40}.get(n, rig["clips"][n]["frames"] // 2)
+        for idx, n in enumerate(names):
+            i, row = idx % cols, idx // cols
+            c.save(); c.translate(0, row * (h + 30) * 2)
+            f = {"wave": 13, "train": 6, "talk": 6, "idle": 40, "happy": 10, "laugh": 9, "surprised": 5, "shrug": 12,
+                 "nod": 3, "shake": 3, "clap": 8, "point": 10, "talk2": 8}.get(n, rig["clips"][n]["frames"] // 2)
             c.set_source_surface(render_frame(rig, n, f, scale=2), i * w * 2, 0); c.paint()
             c.set_source_rgb(0.1, 0.1, 0.1); c.select_font_face("Sans", 0, 1); c.set_font_size(30)
-            c.move_to(i * w * 2 + 20, h * 2 + 44); c.show_text(n)
+            c.move_to(i * w * 2 + 20, h * 2 + 44); c.show_text(n); c.restore()
         sheet.write_to_png(a.sheet); return
     plan = []
     for name in (a.sequence.split(",") if a.sequence else [a.clip]):

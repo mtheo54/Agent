@@ -15,6 +15,16 @@ CompanionConfig LoadConfig(const std::filesystem::path& jsonFile) {
     try {
         const auto j = nlohmann::json::parse(f, nullptr, true, /*ignore_comments=*/true);
         cfg.name = j.value("name", cfg.name);
+        cfg.avatarScale = j.value("avatarScale", cfg.avatarScale);
+        cfg.avatarOpacity = j.value("avatarOpacity", cfg.avatarOpacity);
+        cfg.avatarCorner = j.value("avatarCorner", cfg.avatarCorner);
+        cfg.expressiveness = j.value("expressiveness", cfg.expressiveness);
+        cfg.fxIntensity = j.value("fxIntensity", cfg.fxIntensity);
+        cfg.speechRate = j.value("speechRate", cfg.speechRate);
+        cfg.backchannels = j.value("backchannels", cfg.backchannels);
+        cfg.bargeIn = j.value("bargeIn", cfg.bargeIn);
+        cfg.emotionDetection = j.value("emotionDetection", cfg.emotionDetection);
+        cfg.voiceActivity = j.value("voiceActivity", cfg.voiceActivity);
         if (j.contains("llmModel")) {
             const auto utf8 = j["llmModel"].get<std::string>();
             cfg.llmModel = std::filesystem::path(std::u8string(utf8.begin(), utf8.end()));
@@ -56,6 +66,40 @@ CompanionConfig LoadConfig(const std::filesystem::path& jsonFile) {
         log::Info("Config: companion.json invalide ({}), valeurs par défaut", e.what());
     }
     return cfg;
+}
+
+}  // namespace companion
+
+namespace companion {
+
+bool SaveConfig(const CompanionConfig& cfg, const std::filesystem::path& jsonFile) {
+    nlohmann::json j = nlohmann::json::object();
+    if (std::ifstream in(jsonFile); in) {
+        try {
+            j = nlohmann::json::parse(in, nullptr, true, /*ignore_comments=*/true);
+        } catch (const std::exception&) {
+            j = nlohmann::json::object();  // fichier illisible : on repart propre
+        }
+    }
+    j["name"] = cfg.name;
+    j["avatarScale"] = cfg.avatarScale;
+    j["avatarOpacity"] = cfg.avatarOpacity;
+    j["avatarCorner"] = cfg.avatarCorner;
+    j["expressiveness"] = cfg.expressiveness;
+    j["fxIntensity"] = cfg.fxIntensity;
+    j["speechRate"] = cfg.speechRate;
+    j["backchannels"] = cfg.backchannels;
+    j["bargeIn"] = cfg.bargeIn;
+    j["emotionDetection"] = cfg.emotionDetection;
+    j["voiceActivity"] = cfg.voiceActivity;
+    j["autoTraining"] = cfg.autoTraining;
+    j["cloudEnabled"] = cfg.cloudEnabled;
+    j["cloudAsksPermission"] = cfg.cloudAsksPermission;
+    std::ofstream out(jsonFile, std::ios::binary | std::ios::trunc);
+    if (!out) return false;
+    out << j.dump(2) << "\n";
+    log::Info("Config: réglages enregistrés");
+    return static_cast<bool>(out);
 }
 
 }  // namespace companion
