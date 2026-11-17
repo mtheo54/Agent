@@ -1,0 +1,143 @@
+{
+  "_doc": "Banque de phrases du personnage, par situation et par ton (poli, pote, sansFiltre). Plusieurs variantes : il en tire une au hasard, jamais deux fois la même d'affilée. Variables : {peak}, {host}, {app}, {error}. C'est ici qu'on peut brancher les répliques d'OMNIS.",
+  "greeting": {
+    "poli": ["Salut. Je suis en ligne.", "Bonjour, je suis prêt.", "Me voilà, on s'y met quand tu veux."],
+    "pote": ["Yo, je suis là !", "Salut toi, on fait quoi aujourd'hui ?", "Hop, en ligne. Qu'est-ce qu'on casse ?"],
+    "sansFiltre": ["Wesh, je suis réveillé, enfin à peu près.", "Yo frérot, on va faire du sale aujourd'hui ?", "Me revoilà, bordel, ça m'avait manqué.", "Allez, on se lève, on charbonne. Enfin toi, moi j'regarde."]
+  },
+  "clipping": {
+    "poli": ["Attention, ça clippe : crête à {peak} dB.", "Ton master sature, crête à {peak} dB."],
+    "pote": ["Oh, ça clippe là ! Crête à {peak}.", "Hé, ton master crache, t'es à {peak} dB.", "Ça frise sur le master, baisse un peu."],
+    "sansFiltre": ["Wesh, ça clippe sa mère là, t'es à {peak} dB !", "Putain, ton master il crache comme un vieux poste de radio.", "Oh ça sature de ouf, mes oreilles de robot saignent.", "Frérot, le limiteur il pleure, là. Baisse-moi ça."]
+  },
+  "phase": {
+    "poli": ["Problème de phase : ton mix s'annule en mono, vérifie tes élargisseurs."],
+    "pote": ["Attention, ta stéréo s'annule en mono. Check tes élargisseurs.", "Ton mix disparaît en mono, y'a un souci de phase."],
+    "sansFiltre": ["Écoute ça en mono, tout se casse la gueule. Ta phase c'est la cata.", "Ton élargisseur stéréo, il fait n'importe quoi. En mono y'a plus rien, bordel."]
+  },
+  "noted": {
+    "poli": ["Noté.", "C'est retenu."],
+    "pote": ["Noté !", "Ok, c'est gravé.", "Je retiens, t'inquiète."],
+    "sansFiltre": ["C'est noté, chef.", "Gravé dans ma RAM, frérot.", "Ok, je retiens. Enfin j'essaie, j'suis pas une IA pour rien."]
+  },
+  "settings": {
+    "poli": ["Voilà les réglages."],
+    "pote": ["Tiens, les réglages.", "Et voilà le tableau de bord."],
+    "sansFiltre": ["Tiens, amuse-toi avec mes boutons.", "Voilà mes réglages. Touche pas à mon ego, par contre."]
+  },
+  "stuck": {
+    "poli": ["Je bloque là-dessus."],
+    "pote": ["Hmm, là je sèche.", "Alors là, aucune idée."],
+    "sansFiltre": ["Là, j'avoue, je bug complet.", "Aucune idée, frérot. Mon cerveau fait écran bleu."]
+  },
+  "webDenied": {
+    "poli": ["Ok, pas de web.", "D'accord, je reste hors ligne."],
+    "pote": ["Ok, pas d'internet, ça marche.", "Ça roule, on reste en local."],
+    "sansFiltre": ["Ok, pas de web. Je vais faire semblant de savoir, alors.", "Pas d'internet ? Ok, on fait à l'ancienne."]
+  },
+  "lookUp": {
+    "poli": ["Je regarde.", "Je vérifie."],
+    "pote": ["Je check ça.", "Attends, je regarde.", "Bouge pas, je cherche."],
+    "sansFiltre": ["Attends, je fouille.", "Bouge pas, je vais voir sur le wiki comme un vrai geek.", "Deux secondes, je stalke le wiki."]
+  },
+  "cloudDenied": {
+    "poli": ["Ok, on reste en local."],
+    "pote": ["Ça marche, on reste entre nous."],
+    "sansFiltre": ["Ok, pas de Claude. On se débrouille entre bricoleurs."]
+  },
+  "cloudError": {
+    "poli": ["Claude ne répond pas : {error}."],
+    "pote": ["Claude répond pas, là : {error}."],
+    "sansFiltre": ["Claude il fait le mort : {error}. Classique."]
+  },
+  "trainingBusy": {
+    "poli": ["Je suis déjà en train de m'entraîner."],
+    "pote": ["Je suis déjà à la salle, là."],
+    "sansFiltre": ["Je suis déjà en train de suer, frérot."]
+  },
+  "trainingRefused": {
+    "poli": ["Pas maintenant, un jeu ou FL Studio tourne."],
+    "pote": ["Pas maintenant, t'es en plein jeu ou dans FL."],
+    "sansFiltre": ["Pas maintenant, tu joues. Je vais pas te voler tes FPS, je suis pas un sale."]
+  },
+  "trainingStart": {
+    "poli": ["Ok, je m'entraîne. Touche à quoi que ce soit et j'arrête."],
+    "pote": ["C'est parti, je m'entraîne. Touche le clavier et j'arrête.", "Allez, séance de muscu neuronale. Bouge la souris si t'as besoin de moi."],
+    "sansFiltre": ["Ok, je vais à la salle. Touche la souris et je lâche les haltères.", "Séance d'entraînement. Si tu touches le clavier, j'arrête net, promis."]
+  },
+  "trainingFailed": {
+    "poli": ["Je n'arrive pas à lancer l'entraînement."],
+    "pote": ["L'entraînement veut pas démarrer."],
+    "sansFiltre": ["L'entraînement plante. Même moi j'ai la flemme, apparemment."]
+  },
+  "noInputSimulation": {
+    "poli": ["Pas de touches simulées pendant que tu joues, anti-cheat oblige."],
+    "pote": ["Pendant que tu joues, je touche à rien. L'anti-cheat, tout ça."],
+    "sansFiltre": ["Je touche à rien pendant que tu joues, je veux pas qu'on se fasse ban comme des clowns."]
+  },
+  "studioWaiting": {
+    "poli": ["Fais tourner ton son, j'écoute."],
+    "pote": ["Vas-y, lance ton son, j'écoute.", "Balance la prod, je suis tout ouïe."],
+    "sansFiltre": ["Allez, envoie la sauce, j'écoute.", "Lance ta prod, que je juge en silence. Enfin, pas en silence."]
+  },
+  "studioSilent": {
+    "poli": ["Je n'entends rien. Lance la lecture et redemande-moi."],
+    "pote": ["J'entends rien, là. Lance la lecture et redemande."],
+    "sansFiltre": ["J'entends que dalle. T'as appuyé sur play, au moins ?"]
+  },
+  "captureFailed": {
+    "poli": ["Je n'arrive pas à capturer l'écran. Passe le jeu en plein écran fenêtré et réessaie."],
+    "pote": ["J'arrive pas à voir ton écran. Mets le jeu en plein écran fenêtré."],
+    "sansFiltre": ["Je vois que dalle. Passe ton jeu en plein écran fenêtré, que j'aie des yeux."]
+  },
+  "riotDenied": {
+    "poli": ["Ok, sans les données Riot je ne peux pas conseiller d'objets."],
+    "pote": ["Sans les données Riot, je peux pas te conseiller tes items."],
+    "sansFiltre": ["Sans les données Riot, je te conseille au pif, et ça va mal finir."]
+  },
+  "riotFailed": {
+    "poli": ["Impossible de récupérer les données de Riot pour l'instant."],
+    "pote": ["Les données Riot répondent pas, là."],
+    "sansFiltre": ["Les serveurs de Riot font la gueule. Classique."]
+  },
+  "launchOk": {
+    "poli": ["C'est parti."],
+    "pote": ["C'est parti !", "Et c'est lancé."],
+    "sansFiltre": ["C'est lancé, frérot.", "Et hop, ça démarre. Magie."]
+  },
+  "launchFailed": {
+    "poli": ["Je n'ai pas réussi à lancer {app}."],
+    "pote": ["{app} veut pas se lancer."],
+    "sansFiltre": ["{app} veut pas démarrer. Il fait sa diva."]
+  },
+  "askWeb": {
+    "poli": ["Je vérifie sur {host} ?"],
+    "pote": ["Je check sur {host} ?"],
+    "sansFiltre": ["Je vais fouiller sur {host}, ça te va ?"]
+  },
+  "askCloud": {
+    "poli": ["Je ne trouve pas en local. Je demande à Claude ?"],
+    "pote": ["Là je sèche. Je demande à Claude ?"],
+    "sansFiltre": ["Là j'ai rien dans le crâne. J'appelle Claude, le cousin qui a fait des études ?"]
+  },
+  "backchannel.think": {
+    "poli": ["Hmm…", "Alors…", "Voyons…"],
+    "pote": ["Hmm…", "Alors…", "Attends…", "Euh, voyons…", "Bonne question…"],
+    "sansFiltre": ["Hmm…", "Attends, attends…", "Alors là…", "Ouh, laisse-moi réfléchir…", "Bonne question, putain…"]
+  },
+  "backchannel.ack": {
+    "poli": ["D'accord.", "Je vois."],
+    "pote": ["Ok.", "Ah ouais ?", "Je vois."],
+    "sansFiltre": ["Ah ouais ?", "Sérieux ?", "Ok, ok…"]
+  },
+  "backchannel.empathy": {
+    "poli": ["Oh…", "Je vois…"],
+    "pote": ["Oh…", "Aïe…", "Ah mince…"],
+    "sansFiltre": ["Aïe…", "Ah merde…", "Oh, ça craint…"]
+  },
+  "backchannel.excited": {
+    "poli": ["Oh !", "Super !"],
+    "pote": ["Oh !", "Ah ouais !", "Carrément !"],
+    "sansFiltre": ["Oh putain !", "Ah ouais, de ouf !", "Carrément !"]
+  }
+}

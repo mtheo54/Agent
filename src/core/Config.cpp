@@ -4,6 +4,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <fstream>
 
 namespace companion {
@@ -21,6 +22,7 @@ CompanionConfig LoadConfig(const std::filesystem::path& jsonFile) {
         cfg.expressiveness = j.value("expressiveness", cfg.expressiveness);
         cfg.fxIntensity = j.value("fxIntensity", cfg.fxIntensity);
         cfg.speechRate = j.value("speechRate", cfg.speechRate);
+        cfg.tone = std::clamp(j.value("tone", cfg.tone), 0, 2);
         cfg.backchannels = j.value("backchannels", cfg.backchannels);
         cfg.bargeIn = j.value("bargeIn", cfg.bargeIn);
         cfg.emotionDetection = j.value("emotionDetection", cfg.emotionDetection);
@@ -88,6 +90,7 @@ bool SaveConfig(const CompanionConfig& cfg, const std::filesystem::path& jsonFil
     j["expressiveness"] = cfg.expressiveness;
     j["fxIntensity"] = cfg.fxIntensity;
     j["speechRate"] = cfg.speechRate;
+    j["tone"] = cfg.tone;
     j["backchannels"] = cfg.backchannels;
     j["bargeIn"] = cfg.bargeIn;
     j["emotionDetection"] = cfg.emotionDetection;

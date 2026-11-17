@@ -19,6 +19,7 @@
 #include "audio/VoiceEngine.hpp"
 #include "audio/WasapiLoopback.hpp"
 #include "core/Config.hpp"
+#include "core/Phrases.hpp"
 #include "core/LocalBrain.hpp"
 #include "core/MemoryDB.hpp"
 #include "core/PermissionGate.hpp"
@@ -37,6 +38,7 @@
 #include <filesystem>
 #include <functional>
 #include <mutex>
+#include <map>
 #include <stop_token>
 #include <string>
 #include <thread>
@@ -60,6 +62,7 @@ struct OrchestratorDeps {
     WasapiLoopback& loopback;
     OmnisAnalyzer& analyzer;
     SelfTrainer& trainer;
+    Phrases& phrases;
     std::filesystem::path dataDir;  // %LOCALAPPDATA%\CompanionAI (cache Data Dragon…)
 };
 
@@ -122,6 +125,9 @@ private:
     std::string GenerateSpoken(const std::vector<ChatTurn>& messages, const char* grammar, std::stop_token stop,
                                bool& isEscalation, const ScreenShot* image = nullptr);
     void Say(const std::string& text);
+    // Réplique de la banque (assets/persona/phrases.json) au ton choisi.
+    std::string Line(const std::string& key, const std::map<std::string, std::string>& vars = {},
+                     const std::string& fallback = {});
     void React(const std::string& clip);              // geste, filtré par l'expressivité
     void SetMoodFor(const std::string& clip, int seconds);
     std::string ToneContext() const;

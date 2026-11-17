@@ -109,6 +109,7 @@ add_executable(CompanionAI WIN32
     src/core/Config.cpp
     src/core/LocalBrain.cpp
     src/core/MemoryDB.cpp
+    src/core/Phrases.cpp
     src/core/PermissionGate.cpp
     src/core/ResourceGovernor.cpp
     src/modules/GameCoach.cpp

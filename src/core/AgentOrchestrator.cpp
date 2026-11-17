@@ -272,20 +272,26 @@ void AgentOrchestrator::OnMixAlert(MixAlert alert, const MixMetrics& m) {
     // Thread d'analyse. Niveau 0 : pas de modèle, phrase fixe, limitée dans le temps par l'analyseur.
     if (!cfg_.studioAlerts || mode_.load() != SystemMode::Studio || d_.voice.IsSpeaking()) return;
     if (alert == MixAlert::Clipping)
-        d_.voice.Speak(std::format("Attention, ça clippe : crête à {:.1f} dB.", m.peakDb));
+        d_.voice.Speak(Line("clipping", {{"peak", std::format("{:.1f}", m.peakDb)}}, std::format("Attention, ça clippe : crête à {:.1f} dB.", m.peakDb)));
     else
-        d_.voice.Speak("Problème de phase : ton mix s'annule en mono, vérifie tes élargisseurs.");
+        d_.voice.Speak(Line("phase", {}, "Problème de phase : ton mix s'annule en mono, vérifie tes élargisseurs."));
 }
 
 // ---------------------------------------------------------------------------
-std::string AgentOrchestrator::PersonaPrompt() const { return companion::PersonaPrompt(cfg_.name); }
+std::string AgentOrchestrator::PersonaPrompt() const { return companion::PersonaPrompt(cfg_.name, cfg_.tone); }
+
+std::string AgentOrchestrator::Line(const std::string& key, const std::map<std::string, std::string>& vars,
+                                    const std::string& fallback) {
+    d_.phrases.SetTone(static_cast<Tone>(cfg_.tone));
+    return d_.phrases.Pick(key, vars, fallback);
+}
 
 std::string AgentOrchestrator::LiveContext(const std::string& question) const {
     std::string ctx = ToneContext();
     if (auto lol = d_.coach.Latest()) ctx += lol->ToPromptSummary() + "\n";
     if (d_.loopback.Running()) {
         const auto mix = d_.analyzer.Snapshot();
-        if (mix.seconds >= 1.f) ctx += mix.ToSummary() + "\n";
+        if (mix.seconds >= 1.f) ctx += mix.ToSummary() + "\n" + mix.Diagnosis() + "\n";
     }
     for (const auto& m : d_.db.SearchMemories(question, 3)) ctx += "Souvenir : " + m + "\n";
     // Fiches distillées pendant l'auto-entraînement : c'est ce qui évite de ré-escalader.
@@ -445,7 +451,7 @@ bool AgentOrchestrator::HandleLevel0(const std::string& text, std::stop_token st
             const std::string fact = Trim(text.substr(p + std::string_view(prefix).size()));
             if (!fact.empty()) {
                 d_.db.AddMemory(fact);
-                Say("Noté.");
+                Say(Line("noted", {}, "Noté."));
                 return true;
             }
         }
@@ -462,7 +468,7 @@ bool AgentOrchestrator::HandleLevel0(const std::string& text, std::stop_token st
     if (ContainsAny(lower, {"réglages", "reglages", "paramètres", "parametres", "configuration"}) &&
         ContainsAny(lower, {"ouvre", "affiche", "montre", "lance"})) {
         if (onOpenSettings_) onOpenSettings_();
-        Say("Voilà les réglages.");
+        Say(Line("settings", {}, "Voilà les réglages."));
         return true;
     }
 
@@ -499,7 +505,7 @@ void AgentOrchestrator::HandleLevel1(const std::string& text, const std::vector<
 
     std::smatch m;
     if (!std::regex_search(out, m, EscalateTag())) {
-        Say("Je bloque là-dessus.");
+        Say(Line("stuck", {}, "Je bloque là-dessus."));
         return;
     }
     const std::string type = m[1].str(), subject = Trim(m[2].str());
@@ -534,12 +540,12 @@ void AgentOrchestrator::ResearchLocally(const std::string& subject, const std::s
         const bool inLol = d_.coach.Latest().has_value();
         const WikiSource* src = d_.web.PickSource(subject + " " + question + (inLol ? " lol" : ""));
         if (!src) { EscalateCloud("WEB", subject, question, stop); return; }
-        if (!d_.gate.Request(PermissionScope::Web, src->host, "Je vérifie sur " + src->host + " ?",
+        if (!d_.gate.Request(PermissionScope::Web, src->host, Line("askWeb", {{"host", src->host}}, "Je vérifie sur " + src->host + " ?"),
                              std::chrono::seconds(20), stop)) {
-            if (!stop.stop_requested()) Say("Ok, pas de web.");
+            if (!stop.stop_requested()) Say(Line("webDenied", {}, "Ok, pas de web."));
             return;
         }
-        Say("Je regarde.");
+        Say(Line("lookUp", {}, "Je regarde."));
         for (auto& doc : d_.web.Search(*src, subject, 2, stop)) {
             d_.db.AddKnowledge(doc.url, doc.title, doc.text);  // appris : la prochaine fois, sans réseau
             sources += "### " + doc.title + "\n" + doc.excerpt + "\n";
@@ -586,9 +592,9 @@ void AgentOrchestrator::EscalateCloud(const std::string& type, const std::string
         return;
     }
     if (cfg_.cloudAsksPermission &&
-        !d_.gate.Request(PermissionScope::Cloud, "claude", "Je ne trouve pas en local. Je demande à Claude ?",
+        !d_.gate.Request(PermissionScope::Cloud, "claude", Line("askCloud", {}, "Je ne trouve pas en local. Je demande à Claude ?"),
                          std::chrono::seconds(20), stop)) {
-        if (!stop.stop_requested()) Say("Ok, on reste en local.");
+        if (!stop.stop_requested()) Say(Line("cloudDenied", {}, "Ok, on reste en local."));
         d_.db.LogEscalation(type, subject, "refuse", "", question);
         return;
     }
@@ -604,7 +610,7 @@ void AgentOrchestrator::EscalateCloud(const std::string& type, const std::string
     const ClaudeReply reply = d_.claude.Send(req);
     if (stop.stop_requested()) return;
     if (!reply.ok) {
-        Say("Claude ne répond pas : " + reply.error);
+        Say(Line("cloudError", {{"error", reply.error}}, "Claude ne répond pas : " + reply.error));
         return;
     }
     Say(reply.text);
@@ -614,17 +620,17 @@ void AgentOrchestrator::EscalateCloud(const std::string& type, const std::string
 
 void AgentOrchestrator::StartTraining(bool manual) {
     if (d_.trainer.Running()) {
-        if (manual) Say("Je suis déjà en train de m'entraîner.");
+        if (manual) Say(Line("trainingBusy", {}, "Je suis déjà en train de m'entraîner."));
         return;
     }
     auto token = d_.governor.BeginBackgroundWork(manual);
     if (!token) {
-        if (manual) Say("Pas maintenant, un jeu ou FL Studio tourne.");
+        if (manual) Say(Line("trainingRefused", {}, "Pas maintenant, un jeu ou FL Studio tourne."));
         return;
     }
     lastAutoTraining_ = std::chrono::steady_clock::now();
     d_.brain.Unload();  // la session charge son propre modèle : pas de double occupation RAM/VRAM
-    if (manual) Say("Ok, je m'entraîne. Touche à quoi que ce soit et j'arrête.");
+    if (manual) Say(Line("trainingStart", {}, "Ok, je m'entraîne. Touche à quoi que ce soit et j'arrête."));
 
     const bool started = d_.trainer.Start(*token, mode_.load() != SystemMode::Gaming, [this, manual](const TrainerOutcome& o) {
         d_.governor.EndBackgroundWork();
@@ -644,7 +650,7 @@ void AgentOrchestrator::StartTraining(bool manual) {
     });
     if (!started) {
         d_.governor.EndBackgroundWork();
-        if (manual) Say("Je n'arrive pas à lancer l'entraînement.");
+        if (manual) Say(Line("trainingFailed", {}, "Je n'arrive pas à lancer l'entraînement."));
     }
 }
 
@@ -686,7 +692,7 @@ bool AgentOrchestrator::HandleSystemCommand(const std::string& text, const std::
                                  "remets la musique", "mets la musique", "lecture"}))
         key = SystemControl::MediaKey::PlayPause;
     if (key) {
-        if (!d_.system.Media(*key)) Say("Pas de touches simulées pendant que tu joues, anti-cheat oblige.");
+        if (!d_.system.Media(*key)) Say(Line("noInputSimulation", {}, "Pas de touches simulées pendant que tu joues, anti-cheat oblige."));
         return true;
     }
 
@@ -695,7 +701,8 @@ bool AgentOrchestrator::HandleSystemCommand(const std::string& text, const std::
             if (!d_.gate.Request(PermissionScope::System, app->name, "Je lance " + app->name + " ?",
                                  std::chrono::seconds(20), stop))
                 return true;
-            Say(d_.system.Launch(*app) ? "C'est parti." : "Je n'ai pas réussi à lancer " + app->name + ".");
+            Say(d_.system.Launch(*app) ? Line("launchOk", {}, "C'est parti.")
+                                        : Line("launchFailed", {{"app", app->name}}, "Je n'ai pas réussi à lancer " + app->name + "."));
             return true;
         }
     }
@@ -712,7 +719,7 @@ void AgentOrchestrator::HandleStudioQuestion(const std::string& text, const std:
     for (int i = 0; i < 100 && !stop.stop_requested(); ++i) {  // 10 s max
         if (d_.analyzer.Snapshot().seconds >= 3.f) break;
         if (i == 10 && !announced) {
-            Say("Fais tourner ton son, j'écoute.");
+            Say(Line("studioWaiting", {}, "Fais tourner ton son, j'écoute."));
             announced = true;
         }
         Sleep(100);
@@ -720,13 +727,15 @@ void AgentOrchestrator::HandleStudioQuestion(const std::string& text, const std:
     if (stop.stop_requested()) return;
     const auto mix = d_.analyzer.Snapshot();
     if (mix.seconds < 1.f) {
-        Say("Je n'entends rien. Lance la lecture et redemande-moi.");
+        Say(Line("studioSilent", {}, "Je n'entends rien. Lance la lecture et redemande-moi."));
         return;
     }
     // LiveContext ajoute déjà le résumé OMNIS ; on cadre juste l'exercice.
     HandleLevel1(text, history,
-                 "[Consigne] Avis de mixage et de direction artistique : tranche, cite un ou deux chiffres "
-                 "utiles et propose une action concrète.\n",
+                 "[Consigne] Donne ton avis sur ce son en 2 ou 3 phrases. Appuie-toi UNIQUEMENT sur le "
+                 "diagnostic de l'ingé son (ne réinterprète pas les chiffres bruts) : commence par le problème le "
+                 "plus grave, cite un chiffre, donne UNE action concrète.\n" +
+                     std::string(ToneReminder(cfg_.tone)) + "\n",
                  stop);
 }
 
@@ -735,7 +744,7 @@ void AgentOrchestrator::HandleVision(const std::string& question, std::stop_toke
     activity_ = AgentActivity::Researching;
     const auto shot = GameCoach::CaptureScreen(720);
     if (!shot) {
-        Say("Je n'arrive pas à capturer l'écran. Passe le jeu en plein écran fenêtré et réessaie.");
+        Say(Line("captureFailed", {}, "Je n'arrive pas à capturer l'écran. Passe le jeu en plein écran fenêtré et réessaie."));
         return;
     }
 
@@ -781,11 +790,11 @@ void AgentOrchestrator::AdviseLolBuild(const LolSnapshot& lol, const std::string
         if (!d_.gate.Request(PermissionScope::Web, "ddragon.leagueoflegends.com",
                              "Je télécharge les données officielles de Riot sur les objets ?", std::chrono::seconds(20),
                              stop)) {
-            if (!stop.stop_requested()) Say("Ok, sans les données Riot je ne peux pas conseiller d'objets.");
+            if (!stop.stop_requested()) Say(Line("riotDenied", {}, "Ok, sans les données Riot je ne peux pas conseiller d'objets."));
             return;
         }
         if (!d_.coach.DownloadStaticData(d_.dataDir)) {
-            Say("Impossible de récupérer les données de Riot pour l'instant.");
+            Say(Line("riotFailed", {}, "Impossible de récupérer les données de Riot pour l'instant."));
             return;
         }
     }

@@ -23,6 +23,7 @@
 #include "core/Log.hpp"
 #include "core/MemoryDB.hpp"
 #include "core/PermissionGate.hpp"
+#include "core/Phrases.hpp"
 #include "core/ResourceGovernor.hpp"
 #include "modules/GameCoach.hpp"
 #include "modules/SelfTrainer.hpp"
@@ -138,7 +139,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     voice.SetMood(cfg.fxIntensity);  // 0,5 = 9 bits, 35 % wet (rapport §4.B)
     voice.SetBaseSpeechRate(cfg.speechRate);
     voice.SetEmotionDetection(cfg.emotionDetection);
-    voice.PrepareBackchannels(BackchannelPhrases());  // relances jouées sans latence
+    Phrases phrases;  // répliques par ton (assets/persona/phrases.json)
+    phrases.Load(root / L"assets" / L"persona" / L"phrases.json");
+    phrases.SetTone(static_cast<Tone>(cfg.tone));
+    const auto backchannels = [&phrases] {
+        auto bank = BackchannelPhrases();
+        for (auto& [kind, list] : bank)
+            if (auto mine = phrases.All("backchannel." + kind); !mine.empty()) list = std::move(mine);
+        return bank;
+    };
+    voice.PrepareBackchannels(backchannels());  // relances jouées sans latence
 
     // --- Cerveau --------------------------------------------------------------
     MemoryDB db;
@@ -157,7 +167,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     OmnisAnalyzer analyzer;
     SelfTrainer trainer(cfg, dataDir);
     AgentOrchestrator orchestrator(
-        {cfg, governor, voice, db, brain, gate, web, claude, coach, system, loopback, analyzer, trainer, dataDir});
+        {cfg, governor, voice, db, brain, gate, web, claude, coach, system, loopback, analyzer, trainer, phrases, dataDir});
 
     std::atomic<SystemMode> mode{SystemMode::Interactive};
     governor.SetModeListener([&](SystemMode, SystemMode current) {
@@ -196,6 +206,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
         cfg.expressiveness = edited.expressiveness;
         cfg.fxIntensity = edited.fxIntensity;
         cfg.speechRate = edited.speechRate;
+        const bool toneChanged = cfg.tone != edited.tone;
+        cfg.tone = edited.tone;
         cfg.backchannels = edited.backchannels;
         cfg.bargeIn = edited.bargeIn;
         cfg.emotionDetection = edited.emotionDetection;
@@ -207,6 +219,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
         voice.SetMood(cfg.fxIntensity);
         voice.SetBaseSpeechRate(cfg.speechRate);
         voice.SetEmotionDetection(cfg.emotionDetection);
+        if (toneChanged) {
+            phrases.SetTone(static_cast<Tone>(cfg.tone));
+            voice.PrepareBackchannels(backchannels());
+        }
         voice.SetBargeIn(cfg.bargeIn, [&orchestrator] { orchestrator.OnBargeIn(); });
         voice.SetListenMode(cfg.voiceActivity ? ListenMode::VoiceActivity : ListenMode::PushToTalk);
         overlay.SetLayout(cfg.avatarScale, cfg.avatarCorner);
@@ -251,7 +267,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     RegisterHotKey(nullptr, kHotkeyVad, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'V');
     RegisterHotKey(nullptr, kHotkeySettings, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'O');
 
-    voice.Speak("Salut. Je suis en ligne.");
+    voice.Speak(phrases.Pick("greeting", {}, "Salut. Je suis en ligne."));
 
     // --- Boucle principale : messages + rendu cadencé -------------------------
     using clock = std::chrono::steady_clock;

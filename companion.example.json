@@ -1,6 +1,7 @@
 {
   // Copie ce fichier en companion.json à côté de CompanionAI.exe. Toutes les clés sont optionnelles.
   "name": "Omnis",
+  "tone": 2,
 
   // Cerveau local. Pour la vision locale, utilise un modèle vision-langage + son mmproj :
   //   "llmModel": "assets/models/Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf",

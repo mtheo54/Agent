@@ -43,6 +43,9 @@ struct MixMetrics {
     std::array<float, kBands> bandDb{};  // écart à la pente de référence, en dB
 
     [[nodiscard]] std::string ToSummary() const;
+    // Verdict d'ingé son, en clair et classé par gravité (niveau 0 : déterministe). Le modèle local
+    // n'a plus qu'à le dire avec sa personnalité : un 3B ne sait pas lire « -4 LUFS, 2980 clips » seul.
+    [[nodiscard]] std::string Diagnosis() const;
 };
 
 enum class MixAlert : std::uint8_t { Clipping, PhaseProblem };

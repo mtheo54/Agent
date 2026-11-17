@@ -35,6 +35,7 @@ struct CompanionConfig {
 
     // --- Voix ---
     float fxIntensity = 0.5f;       // grain 8-bit de base (0 … 1)
+    int tone = 2;                   // 0 poli, 1 pote, 2 sans filtre (argot, vannes, gros mots)
     float speechRate = 1.f;         // 0,85 rapide … 1,2 lent
     bool backchannels = true;       // relances orales instantanées (« Hmm… »)
     bool bargeIn = true;            // on peut lui couper la parole (écoute continue)

@@ -56,6 +56,54 @@ std::string MixMetrics::ToSummary() const {
     return s;
 }
 
+std::string MixMetrics::Diagnosis() const {
+    if (silent || seconds < 0.5f) return "Diagnostic : rien à analyser.";
+    struct Issue { int severity; std::string text; };
+    std::vector<Issue> issues;
+    const auto band = [&](int i) { return bandDb[static_cast<size_t>(i)]; };
+    // Dynamique et niveau
+    if (clips > 0)
+        issues.push_back({clips > 100 ? 10 : 7,
+                          std::format("ÇA SATURE : {} clips, crête à {:.1f} dBFS. Action : baisser le master de 4 à 6 dB "
+                                      "et mettre un limiteur plafonné à -1 dB.", clips, peakDb)});
+    if (lufsShort > -7.f)
+        issues.push_back({9, std::format("BEAUCOUP TROP FORT : {:.1f} LUFS (cible -9 à -14 selon le style). Écrasé, "
+                                         "aucune marge.", lufsShort)});
+    else if (lufsShort < -20.f)
+        issues.push_back({4, std::format("Trop faible : {:.1f} LUFS, il manque du niveau.", lufsShort)});
+    if (crestDb < 6.f)
+        issues.push_back({8, std::format("Aucune dynamique (facteur de crête {:.1f} dB, il en faut 8 à 12) : ça respire "
+                                         "pas, les transitoires sont écrasés.", crestDb)});
+    // Phase et image
+    if (correlation < 0.f)
+        issues.push_back({9, std::format("PROBLÈME DE PHASE grave (corrélation {:.2f}) : le son disparaît en mono.",
+                                         correlation)});
+    else if (correlation < 0.3f)
+        issues.push_back({6, std::format("Phase limite (corrélation {:.2f}) : vérifie les élargisseurs.", correlation)});
+    if (width < 0.05f) issues.push_back({2, "Image quasi mono : pas de largeur stéréo, tout est au centre."});
+    // Spectre (écarts à la pente de référence)
+    const float mids = (band(2) + band(3) + band(4)) / 3.f;
+    if (band(0) > 2.f && band(0) - mids > 12.f)
+        issues.push_back({7, std::format("Le sub écrase tout (+{:.0f} dB au-dessus des médiums) : 808/kick trop forts, "
+                                         "ils bouffent le reste.", band(0) - mids)});
+    if (band(3) < -12.f)
+        issues.push_back({6, std::format("Médiums creusés ({:+.0f} dB) : la mélodie et la voix n'ont pas de place, "
+                                         "ça manque de corps.", band(3))});
+    if (band(2) > 5.f) issues.push_back({5, "Bas-médiums chargés : c'est boueux, nettoie vers 250-500 Hz."});
+    if (band(5) < -10.f && band(6) < -10.f) issues.push_back({4, "Terne : il manque de la brillance au-dessus de 4 kHz."});
+    if (band(6) > 6.f) issues.push_back({5, "Aigus agressifs (air) : hats ou cymbales qui fatiguent l'oreille."});
+
+    std::ranges::sort(issues, std::greater{}, &Issue::severity);
+    int score = 10;
+    for (const auto& i : issues) score -= i.severity >= 8 ? 3 : i.severity >= 5 ? 2 : 1;
+    score = std::max(score, 1);
+    std::string s = std::format("Diagnostic de l'ingé son : note technique {}/10 ({}).", score,
+                                score >= 8 ? "propre" : score >= 5 ? "correct mais perfectible" : "à retravailler sérieusement");
+    if (issues.empty()) s += " Rien d'alarmant : niveau, dynamique, phase et spectre sont dans les clous.";
+    for (const auto& i : issues) s += "\n- " + i.text;
+    return s;
+}
+
 OmnisAnalyzer::OmnisAnalyzer() : ring_(1u << 18), mask_((1u << 18) - 1) {
     // Pondération K (BS.1770-4) à 48 kHz : shelf haut puis passe-haut RLB.
     const Biquad shelf{1.53512485958697, -2.69169618940638, 1.19839281085285, -1.69065929318241, 0.73248077421585};

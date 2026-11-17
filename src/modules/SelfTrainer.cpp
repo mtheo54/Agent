@@ -72,7 +72,7 @@ int RunTrainerSession(const CompanionConfig& cfg, const std::filesystem::path& d
     std::error_code ec;
     std::filesystem::create_directories(dataDir / L"training", ec);
     std::ofstream dataset(dataDir / L"training" / L"dataset.jsonl", std::ios::app | std::ios::binary);
-    const std::string persona = PersonaPrompt(cfg.name);
+    const std::string persona = PersonaPrompt(cfg.name, cfg.tone);
     const auto maxAge = static_cast<std::int64_t>(cfg.knowledgeMaxAgeDays) * 86400;
 
     std::vector<std::string> learned;

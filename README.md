@@ -63,6 +63,14 @@ Il a ses animations selon ce qu'il fait :
   La voix donne l'agitation, les mots tranchent entre joie et colère. Il adapte alors sa réponse, sa
   diction (plus vive, plus douce ou plus posée) et sa posture.
 - **Tu peux lui couper la parole** en écoute continue : il se tait et t'écoute.
+- **Trois tons** (réglage `TON`, clé `tone`) : *poli*, *pote*, *sans filtre* (par défaut : argot, verlan,
+  jargon de studio, un gros mot pour l'emphase, vannes ; jamais d'insulte envers toi, et pas de vannes si tu
+  as l'air triste ou fatigué). Toutes ses répliques toutes faites (alertes, confirmations, relances)
+  sont dans `assets/persona/phrases.json` : modifiables sans recompiler.
+- **Avis sur ton son** : l'analyse OMNIS (C++) pose d'abord un diagnostic d'ingé son déterministe
+  (saturation, loudness, dynamique, phase, spectre, note sur 10) ; le modèle local ne fait que le dire
+  avec sa personnalité. Un 3B seul lisait « -4 LUFS, 2980 clips » comme « top ».
+  Simulation reproductible : `tools/sim/beat.py` (beat raté exprès) + `tools/sim/studiosim.cpp`.
 
 ## Réglages
 
