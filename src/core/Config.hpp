@@ -74,7 +74,9 @@ struct CompanionConfig {
 
     // --- Niveau 1 : cerveau local (llama.cpp) ---
     // Qwen3.5 9B (Apache 2.0, ~5,7 Go en Q4_K_M) : bien plus naturel que les 3B pour parler en pote.
-    std::filesystem::path llmModel = L"assets/models/Qwen3.5-9B-Q4_K_M.gguf";
+    // « auto » : choisi selon le PC au démarrage (ModelPlanner : moitié de la VRAM au plus hors jeu,
+    // un quart en jeu). Un chemin = modèle imposé.
+    std::filesystem::path llmModel = L"auto";
     // Projecteur de vision (mmproj) du MÊME modèle, ex. Qwen2.5-VL-3B. Vide = pas de vision locale
     // (une capture d'écran part alors vers Claude Vision, avec ta permission).
     std::filesystem::path llmMmproj;
@@ -84,7 +86,8 @@ struct CompanionConfig {
     int llmThreadsGaming = 2;    // en jeu : CPU uniquement, 2 threads, 0 Mo de VRAM
     // En jeu : petit modèle sur CPU, chargé seulement si tu lui parles (VRAM laissée au jeu). Absent :
     // le modèle principal sur CPU (plus lent).
-    std::filesystem::path llmGamingModel = L"assets/models/Qwen3.5-2B-Q4_K_M.gguf";
+    std::filesystem::path llmGamingModel = L"auto";
+    bool llmGamingAuto = true;   // (non enregistré) en jeu, cerveau re-choisi selon la VRAM libre du moment
     int avatarInGame = 1;        // en jeu : 0 caché, 1 seulement quand il parle / t'écoute, 2 toujours
     bool gameIsolation = true;   // en jeu : confiné au dernier cœur, priorité et mémoire basses
     int llmUnloadAfterMinutes = 10;  // retour sous 80 Mo de RAM en veille (rapport §2)

@@ -1,5 +1,7 @@
 #include "network/HttpClient.hpp"
 
+#include <fstream>
+
 #include "core/Log.hpp"
 
 #include <windows.h>
@@ -100,6 +102,29 @@ HttpResponse HttpClient::Send(const HttpRequest& req) {
     WinHttpQueryHeaders(request.h, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX,
                         &status, &size, WINHTTP_NO_HEADER_INDEX);
     res.status = static_cast<int>(status);
+    {
+        wchar_t len[32] = {};
+        DWORD lsz = sizeof(len);
+        if (WinHttpQueryHeaders(request.h, WINHTTP_QUERY_CONTENT_LENGTH, WINHTTP_HEADER_NAME_BY_INDEX, len, &lsz,
+                                WINHTTP_NO_HEADER_INDEX))
+            res.contentLength = std::wcstoull(len, nullptr, 10);
+    }
+    if (req.sink) {  // flux : rien n'est gardé en mémoire
+        std::string buf(256 * 1024, '\0');
+        for (;;) {
+            DWORD read = 0;
+            if (!WinHttpReadData(request.h, buf.data(), static_cast<DWORD>(buf.size()), &read)) {
+                res.error = "lecture interrompue (" + std::to_string(GetLastError()) + ")";
+                break;
+            }
+            if (read == 0) break;
+            if (!req.sink(std::string_view(buf.data(), read), res)) {
+                res.error = "annulé";
+                break;
+            }
+        }
+        return res;
+    }
 
     for (;;) {
         DWORD avail = 0;
@@ -112,6 +137,53 @@ HttpResponse HttpClient::Send(const HttpRequest& req) {
         res.body.resize(old + read);
     }
     return res;
+}
+
+bool HttpClient::DownloadToFile(const std::string& url, const std::filesystem::path& dest,
+                                const std::function<bool(std::uint64_t, std::uint64_t)>& progress, std::string* error) {
+    std::error_code ec;
+    std::filesystem::create_directories(dest.parent_path(), ec);
+    auto part = dest;
+    part += L".part";
+    const std::uint64_t have = std::filesystem::exists(part, ec) ? std::filesystem::file_size(part, ec) : 0;
+    std::ofstream out(part, std::ios::binary | (have ? std::ios::app : std::ios::trunc));
+    if (!out) {
+        if (error) *error = "écriture impossible";
+        return false;
+    }
+    std::uint64_t done = have, total = 0;
+    HttpRequest req;
+    req.url = url;
+    req.timeoutMs = 60000;
+    if (have) req.headers.push_back({L"Range", L"bytes=" + std::to_wstring(have) + L"-"});
+    bool first = true;
+    req.sink = [&](std::string_view chunk, const HttpResponse& head) {
+        if (first) {
+            first = false;
+            total = (head.status == 206 ? have : 0) + head.contentLength;
+            // Le serveur ignore la reprise (200 au lieu de 206) : on repart de zéro.
+            if (have && head.status == 200) {
+                out.close();
+                out.open(part, std::ios::binary | std::ios::trunc);
+                done = 0;
+            }
+        }
+        out.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
+        done += chunk.size();
+        return static_cast<bool>(out) && (!progress || progress(done, total));
+    };
+    const HttpResponse res = Send(req);
+    out.close();
+    if (!res.error.empty() || (res.status != 200 && res.status != 206) || (total && done != total)) {
+        if (error) *error = !res.error.empty() ? res.error : "HTTP " + std::to_string(res.status);
+        return false;  // le .part reste : la prochaine tentative reprendra
+    }
+    std::filesystem::rename(part, dest, ec);
+    if (ec) {
+        if (error) *error = "renommage impossible";
+        return false;
+    }
+    return true;
 }
 
 }  // namespace companion

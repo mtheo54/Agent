@@ -23,6 +23,8 @@
 #include "core/Log.hpp"
 #include "core/MemoryDB.hpp"
 #include "core/PermissionGate.hpp"
+#include "core/HardwareProbe.hpp"
+#include "core/ModelPlanner.hpp"
 #include "core/Phrases.hpp"
 #include "core/ResourceGovernor.hpp"
 #include "modules/GameCoach.hpp"
@@ -47,6 +49,7 @@
 #include <cstring>
 #include <chrono>
 #include <filesystem>
+#include <format>
 #include <mutex>
 #include <vector>
 #include <string>
@@ -58,6 +61,7 @@ namespace {
 
 enum HotkeyId : int { kHotkeyTalk = 1, kHotkeyToggle = 2, kHotkeyQuit = 3, kHotkeyVad = 4, kHotkeySettings = 5 };
 constexpr UINT WM_APP_OPEN_SETTINGS = WM_APP + 2;
+constexpr UINT WM_APP_MODELS_READY = WM_APP + 3;  // téléchargement des modèles terminé (wParam = 1 si tout est là)
 
 // Commandes de l'avatar émises par les threads de travail, appliquées par le thread de rendu.
 struct AvatarCommands {
@@ -165,6 +169,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
         if (FAILED(CoInitializeEx(nullptr, COINIT_MULTITHREADED))) return 1;
         const auto root = ExeDir();
         CompanionConfig cfg = LoadConfig(root / L"companion.json");
+        if (cfg.llmModel.filename() == L"auto") {  // même cerveau que le compagnon (plan matériel)
+            const HardwareInfo hw = ProbeHardware();
+            cfg.llmModel = root / L"assets" / L"models" / ModelPlanner::PlanNormal(hw, ModelPlanner::PlanVoice(hw, cfg.neuralVoice).neural).model->file;
+        }
         if (cfg.llmModel.is_relative()) cfg.llmModel = root / cfg.llmModel;
         if (cfg.loraAdapter.is_relative()) cfg.loraAdapter = root / cfg.loraAdapter;
         const bool gpu = std::wstring_view(cmdLine).find(L"--gpu") != std::wstring_view::npos;
@@ -187,6 +195,74 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     if (cfg.llmGamingModel.is_relative()) cfg.llmGamingModel = root / cfg.llmGamingModel;
     if (cfg.loraAdapter.is_relative()) cfg.loraAdapter = root / cfg.loraAdapter;
 
+    // --- Plan matériel : quel cerveau et quelle voix pour CE PC ------------------
+    // Hors jeu : moitié de la VRAM au plus (cerveau + voix) ; en jeu : un quart au plus, moins si le jeu
+    // en prend beaucoup (remesuré à chaque chargement). « auto » dans companion.json = choix automatique.
+    const auto modelsDir = root / L"assets" / L"models";
+    const HardwareInfo hw = ProbeHardware();
+    const VoicePlan vplan = ModelPlanner::PlanVoice(hw, cfg.neuralVoice);
+    const bool brainAuto = cfg.llmModel.filename() == L"auto";
+    cfg.llmGamingAuto = cfg.llmGamingModel.filename() == L"auto";
+    const BrainChoice normalPlan = ModelPlanner::PlanNormal(hw, vplan.neural);
+    if (brainAuto) {
+        cfg.llmModel = modelsDir / normalPlan.model->file;
+        cfg.llmGpuLayers = normalPlan.gpu ? 99 : 0;
+    }
+    if (cfg.llmGamingAuto) {
+        HardwareInfo calm = hw;
+        calm.vramFreeGiB = -1.0;
+        cfg.llmGamingModel = modelsDir / ModelPlanner::PlanGaming(calm).model->file;
+    }
+    cfg.neuralVoice = cfg.neuralVoice && vplan.neural;  // petite carte : Piper, la VRAM va au cerveau
+    log::Info("Matériel : {} ({:.1f} Go de VRAM, {:.0f} Go de RAM). {}", hw.gpuName, hw.vramGiB, hw.ramGiB, normalPlan.why);
+
+    // Premier lancement : les modèles ne sont pas livrés avec le programme, on télécharge ceux de CE PC.
+    std::vector<Download> missing;
+    for (const auto& dl : ModelPlanner::Required(hw, cfg.neuralVoice)) {
+        const bool brainFile = ModelPlanner::FindByFile(dl.file) != nullptr;
+        if (brainFile && !brainAuto && !cfg.llmGamingAuto) continue;  // modèles imposés : on n'y touche pas
+        if (!std::filesystem::exists(modelsDir / std::filesystem::path(std::u8string(dl.file.begin(), dl.file.end())))) missing.push_back(dl);
+    }
+    std::atomic<bool> downloading{false};
+    std::jthread downloader;
+    const DWORD uiThread = GetCurrentThreadId();
+    if (!missing.empty()) {
+        std::uint64_t total = 0;
+        for (const auto& dl : missing) total += dl.bytes;
+        const std::wstring msg = std::format(
+            L"Premier lancement : je télécharge les modèles adaptés à ton PC ({:.1f} Go).\n\n"
+            L"Carte graphique : {} ({:.1f} Go)\nCerveau hors jeu : {} ({})\nCerveau en jeu : choisi selon la mémoire libre\n"
+            L"Voix : {}\n\nLe téléchargement se fait en arrière-plan ; tu peux jouer pendant ce temps.\nOn y va ?",
+            static_cast<double>(total) / 1e9, std::wstring(hw.gpuName.begin(), hw.gpuName.end()), hw.vramGiB,
+            std::wstring(normalPlan.model->name, normalPlan.model->name + std::strlen(normalPlan.model->name)),
+            normalPlan.gpu ? L"carte graphique" : L"processeur", cfg.neuralVoice ? L"neuronale" : L"Piper (légère)");
+        if (MessageBoxW(nullptr, msg.c_str(), L"Omnis — installation", MB_YESNO | MB_ICONINFORMATION) == IDYES) {
+            downloading = true;
+            downloader = std::jthread([&, missing, total, ua = cfg.userAgent](std::stop_token st) {
+                log::SetCurrentThreadName(L"Companion.Downloads");
+                SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+                HttpClient net(ua);
+                std::uint64_t before = 0;
+                bool allOk = true;
+                for (const auto& dl : missing) {
+                    std::string err;
+                    int lastPct = -1;
+                    const bool ok = net.DownloadToFile(dl.url, modelsDir / std::filesystem::path(std::u8string(dl.file.begin(), dl.file.end())),
+                        [&](std::uint64_t done, std::uint64_t) {
+                            const int pct = static_cast<int>(100.0 * static_cast<double>(before + done) / static_cast<double>(total));
+                            if (pct != lastPct) { lastPct = pct; log::Info("Téléchargement : {} % ({})", pct, dl.file); }
+                            return !st.stop_requested();
+                        }, &err);
+                    if (!ok) { allOk = false; log::Info("Téléchargement de {} impossible : {}", dl.file, err); }
+                    before += dl.bytes;
+                    if (st.stop_requested()) return;
+                }
+                downloading = false;
+                PostThreadMessageW(uiThread, WM_APP_MODELS_READY, allOk ? 1 : 0, 0);
+            });
+        }
+    }
+
     // --- Overlay + avatar ---------------------------------------------------
     OverlayWindow overlay;
     if (!overlay.Create(instance, {})) {
@@ -202,7 +278,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     // --- Voix -----------------------------------------------------------------
     VoiceEngine voice;
     VoiceEngineConfig vcfg;
-    vcfg.whisperModel = root / L"assets" / L"models" / L"ggml-base-q5_1.bin";
+    vcfg.whisperModel = modelsDir / vplan.whisperFile;
     vcfg.piperModel = root / L"assets" / L"models" / L"fr_FR-siwis-medium.onnx";
     vcfg.espeakDataDir = root / L"espeak-ng-data";
     vcfg.neural.library = root / L"qwen.dll";
@@ -252,7 +328,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     OmnisAnalyzer analyzer;
     SelfTrainer trainer(cfg, dataDir);
     AgentOrchestrator orchestrator(
-        {cfg, governor, voice, db, brain, gate, web, claude, coach, system, loopback, analyzer, trainer, phrases, soundboard, dataDir, root / L"assets"});
+        {cfg, governor, voice, db, brain, gate, web, claude, coach, system, loopback, analyzer, trainer, phrases, soundboard, dataDir, root / L"assets", &ProbeHardware});
 
     std::atomic<SystemMode> mode{SystemMode::Interactive};
     governor.SetModeListener([&](SystemMode previous, SystemMode current) {
@@ -406,6 +482,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
                 openSettings();
                 continue;
             }
+            if (msg.message == WM_APP_MODELS_READY) {  // modèles téléchargés : on les charge sans redémarrer
+                voice.LoadMissing(cfg.neuralVoice);
+                voice.PrepareBackchannels(backchannels());
+                voice.Speak(msg.wParam ? "C'est bon, j'ai tout ce qu'il me faut. On y va."
+                                       : "Il me manque encore des fichiers, je réessaierai au prochain démarrage.");
+                continue;
+            }
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
@@ -422,6 +505,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
         const AgentActivity activity = orchestrator.Activity();
         AvatarState state = AvatarState::Idle;
         if (voice.IsListening()) state = AvatarState::Listening;
+        else if (downloading.load()) state = AvatarState::Training;  // il « télécharge son cerveau » (bandeau)
         else if (activity == AgentActivity::Researching || activity == AgentActivity::Cloud) state = AvatarState::Escalating;
         else if (sys.backgroundWorkActive) state = AvatarState::Training;
         else if (m == SystemMode::Gaming) state = AvatarState::Gaming;

@@ -21,6 +21,7 @@
 #include "core/Config.hpp"
 #include "core/MemeBank.hpp"
 #include "core/MixLexicon.hpp"
+#include "core/ModelPlanner.hpp"
 #include "core/Phrases.hpp"
 #include "modules/Soundboard.hpp"
 #include "core/LocalBrain.hpp"
@@ -70,6 +71,7 @@ struct OrchestratorDeps {
     Soundboard& soundboard;
     std::filesystem::path dataDir;  // %LOCALAPPDATA%\CompanionAI (cache Data Dragon…)
     std::filesystem::path assetsDir;  // assets/ (lexique OMNIS…)
+    std::function<HardwareInfo()> probe;  // mesure du matériel (VRAM libre en direct) pour choisir le cerveau en jeu
 };
 
 class AgentOrchestrator {

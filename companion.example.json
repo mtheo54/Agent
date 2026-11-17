@@ -20,12 +20,10 @@
   "neuralVoiceInGame": false,
   "neuralVoiceDevice": "",
 
-  // Cerveau local : Qwen3.5 9B (dépôt unsloth/Qwen3.5-9B-GGUF). Il voit aussi l'écran avec son projecteur :
-  //   "llmMmproj": "assets/models/mmproj-F16.gguf",
-  // PC plus modeste : Qwen3.5-4B-Q4_K_M.gguf (~2,7 Go).
-  "llmModel": "assets/models/Qwen3.5-9B-Q4_K_M.gguf",
-  // En jeu : petit modèle sur CPU, chargé seulement si tu lui parles (unsloth/Qwen3.5-2B-GGUF).
-  "llmGamingModel": "assets/models/Qwen3.5-2B-Q4_K_M.gguf",
+  // Cerveau : "auto" = choisi selon le PC (hors jeu : moitié de la VRAM au plus avec la voix ; en jeu :
+  // un quart au plus, moins si le jeu en prend beaucoup). Un chemin impose un modèle précis.
+  "llmModel": "auto",
+  "llmGamingModel": "auto",
   // En jeu, l'avatar : 0 caché, 1 seulement quand il parle ou t'écoute, 2 toujours.
   "avatarInGame": 1,
   // En jeu : confiné au dernier cœur, priorité et mémoire basses (le jeu garde le reste).

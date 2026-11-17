@@ -235,20 +235,31 @@ Omnis parle avec Piper, sans erreur.
 nlohmann_json et SQLite sont récupérés automatiquement (FetchContent). Chaque brique peut être désactivée
 (`-DCOMPANION_WITH_ONNX=OFF`…) : l'overlay et le governor fonctionnent sans aucun modèle.
 
-## Modèles (`assets/models/`, copiés à côté de l'exe)
+## Modèles : choisis et téléchargés selon le PC
 
-- `Qwen3.5-9B-Q4_K_M.gguf` : cerveau local (~5,7 Go, dépôt `unsloth/Qwen3.5-9B-GGUF`, Apache 2.0). Testé face au
-  3B d'avant : il parle vraiment comme un pote, chambre juste, ne valide plus n'importe quoi. Sa réflexion
-  interne est coupée d'office (réponse immédiate). PC plus modeste : `Qwen3.5-4B-Q4_K_M.gguf`.
-- `Qwen3.5-2B-Q4_K_M.gguf` (≈ 1,3 Go, dépôt `unsloth/Qwen3.5-2B-GGUF`) : cerveau **en jeu**, sur CPU
-  (`llmGamingModel`). Absent : le modèle principal tourne sur CPU en jeu (plus lent).
-- *(optionnel, vision locale)* `mmproj-F16.gguf` du même dépôt (`llmMmproj`) : le même modèle voit l'écran.
-- `ggml-base-q5_1.bin` : Whisper base quantifié (~60 Mo)
-- **Voix neuronale** (dépôt Hugging Face `Serveurperso/Qwen3-TTS-GGUF`) : `qwen-talker-0.6b-base-Q8_0.gguf`
-  (~1 Go) + `qwen-tokenizer-12hz-Q8_0.gguf` (~0,3 Go). Environ 1,5 Go de VRAM.
-- `fr_FR-siwis-medium.onnx` + `fr_FR-siwis-medium.onnx.json` : voix Piper française (repli, et voix en jeu)
-- `espeak-ng-data/` à côté de l'exécutable
-- `assets/avatar/rig.json` : le personnage 2D (fourni).
+Rien de lourd n'est livré avec le programme. Au premier lancement, Omnis mesure la machine (VRAM de la
+meilleure carte et VRAM encore libre via DXGI, RAM) et propose de télécharger les modèles qui lui
+conviennent (en arrière-plan, avec reprise si la connexion coupe ; tu peux jouer pendant ce temps).
+
+**La règle** : hors jeu, le compagnon (cerveau + voix neuronale) prend **au plus la moitié de la VRAM** ;
+en jeu, le cerveau prend **au plus un quart**, et moins si le jeu en occupe déjà beaucoup (VRAM libre
+remesurée au moment où tu lui parles, 1 Go laissé au jeu). Pas assez ? Le cerveau passe sur le processeur.
+
+| PC | Hors jeu | En jeu | Téléchargé |
+|---|---|---|---|
+| Carte intégrée, 8 Go de RAM | Qwen3.5 0.8B (CPU) + Piper | 0.8B (CPU) | 0,7 Go |
+| Carte intégrée, 16 Go | 2B (CPU) + Piper | 2B (CPU) | 1,4 Go |
+| 2 Go de VRAM | 0.8B (GPU) + Piper | 0.8B (CPU) | 0,7 Go |
+| 4-6 Go | 2B (GPU) + Piper | 0.8B (GPU) | 1,9 Go |
+| 8 Go | 2B (GPU) + voix neuronale | 2B (GPU) | 2,7 Go |
+| 12 Go | 4B (GPU) + voix neuronale | 2B (GPU) | 5,4 Go |
+| 16 Go (RX 9060 XT) | **9B** (GPU) + voix neuronale | **4B** (GPU) ; gros jeu : 2B ou 0.8B | 9,8 Go |
+| 24 Go | 9B + voix neuronale | 9B | 7,1 Go |
+
+Modèles : Qwen3.5 0.8B / 2B / 4B / 9B (Q4_K_M, `unsloth/Qwen3.5-*-GGUF`, Apache 2.0), Whisper base ou tiny,
+voix Piper `fr_FR-siwis-medium`, voix neuronale Qwen3-TTS 0.6B (`Serveurperso/Qwen3-TTS-GGUF`, cartes ≥ 8 Go).
+Imposer un modèle : un chemin dans `llmModel` / `llmGamingModel` (`companion.json`) au lieu de `"auto"`.
+Vision locale (optionnelle) : `mmproj-F16.gguf` du même dépôt que le cerveau, dans `llmMmproj`.
 
 ## Build (Visual Studio 2022, x64)
 

@@ -282,7 +282,10 @@ void AgentOrchestrator::WorkerMain(std::stop_token st) {
         CheckGameEvents();  // au plus toutes les 5 s, comme le sondage de l'API LoL
         if (deviceDirty_.exchange(false)) {
             const bool gaming = mode_.load() == SystemMode::Gaming;
-            d_.brain.Configure(!gaming, gaming ? cfg_.llmThreadsGaming : cfg_.llmThreads);
+            // Entrée en jeu : tout est libéré (VRAM et RAM rendues au jeu), rien n'est rechargé tant qu'on ne lui
+            // parle pas. Sortie : retour au périphérique du cerveau principal (rechargé à la 1re question).
+            if (gaming) d_.brain.Unload();
+            else d_.brain.Configure(cfg_.llmGpuLayers > 0, cfg_.llmThreads);
         }
         if (job) {
             std::stop_token jobStop;
@@ -382,18 +385,36 @@ std::string AgentOrchestrator::LiveContext(const std::string& question) const {
 bool AgentOrchestrator::EnsureBrain() {
     lastBrainUse_ = std::chrono::steady_clock::now();
     const bool gaming = mode_.load() == SystemMode::Gaming;
-    // En jeu : petit modèle sur CPU (le jeu garde la VRAM et 5 cœurs sur 6) ; sinon le modèle principal.
-    const bool small = gaming && std::filesystem::exists(cfg_.llmGamingModel);
-    const auto& wanted = small ? cfg_.llmGamingModel : cfg_.llmModel;
+    std::filesystem::path wanted = cfg_.llmModel;
+    bool gpu = cfg_.llmGpuLayers > 0;
+    if (gaming) {
+        wanted = cfg_.llmGamingModel;
+        gpu = false;
+        // En jeu : un quart de la VRAM au plus, moins si le jeu en occupe beaucoup (mesure du moment).
+        if (cfg_.llmGamingAuto && d_.probe) {
+            const BrainChoice c = ModelPlanner::PlanGaming(d_.probe());
+            const auto dir = cfg_.llmGamingModel.parent_path();
+            const ModelInfo* pick = nullptr;  // le plus gros DÉJÀ téléchargé qui tient dans le budget
+            for (const auto& m : ModelPlanner::Brains())
+                if (m.vramNeedGiB <= c.model->vramNeedGiB && std::filesystem::exists(dir / m.file)) pick = &m;
+            if (pick) {
+                wanted = dir / pick->file;
+                gpu = c.gpu;
+                log::Info("Orchestrator: {} ({}{})", c.why, pick->name, pick == c.model ? "" : ", le plus proche téléchargé");
+            }
+        }
+        if (!std::filesystem::exists(wanted)) wanted = cfg_.llmModel;  // rien de mieux : le principal
+    }
     if (d_.brain.IsLoaded() && d_.brain.ModelPath() == wanted) return true;
+    const bool small = wanted != cfg_.llmModel;
     LocalBrainConfig bc;
     bc.model = wanted;
-    bc.mmproj = small ? std::filesystem::path{} : cfg_.llmMmproj;  // pas de vision en jeu
-    bc.lora = cfg_.loraAdapter;
+    bc.mmproj = small ? std::filesystem::path{} : cfg_.llmMmproj;  // pas de vision avec le petit cerveau
+    bc.lora = small ? std::filesystem::path{} : cfg_.loraAdapter;
     bc.contextTokens = cfg_.llmContext;
-    bc.gpuLayers = cfg_.llmGpuLayers;
+    bc.gpuLayers = 99;
     bc.threads = gaming ? cfg_.llmThreadsGaming : cfg_.llmThreads;
-    d_.brain.Configure(!gaming, bc.threads);
+    d_.brain.Configure(gpu, bc.threads);
     return d_.brain.Load(bc);
 }
 

@@ -1048,6 +1048,30 @@ void VoiceEngine::SetNeuralVoice(bool enabled, bool inGame) noexcept {
 }
 bool VoiceEngine::HasNeuralVoice() const noexcept { return impl_->neural.Ready(); }
 void VoiceEngine::SetQuirks(float quirks01) noexcept { impl_->quirks = std::clamp(quirks01, 0.f, 1.f); }
+void VoiceEngine::LoadMissing(bool neuralWanted) {
+    auto& d = *impl_;
+    d.Post([&d, neuralWanted] {
+#if COMPANION_WITH_WHISPER
+        if (!d.whisper && std::filesystem::exists(d.cfg.whisperModel)) {
+            whisper_context_params cp = whisper_context_default_params();
+            cp.use_gpu = false;
+            d.whisper = whisper_init_from_file_with_params(log::Narrow(d.cfg.whisperModel.wstring()).c_str(), cp);
+            log::Info("VoiceEngine: STT {}", d.whisper ? "prêt" : "toujours absent");
+        }
+#endif
+#if COMPANION_WITH_ONNX && COMPANION_WITH_ESPEAK
+        if (!d.tts && std::filesystem::exists(d.cfg.piperModel)) {
+            d.tts = std::make_unique<PiperTts>();
+            if (!d.tts->Load(d.cfg.piperModel, d.cfg.espeakDataDir, d.cfg.ttsThreads)) d.tts.reset();
+        }
+#endif
+        if (neuralWanted) {
+            d.neuralEnabled = true;
+            if (!d.neural.Ready() && !d.gaming.load()) d.neural.Load(d.cfg.neural);
+        }
+    });
+}
+
 void VoiceEngine::SetSoundResolver(SoundResolver resolver) {
     auto& d = *impl_;
     d.Post([&d, r = std::move(resolver)]() mutable { d.soundResolver = std::move(r); });

@@ -99,6 +99,8 @@ public:
     // Soundboard : la balise (son: nom) et PlaySound() demandent le son au résolveur (PCM 24 kHz mono).
     using SoundResolver = std::function<std::shared_ptr<const std::vector<float>>(const std::string&)>;
     void SetSoundResolver(SoundResolver resolver);
+    // Après un téléchargement de modèles : charge ce qui manquait (Whisper, Piper, voix neuronale).
+    void LoadMissing(bool neuralWanted);
     void PlaySound(const std::string& name);
     void SetMicEffect(float amount01) noexcept;  // « vrai micro » : proximité, présence, compresseur, pièce
     void SetPitchLife(float amount01) noexcept;  // hauteur qui dérive et vire un peu (0 = voix droite)  // charge CPU 0 … 1 (plus de bugs quand le PC rame)
