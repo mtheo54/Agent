@@ -25,6 +25,7 @@ CompanionConfig LoadConfig(const std::filesystem::path& jsonFile) {
         cfg.tone = std::clamp(j.value("tone", cfg.tone), 0, 2);
         cfg.backchannels = j.value("backchannels", cfg.backchannels);
         cfg.neuralVoice = j.value("neuralVoice", cfg.neuralVoice);
+        cfg.voiceQuirks = std::clamp(j.value("voiceQuirks", cfg.voiceQuirks), 0.f, 1.f);
         cfg.neuralVoiceInGame = j.value("neuralVoiceInGame", cfg.neuralVoiceInGame);
         cfg.neuralVoiceDevice = j.value("neuralVoiceDevice", cfg.neuralVoiceDevice);
         cfg.bargeIn = j.value("bargeIn", cfg.bargeIn);
@@ -93,6 +94,7 @@ bool SaveConfig(const CompanionConfig& cfg, const std::filesystem::path& jsonFil
     j["expressiveness"] = cfg.expressiveness;
     j["fxIntensity"] = cfg.fxIntensity;
     j["neuralVoice"] = cfg.neuralVoice;
+    j["voiceQuirks"] = cfg.voiceQuirks;
     j["neuralVoiceInGame"] = cfg.neuralVoiceInGame;
     j["speechRate"] = cfg.speechRate;
     j["tone"] = cfg.tone;

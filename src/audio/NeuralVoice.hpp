@@ -2,7 +2,7 @@
 // NeuralVoice : voix neuronale expressive d'Omnis. Qwen3-TTS 0.6B (Apache 2.0) via qwentts.cpp (MIT, GGML).
 //
 //  - Streaming : le premier morceau d'audio sort une trame (~80 ms) après le début du décodage.
-//  - Émotion : une prise de référence par style (assets/voice/<voix>/{normal,bright,soft,calm}.wav + .txt).
+//  - Émotion : une prise de référence par style (assets/voice/<voix>/{normal,bright,soft,calm,amused,surprised}.wav + .txt).
 //    L'empreinte vocale vient toujours de « normal » (identité stable), la mélodie de la prise du style.
 //  - Annulation au vol (interruption) : vérifiée à chaque pas du décodeur (~83 ms).
 //  - qwentts.cpp embarque son propre ggml (GGML_MAX_NAME=128) : chargé comme DLL séparée (qwen.dll),
@@ -45,7 +45,8 @@ public:
 
     // Bloquant (thread de synthèse). Texte déjà normalisé ou non : on le normalise ici.
     // false : échec (l'appelant bascule sur Piper) ; true : terminé ou interrompu.
-    bool Speak(const std::string& text, SpeakingStyle style, const ChunkFn& onChunk);
+    // temperatureJitter : variation d'une phrase à l'autre (la voix ne sonne jamais deux fois pareil).
+    bool Speak(const std::string& text, SpeakingStyle style, const ChunkFn& onChunk, float temperatureJitter = 0.f);
 
 private:
     struct Impl;

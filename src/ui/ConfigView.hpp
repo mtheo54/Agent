@@ -59,7 +59,7 @@ public:
 
 private:
     enum class Field { None, Name, Scale, Opacity, Corner, Expressiveness, Fx, Rate, Backchannels, BargeIn,
-                       Emotion, Listen, Tone, Engine, AutoTraining, Cloud, CloudAsk, Save, Cancel, Close, Expression };
+                       Emotion, Listen, Tone, Engine, Quirks, AutoTraining, Cloud, CloudAsk, Save, Cancel, Close, Expression };
     struct Hit {
         D2D1_RECT_F r;
         Field field;

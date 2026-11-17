@@ -1,5 +1,6 @@
 #include "audio/VoiceEngine.hpp"
 
+#include "audio/Expressivity.hpp"
 #include "audio/TextNormalizerFr.hpp"
 #include "core/Log.hpp"
 
@@ -10,6 +11,7 @@
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <condition_variable>
 #include <cstdint>
@@ -378,6 +380,13 @@ struct VoiceEngine::Impl {
     NeuralVoice neural;
     std::atomic<bool> neuralEnabled{true};
     std::atomic<bool> neuralInGame{false};
+    // Expressivité : sons humains, spontanéité, bugs de robot (thread de synthèse uniquement)
+    VocalBank vocals;
+    RobotGlitcher glitcher;
+    std::atomic<float> quirks{0.5f};
+    std::uint32_t vrng = 0x5EEDu;
+    std::chrono::steady_clock::time_point lastGlitch{}, lastCough{}, lastLead{};
+
     bool UseNeural() const noexcept {
         return neuralEnabled.load() && neural.Ready() && (!gaming.load() || neuralInGame.load());
     }
@@ -430,6 +439,8 @@ struct VoiceEngine::Impl {
             case SpeakingStyle::Bright: lengthMul = 0.93f; noiseMul = 1.2f; moodDelta = 0.2f; break;
             case SpeakingStyle::Soft: lengthMul = 1.12f; noiseMul = 0.75f; moodDelta = -0.25f; break;
             case SpeakingStyle::Calm: lengthMul = 1.06f; noiseMul = 0.85f; moodDelta = -0.15f; break;
+            case SpeakingStyle::Amused: lengthMul = 0.95f; noiseMul = 1.25f; moodDelta = 0.15f; break;
+            case SpeakingStyle::Surprised: lengthMul = 0.9f; noiseMul = 1.3f; moodDelta = 0.25f; break;
             default: lengthMul = 1.f; noiseMul = 1.f; moodDelta = 0.f; break;
         }
     }
@@ -686,25 +697,87 @@ struct VoiceEngine::Impl {
         });
     }
 
-    void Synthesize(const std::string& text, uint32_t generation, SpeakingStyle style) {
+    // Un morceau de texte : voix neuronale (streaming) ou Piper, avec un éventuel bug de robot.
+    void SpeakText(const std::string& text, uint32_t generation, SpeakingStyle style, bool forceGlitch) {
+        using clock = std::chrono::steady_clock;
+        const bool cooldown = clock::now() - lastGlitch < std::chrono::seconds(45);
+        glitcher.Plan(style, cooldown ? 0.f : quirks.load(), vrng, forceGlitch);
+        const bool planned = glitcher.Pending();
         float lengthMul, noiseMul, moodDelta;
         StyleParams(style, lengthMul, noiseMul, moodDelta);
-        fx.SetMood(std::clamp(baseMood.load() + moodDelta, 0.f, 1.f));
-        // Voix neuronale : le texte entier d'un coup (meilleure intonation), sortie en streaming.
-        if (UseNeural() && SpeakNeural(text, generation, style, nullptr)) {
-            --pendingSpeech;
-            return;
+        bool done = false;
+        if (UseNeural()) {
+            const float jitter = (NextRandom(vrng) - 0.5f) * 0.12f;  // jamais deux fois la même intonation
+            done = neural.Speak(text, style, [&](std::span<const float> pcm) {
+                if (speechGeneration.load() != generation) return false;  // interrompu : on arrête le décodeur
+                std::vector<float> chunk(pcm.begin(), pcm.end());
+                glitcher.Process(chunk);
+                PushAudio(chunk, generation);
+                return true;
+            }, jitter);
         }
 #if COMPANION_WITH_ONNX && COMPANION_WITH_ESPEAK
-        if (tts) {
+        if (!done && tts) {
             std::vector<float> pcm;
             for (const auto& sentence : SplitSentences(NormalizeForSpeechFr(text))) {
                 if (speechGeneration.load() != generation) break;
-                if (tts->Synthesize(sentence, pcm, lengthMul * baseLength.load(), noiseMul))
-                    PushAudio(Resample(pcm, tts->SampleRate(), static_cast<int>(outputRate)), generation);
+                if (!tts->Synthesize(sentence, pcm, lengthMul * baseLength.load(), noiseMul)) continue;
+                auto out = Resample(pcm, tts->SampleRate(), static_cast<int>(outputRate));
+                glitcher.Process(out);
+                PushAudio(out, generation);
             }
         }
 #endif
+        if (planned && !glitcher.Pending()) lastGlitch = clock::now();
+    }
+
+    void PlayVocal(Vocal v, uint32_t generation) {
+        if (v == Vocal::Glitch) return;  // traité comme un bug sur le texte suivant
+        if (const auto* clip = vocals.Pick(v, vrng)) {
+            PushAudio(*clip, generation);
+            // Une toux de robot finit parfois en grésillement.
+            if (v == Vocal::Cough && NextRandom(vrng) < 0.5f) PushAudio(RobotGlitcher::Burst(*clip, static_cast<int>(outputRate), vrng), generation);
+        }
+    }
+
+    void Synthesize(const std::string& text, uint32_t generation, SpeakingStyle style) {
+        using clock = std::chrono::steady_clock;
+        float lengthMul, noiseMul, moodDelta;
+        StyleParams(style, lengthMul, noiseMul, moodDelta);
+        fx.SetMood(std::clamp(baseMood.load() + moodDelta, 0.f, 1.f));
+
+        auto parts = ParseExpressiveText(text);
+        const float q = quirks.load();
+        const auto now = clock::now();
+        // Spontanéité (sans balise) : petit rire avant une réponse drôle, « oh ! » avant une surprise…
+        if (q > 0.f && !parts.empty() && !parts.front().isVocal && now - lastLead > std::chrono::seconds(20)) {
+            if (const Vocal lead = Spontaneity::Lead(style, vrng); lead != Vocal::Count && vocals.Has(lead)) {
+                parts.insert(parts.begin(), SpeechPart{true, lead, {}});
+                lastLead = now;
+            }
+        }
+        // … et de temps en temps, il s'éclaircit la « gorge » avant de parler.
+        if (!parts.empty() && !parts.front().isVocal && now - lastCough > std::chrono::minutes(3) &&
+            NextRandom(vrng) < Spontaneity::CoughChance(style, q) && vocals.Has(Vocal::Cough)) {
+            parts.insert(parts.begin(), SpeechPart{true, Vocal::Cough, {}});
+            lastCough = now;
+        }
+
+        bool forceGlitch = false;
+        for (size_t i = 0; i < parts.size(); ++i) {
+            if (speechGeneration.load() != generation) break;
+            const auto& p = parts[i];
+            if (!p.isVocal) {
+                SpeakText(p.text, generation, style, forceGlitch);
+                forceGlitch = false;
+            } else if (p.vocal == Vocal::Glitch) {
+                // (bug) avant du texte : la phrase suivante accroche ; en fin de phrase : grésillement seul.
+                if (i + 1 < parts.size() && !parts[i + 1].isVocal) forceGlitch = true;
+                else if (const auto* c = vocals.Pick(Vocal::Hmm, vrng)) PushAudio(RobotGlitcher::Burst(*c, static_cast<int>(outputRate), vrng), generation);
+            } else {
+                PlayVocal(p.vocal, generation);
+            }
+        }
         --pendingSpeech;
     }
 
@@ -716,7 +789,10 @@ struct VoiceEngine::Impl {
                                : category == "excited" ? SpeakingStyle::Bright : SpeakingStyle::Normal;
             float lengthMul, noiseMul, moodDelta;
             StyleParams(st, lengthMul, noiseMul, moodDelta);
-            for (const auto& phrase : list) {
+            for (const auto& raw : list) {
+                std::string phrase;
+                for (const auto& part : ParseExpressiveText(raw)) if (!part.isVocal) phrase += part.text;
+                if (phrase.empty()) continue;
                 std::vector<float> pcm;
                 if (neuralEnabled.load() && neural.Ready()) {
                     const uint32_t gen = speechGeneration.load();
@@ -769,6 +845,11 @@ bool VoiceEngine::Initialize(const VoiceEngineConfig& cfg) {
     // Chargement de la voix neuronale en premier travail du thread de synthèse : l'appli démarre tout
     // de suite (Piper répond en attendant), les relances préparées ensuite profitent de la nouvelle voix.
     if (cfg.neuralEnabled) d.Post([&d] { d.neural.Load(d.cfg.neural); });
+    d.glitcher.Prepare(static_cast<int>(d.outputRate));
+    d.vrng ^= static_cast<std::uint32_t>(GetTickCount64());
+    d.Post([&d] {
+        if (d.vocals.Load(d.cfg.neural.voiceDir / L"vocal", static_cast<int>(d.outputRate))) log::Info("VoiceEngine: sons humains prêts");
+    });
     return true;
 }
 
@@ -910,6 +991,7 @@ void VoiceEngine::SetNeuralVoice(bool enabled, bool inGame) noexcept {
     d.neuralEnabled = enabled;
 }
 bool VoiceEngine::HasNeuralVoice() const noexcept { return impl_->neural.Ready(); }
+void VoiceEngine::SetQuirks(float quirks01) noexcept { impl_->quirks = std::clamp(quirks01, 0.f, 1.f); }
 
 bool VoiceEngine::HasStt() const noexcept {
 #if COMPANION_WITH_WHISPER

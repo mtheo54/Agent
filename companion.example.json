@@ -3,6 +3,7 @@
   "name": "Omnis",
   "tone": 2,
   "neuralVoice": true,
+  "voiceQuirks": 0.5,
   "neuralVoiceInGame": false,
   "neuralVoiceDevice": "",
 

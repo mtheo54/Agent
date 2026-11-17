@@ -75,7 +75,7 @@ struct NeuralVoice::Impl {
         std::string text;
         bool ok = false;
     };
-    std::array<StyleRef, 4> styles{};
+    std::array<StyleRef, kSpeakingStyleCount> styles{};
 
     ~Impl() {
         if (refFree)
@@ -131,7 +131,7 @@ bool NeuralVoice::Load(const NeuralVoiceConfig& cfg) {
     }
 
     // Prises de référence : extraites une fois au chargement (empreinte + codes), réutilisées à chaque phrase.
-    constexpr std::array<const char*, 4> names{"normal", "bright", "soft", "calm"};
+    constexpr std::array<const char*, kSpeakingStyleCount> names{"normal", "bright", "soft", "calm", "amused", "surprised"};
     for (size_t i = 0; i < names.size(); ++i) {
         std::vector<float> pcm;
         int rate = 0;
@@ -156,7 +156,7 @@ bool NeuralVoice::Load(const NeuralVoiceConfig& cfg) {
     return true;
 }
 
-bool NeuralVoice::Speak(const std::string& text, SpeakingStyle style, const ChunkFn& onChunk) {
+bool NeuralVoice::Speak(const std::string& text, SpeakingStyle style, const ChunkFn& onChunk, float temperatureJitter) {
     if (!Ready()) return false;
     auto& d = *impl_;
     const auto& s = d.styles[static_cast<size_t>(style)].ok ? d.styles[static_cast<size_t>(style)] : d.styles[0];
@@ -176,7 +176,7 @@ bool NeuralVoice::Speak(const std::string& text, SpeakingStyle style, const Chun
     p.ref_codes = s.ref.ref_codes;
     p.ref_T = s.ref.ref_T;
     p.ref_text = s.text.c_str();
-    p.temperature = d.cfg.temperature;
+    p.temperature = std::clamp(d.cfg.temperature + temperatureJitter, 0.5f, 1.1f);
     // Garde-fou : ~12,5 trames/s, au plus ~3 fois la durée « normale » d'une lecture (15 car./s).
     p.max_new_tokens = std::max(48, static_cast<int>(spoken.size() * 12.5 * 3 / 15));
     p.on_chunk = [](const float* samples, int n, void* user) -> bool {
@@ -203,7 +203,7 @@ NeuralVoice::NeuralVoice() = default;
 NeuralVoice::~NeuralVoice() = default;
 bool NeuralVoice::Ready() const noexcept { return false; }
 bool NeuralVoice::Load(const NeuralVoiceConfig&) { return false; }
-bool NeuralVoice::Speak(const std::string&, SpeakingStyle, const ChunkFn&) { return false; }
+bool NeuralVoice::Speak(const std::string&, SpeakingStyle, const ChunkFn&, float) { return false; }
 
 #endif
 

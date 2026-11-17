@@ -146,6 +146,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     voice.SetMood(cfg.fxIntensity);  // 0,5 = 9 bits, 35 % wet (rapport §4.B)
     voice.SetBaseSpeechRate(cfg.speechRate);
     voice.SetEmotionDetection(cfg.emotionDetection);
+    voice.SetQuirks(cfg.voiceQuirks);
     Phrases phrases;  // répliques par ton (assets/persona/phrases.json)
     phrases.Load(root / L"assets" / L"persona" / L"phrases.json");
     phrases.SetTone(static_cast<Tone>(cfg.tone));
@@ -174,7 +175,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     OmnisAnalyzer analyzer;
     SelfTrainer trainer(cfg, dataDir);
     AgentOrchestrator orchestrator(
-        {cfg, governor, voice, db, brain, gate, web, claude, coach, system, loopback, analyzer, trainer, phrases, dataDir});
+        {cfg, governor, voice, db, brain, gate, web, claude, coach, system, loopback, analyzer, trainer, phrases, dataDir, root / L"assets"});
 
     std::atomic<SystemMode> mode{SystemMode::Interactive};
     governor.SetModeListener([&](SystemMode, SystemMode current) {
@@ -217,6 +218,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
         cfg.tone = edited.tone;
         cfg.backchannels = edited.backchannels;
         cfg.neuralVoice = edited.neuralVoice;
+        cfg.voiceQuirks = edited.voiceQuirks;
         cfg.bargeIn = edited.bargeIn;
         cfg.emotionDetection = edited.emotionDetection;
         cfg.voiceActivity = edited.voiceActivity;
@@ -228,6 +230,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
         voice.SetBaseSpeechRate(cfg.speechRate);
         voice.SetEmotionDetection(cfg.emotionDetection);
         voice.SetNeuralVoice(cfg.neuralVoice, cfg.neuralVoiceInGame);
+        voice.SetQuirks(cfg.voiceQuirks);
         if (toneChanged) {
             phrases.SetTone(static_cast<Tone>(cfg.tone));
             voice.PrepareBackchannels(backchannels());

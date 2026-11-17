@@ -48,58 +48,89 @@ void Fft(std::vector<std::complex<float>>& a) {  // radix-2 itératif, en place
 
 std::string MixMetrics::ToSummary() const {
     if (silent || seconds < 0.5f) return "Mix : aucun son analysé.";
-    std::string s = std::format("Mix {:.0f}s : {:.1f} LUFS, crête {:.1f} dBFS, crest {:.1f} dB, clips {}, corr {:.2f}, largeur {:.2f} | ",
-                                seconds, lufsShort, peakDb, crestDb, clips, correlation, width);
+    std::string s = std::format("Mix {:.0f}s : {:.1f} LUFS, crête {:.1f} dBFS, crest {:.1f} dB, clips {}, corr {:.2f} "
+                                "(grave {:.2f}, perte mono {:.1f} dB), largeur {:.2f} | ",
+                                seconds, lufsShort, peakDb, crestDb, clips, correlation, lowCorrelation, monoLossDb, width);
     for (int i = 0; i < kBands; ++i) s += std::format("{}{:+.0f} ", kBandNames[static_cast<size_t>(i)],
                          std::clamp(bandDb[static_cast<size_t>(i)], -30.f, 30.f));  // bande vide : borne lisible
     s += "(dB vs pente réf.)";
     return s;
 }
 
-std::string MixMetrics::Diagnosis() const {
-    if (silent || seconds < 0.5f) return "Diagnostic : rien à analyser.";
-    struct Issue { int severity; std::string text; };
+// Diagnostic d'ingé son, dans le langage d'OMNIS (Abrasion Labs, source/ai/MixDiagnosis.cpp) : ce qui ne va
+// pas DANS LE MIX, et quoi faire concrètement dans FL Studio. Classé par gravité.
+std::vector<MixMetrics::Issue> MixMetrics::Issues() const {
     std::vector<Issue> issues;
+    if (silent || seconds < 0.5f) return issues;
     const auto band = [&](int i) { return bandDb[static_cast<size_t>(i)]; };
-    // Dynamique et niveau
-    if (clips > 0)
-        issues.push_back({clips > 100 ? 10 : 7,
-                          std::format("ÇA SATURE : {} clips, crête à {:.1f} dBFS. Action : baisser le master de 4 à 6 dB "
-                                      "et mettre un limiteur plafonné à -1 dB.", clips, peakDb)});
-    if (lufsShort > -7.f)
-        issues.push_back({9, std::format("BEAUCOUP TROP FORT : {:.1f} LUFS (cible -9 à -14 selon le style). Écrasé, "
-                                         "aucune marge.", lufsShort)});
+    // Niveau et dynamique
+    if (clips > 0 || peakDb > -0.1f)
+        issues.push_back({10, "clip", std::format("Ton mix touche déjà 0 dBFS ({} clips, crête {:.1f} dBFS). Action : baisse le master "
+                                          "de FL d'environ 6 dB (crêtes vers -6 dBFS) et retire limiteur / clipper du master, "
+                                          "le mastering a besoin de marge.", clips, peakDb)});
+    if (lufsShort > -7.f || (crestDb < 6.f && lufsShort > -10.f))
+        issues.push_back({9, "loud", std::format("Le mix est déjà très fort et écrasé ({:.1f} LUFS, crête - sonie {:.1f} dB, il en "
+                                         "faut 8 à 12). Un limiteur ou un clipper est sans doute resté sur le master de FL : "
+                                         "enlève-le, ça respire pas.", lufsShort, crestDb)});
     else if (lufsShort < -20.f)
-        issues.push_back({4, std::format("Trop faible : {:.1f} LUFS, il manque du niveau.", lufsShort)});
-    if (crestDb < 6.f)
-        issues.push_back({8, std::format("Aucune dynamique (facteur de crête {:.1f} dB, il en faut 8 à 12) : ça respire "
-                                         "pas, les transitoires sont écrasés.", crestDb)});
+        issues.push_back({4, "quiet", std::format("Trop faible ({:.1f} LUFS) : monte le niveau des pistes, pas le master.", lufsShort)});
     // Phase et image
-    if (correlation < 0.f)
-        issues.push_back({9, std::format("PROBLÈME DE PHASE grave (corrélation {:.2f}) : le son disparaît en mono.",
-                                         correlation)});
-    else if (correlation < 0.3f)
-        issues.push_back({6, std::format("Phase limite (corrélation {:.2f}) : vérifie les élargisseurs.", correlation)});
-    if (width < 0.05f) issues.push_back({2, "Image quasi mono : pas de largeur stéréo, tout est au centre."});
+    if (lowCorrelation < 0.8f)
+        issues.push_back({8, "lowmono", std::format("Le grave n'est pas mono (corrélation {:.2f} sous 120 Hz). La 808 ou le sub a de la "
+                                         "largeur (chorus, reverb, sample stéréo) : passe-les en mono dans FL.", lowCorrelation)});
+    if (monoLossDb > 3.f || correlation < 0.f)
+        issues.push_back({8, "phase", std::format("En mono, le mix perd {:.1f} dB (corrélation {:.2f}) : des éléments sont en "
+                                         "opposition de phase (doubleurs, élargisseurs, pans extrêmes). Vérifie-les en mono "
+                                         "dans FL et réduis leur largeur.", monoLossDb, correlation)});
+    else if (width < 0.05f)
+        issues.push_back({2, "narrow", "Image quasi mono : tout est au centre, un peu de largeur sur les pads ou les hats aérerait."});
     // Spectre (écarts à la pente de référence)
     const float mids = (band(2) + band(3) + band(4)) / 3.f;
     if (band(0) > 2.f && band(0) - mids > 12.f)
-        issues.push_back({7, std::format("Le sub écrase tout (+{:.0f} dB au-dessus des médiums) : 808/kick trop forts, "
-                                         "ils bouffent le reste.", band(0) - mids)});
-    if (band(3) < -12.f)
-        issues.push_back({6, std::format("Médiums creusés ({:+.0f} dB) : la mélodie et la voix n'ont pas de place, "
-                                         "ça manque de corps.", band(3))});
-    if (band(2) > 5.f) issues.push_back({5, "Bas-médiums chargés : c'est boueux, nettoie vers 250-500 Hz."});
-    if (band(5) < -10.f && band(6) < -10.f) issues.push_back({4, "Terne : il manque de la brillance au-dessus de 4 kHz."});
-    if (band(6) > 6.f) issues.push_back({5, "Aigus agressifs (air) : hats ou cymbales qui fatiguent l'oreille."});
+        issues.push_back({7, "sub", std::format("Le sub / la 808 écrase tout (+{:.0f} dB au-dessus des médiums). Baisse la 808 de "
+                                         "quelques dB dans le mixeur : trop de sub mange la sonie de tout le reste.", band(0) - mids)});
+    if (band(2) > 4.f)
+        issues.push_back({5, "mud", std::format("Le bas-médium s'accumule vers 250-450 Hz (+{:.0f} dB) : son boueux. Creuse 250-400 Hz "
+                                         "sur la mélodie, les pads et le haut de la 808 (pas sur la voix).", band(2))});
+    if (band(3) > 4.f)
+        issues.push_back({5, "nasal", std::format("Les médiums 1-2,5 kHz ressortent (+{:.0f} dB) : son dur, nasal. Cherche la piste qui "
+                                         "pique (lead, sample, voix trop compressée) et baisse-la de 2-3 dB vers 1,5 kHz.", band(3))});
+    else if (band(3) < -12.f)
+        issues.push_back({6, "hollow", std::format("Médiums creusés ({:+.0f} dB) : la mélodie et la voix n'ont pas de place, ça manque de "
+                                         "corps.", band(3))});
+    if (band(5) > 4.f)
+        issues.push_back({5, "harsh", std::format("Les aigus 4-6 kHz sont durs (+{:.0f} dB) : fatigue, sifflantes. De-esser sur la voix, "
+                                         "baisse un peu les hats et le clap.", band(5))});
+    else if (band(5) < -10.f && band(6) < -10.f)
+        issues.push_back({4, "dull", "Il manque de présence et d'air : la voix paraît loin. Monte-la de 1-2 dB ou ajoute de la "
+                             "présence sur elle (3-5 kHz) plutôt que sur tout le mix."});
+    if (band(6) > 6.f) issues.push_back({5, "harsh", "Trop d'air au-dessus de 6 kHz : hats ou cymbales qui fatiguent l'oreille."});
 
     std::ranges::sort(issues, std::greater{}, &Issue::severity);
+    return issues;
+}
+
+std::string MixMetrics::FocusedDiagnosis(const std::vector<std::string>& topics, int max) const {
+    std::string s;
+    int n = 0;
+    for (const auto& i : Issues()) {
+        if (n >= max) break;
+        if (std::ranges::find(topics, i.topic) == topics.end()) continue;
+        s += "- " + i.text + "\n";
+        ++n;
+    }
+    return s;
+}
+
+std::string MixMetrics::Diagnosis() const {
+    if (silent || seconds < 0.5f) return "Diagnostic : rien à analyser.";
+    const auto issues = Issues();
     int score = 10;
     for (const auto& i : issues) score -= i.severity >= 8 ? 3 : i.severity >= 5 ? 2 : 1;
     score = std::max(score, 1);
     std::string s = std::format("Diagnostic de l'ingé son : note technique {}/10 ({}).", score,
                                 score >= 8 ? "propre" : score >= 5 ? "correct mais perfectible" : "à retravailler sérieusement");
-    if (issues.empty()) s += " Rien d'alarmant : niveau, dynamique, phase et spectre sont dans les clous.";
+    if (issues.empty()) s += " Rien d'alarmant dans le mix : équilibre, grave mono et marge corrects.";
     for (const auto& i : issues) s += "\n- " + i.text;
     return s;
 }
@@ -110,6 +141,12 @@ OmnisAnalyzer::OmnisAnalyzer() : ring_(1u << 18), mask_((1u << 18) - 1) {
     const Biquad hp{1.0, -2.0, 1.0, -1.99004745483398, 0.99007225036621};
     kShelfL_ = kShelfR_ = shelf;
     kHpL_ = kHpR_ = hp;
+    {  // passe-bas Butterworth 120 Hz (RBJ, Q = 0,7071)
+        const double w0 = 2.0 * std::numbers::pi * 120.0 / kFs, alpha = std::sin(w0) / (2.0 * 0.70710678), cw = std::cos(w0);
+        const double a0 = 1.0 + alpha;
+        const Biquad lp{(1.0 - cw) / 2.0 / a0, (1.0 - cw) / a0, (1.0 - cw) / 2.0 / a0, -2.0 * cw / a0, (1.0 - alpha) / a0};
+        lowL_ = lowR_ = lowL2_ = lowR2_ = lp;
+    }
 
     fftIn_.assign(kFftSize, 0.f);
     fftBuf_.resize(kFftSize);
@@ -188,6 +225,10 @@ void OmnisAnalyzer::ProcessFrame(float l, float r) {
     cur_.l2 += static_cast<double>(l) * l;
     cur_.r2 += static_cast<double>(r) * r;
     cur_.lr += static_cast<double>(l) * r;
+    const double gl = lowL2_.Process(lowL_.Process(l)), gr = lowR2_.Process(lowR_.Process(r));
+    cur_.lowL2 += gl * gl;
+    cur_.lowR2 += gr * gr;
+    cur_.lowLR += gl * gr;
     cur_.peak = std::max({cur_.peak, std::abs(l), std::abs(r)});
     // Clip = au moins 3 échantillons consécutifs à pleine échelle sur un canal.
     runL_ = std::abs(l) >= 0.999f ? runL_ + 1 : 0;
@@ -259,6 +300,7 @@ MixMetrics OmnisAnalyzer::ComputeLocked() const {
         if (ms < 1e-7) continue;
         ++loud;
         sum.kL += b.kL; sum.kR += b.kR; sum.l2 += b.l2; sum.r2 += b.r2; sum.lr += b.lr;
+        sum.lowL2 += b.lowL2; sum.lowR2 += b.lowR2; sum.lowLR += b.lowLR;
         sum.peak = std::max(sum.peak, b.peak);
         sum.clips += b.clips;
         sum.n += b.n;
@@ -275,6 +317,10 @@ MixMetrics OmnisAnalyzer::ComputeLocked() const {
     m.correlation = static_cast<float>(sum.lr / std::sqrt(std::max(sum.l2 * sum.r2, 1e-24)));
     const double mid = (sum.l2 + sum.r2 + 2 * sum.lr) / 4, side = (sum.l2 + sum.r2 - 2 * sum.lr) / 4;
     m.width = static_cast<float>(side / std::max(mid, 1e-12));
+    // Grave significatif seulement (sinon une corrélation de bruit de fond ne veut rien dire).
+    if (sum.lowL2 + sum.lowR2 > 1e-4 * (sum.l2 + sum.r2))
+        m.lowCorrelation = static_cast<float>(sum.lowLR / std::sqrt(std::max(sum.lowL2 * sum.lowR2, 1e-24)));
+    m.monoLossDb = static_cast<float>(std::clamp(ToDb((sum.l2 + sum.r2) / 2.0) - ToDb(mid), 0.0, 30.0));
     if (bandsValid_) {
         double total = 0;
         for (double e : bandEnergy_) total += e;

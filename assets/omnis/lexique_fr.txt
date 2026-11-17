@@ -1,0 +1,103 @@
+# =============================================================================
+#  Abrasion Labs // OMNIS — Lexique de la demande (base de mots, version 1)
+#
+#  Une ligne par concept :
+#      qualite <id> : expression | expression | ... => axe valeur, axe valeur
+#      defaut  <id> : expression | ...               => axe valeur, ...
+#
+#  « qualite » : ce que la personne VEUT quand elle le nomme (« plus brillant »,
+#  « manque de crispy », « trop brillant » = moins).
+#  « defaut » : ce dont elle SE PLAINT quand elle le nomme (« c'est boueux »,
+#  « trop boueux » = la même plainte). Les valeurs décrivent le défaut ; la
+#  correction appliquée est l'inverse.
+#
+#  Axes (dB sauf mention) : sub (20–80 Hz), bas (110–230), bas_medium
+#  (320–640), medium (0.9–2.6 k), presence (3.6–7 k), air (10–20 k),
+#  largeur (Side), sonie (LU, relatif), cible_lufs (absolu), proprete (-1 sale
+#  … +1 propre), ressemblance (écart à 50 %), punch, densite, saturation
+#  (-1 … +1, appliqués par les étages à venir).
+#
+#  Les expressions sont comparées après normalisation (minuscules, accents
+#  retirés) et avec tolérance aux fautes : inutile d'écrire les variantes
+#  d'orthographe, seulement les synonymes. Un fichier utilisateur peut
+#  redéfinir un concept (même id) : c'est ce que fait l'apprentissage.
+# =============================================================================
+
+# ---- Couleur ----------------------------------------------------------------
+qualite brillant   : brillant | brillance | bright | briller | eclatant | lumineux | scintillant | cristallin | clarte | etincelant | shiny | brighter | brightness | sparkle | sparkly | shimmer | shimmery | sheen | glossy | shine | crystal | cristal | clinquant | qui brille | qui scintille => presence +1, air +2
+qualite air        : air | aere | aerien | airy | ouvert | ouverture | souffle | respire en haut | de l air | airier | more air | breathy | open top | du air | aere en haut | sizzle | sizzly | sizzling => air +2
+qualite crispy     : crispy | crisp | croustillant | croquant | craquant | crunchy | crunch | grain | granuleux | qui croustille | croustille | crispier | crispiness | bite | bitey | edge | edgy | du mordant | mordant | qui mord => presence +1.5, air +1, saturation +0.5
+qualite chaud      : chaud | warm | chaleureux | analogique | analog | vintage | velours | rond | moelleux | soyeux | cosy | warmer | warmth | lush | cozy | rondeur | de la chaleur => bas_medium +1, air -1, saturation +0.3
+# Caractères de saturation de l'Inflator (le mot choisit la courbe ; « tape » seul veut dire « ça frappe »).
+qualite bande      : bande | a bande | saturation bande | bande magnetique | magneto | magnetophone | effet bande | son bande | tape saturation | tape sat | tape machine | saturation tape => saturation +0.5
+qualite lampe      : lampe | lampes | a lampe | saturation lampe | tube | tubes | tubey | valve | ampli a lampe | tube saturation | tube warmth => saturation +0.5, bas_medium +0.5
+qualite transistor : transistor | transistors | a transistor | saturation transistor | solid state | transistor saturation | fuzz => saturation +0.5
+qualite froid      : froid | cold | clinique | digital | numerique | chirurgical | colder | sterile | clinical | dry => bas_medium -1, air +1
+qualite sombre     : sombre | dark | obscur | nocturne | tenebreux | darker | moody | gloomy | dark af | plus sombre => presence -1, air -1.5
+qualite gras       : corps | du corps | de corps | plus de corps | epaisseur | de l epaisseur | gras | epais | fat | gros | lourd | massif | plein | du corps | charnu | costaud | thick | heavy | imposant | fatter | thicker | heavier | beefy | beefier | meaty | chunky | body | fuller | full | girthy | phat | weight | weighty | massive | big | bigger | huge | enorme | gros son gras | qui a du corps => bas +1.5, bas_medium +0.5
+qualite basse      : basse | basses | bass | sub | 808 | grave | graves | low | lows | low end | sub bass | infra | subs | 808s | the 808 | bottom end | bottom | lowend | low frequencies | les bas | basses frequences | sub grave | la 8 | ma 8 => sub +2, bas +1
+qualite aigus      : aigus | aigu | high | highs | treble | hautes frequences | les hauts | le haut | top end | high end | the highs | les hautes | les hauts mediums | trebles => presence +1, air +1.5
+qualite mediums    : mediums | mids | les mids | milieu | le milieu | medium | midrange | mid range | middle | the mids | haut medium | hauts mediums | les mediums => medium +1.5
+qualite bas_medium : bas medium | bas mediums | low mids | lowmids | bas mids | low mid | low midrange | lower mids | the low mids | les bas mediums => bas_medium +1.5
+qualite kick       : kick | grosse caisse | gc | kik | kicks | the kick | bass drum | kickdrum | kick drum | la grosse caisse | kickk => bas +1, punch +0.5
+qualite voix       : voix | vocal | vocals | vocaux | chant | rappeur | flow | toplines | lead vocal | vox | voice | the vocals | voc | les voc | lead vocals | topline | adlibs | ad libs | backs | choeurs | chorus vocals | le chant | les vocales | la voix lead => medium +1, presence +1
+qualite presence   : presence | devant | en avant | qui ressort | qui perce | percer | proche | intime | upfront | in your face | forward | cut through | cuts through | pop out | pops out | in front | qui sort | au premier plan | plus devant | ca perce | qui perce | perce | cut through | cuts through | intelligible | intelligibilite | on comprend les paroles | clarte de la voix => presence +1.5, medium +0.5
+qualite doux       : doux | douceur | soft | smooth | veloute | caressant | apaise | softer | smoother | gentle | mellow | chill | tout doux | soyeux en haut | silky | silk | soyeux comme de la soie => presence -0.5, air -0.5, proprete +0.3
+qualite profond    : profond | profondeur | deep | abyssal | qui descend | descend bas | deeper | depth | deep end | plus de profondeur => sub +1.5, air -0.5
+qualite lofi       : lofi | lo fi | cassette | vinyle | vieux son | old school | oldschool | dusty | vhs | retro | old | vieux | poussiereux | lo-fi => air -2, saturation +0.5, proprete -0.3
+qualite moderne    : moderne | actuel | radio | commercial | pro | professionnel | carre | poli | polished | modern | radio ready | mainstream | industry | industry standard | pro sounding | studio | qualite studio | glow up | glowup | qui sonne pro | sonne pro | professional => air +1, presence +0.5, sonie +1, proprete +0.5
+
+# ---- Défauts (plaintes) -----------------------------------------------------
+defaut boueux      : boueux | boue | muddy | mud | brouillon | baveux | bave | pateux | confus | empate | bouillie | soupe | flou | crade dans les bas | murky | cloudy | messy | woolly | wooly | congested | crowded | cluttered | smeared | le bordel | c est le bordel | bordel | bazar | fouillis | brouille => bas_medium +2, bas +1, proprete -0.5
+defaut etouffe     : etouffe | sourd | bouche | voile | feutre | muffled | dull | terne | eteint | ferme | enferme | dans une boite | sous l eau | sous une couverture | veiled | underwater | blanket | behind a curtain | dans du coton | coton | qui manque d air => presence -1.5, air -2
+defaut agressif    : agressif dans les aigus | piquent | ca piquent | ils piquent | elles piquent | qui piquent | piquant | harsh | percant | strident | criard | qui pique | ca pique | pique les oreilles | tranchant | metallique | aigre | fatiguant | fatigant | qui agresse | piercing | shrill | brittle | ear piercing | ice pick | fatiguing | sharp | abrasive | qui casse les oreilles | casse les oreilles | mal aux oreilles | hurts my ears | hurts | ca fait mal => presence +2, air +1
+defaut siffle      : sifflant | sifflante | ca siffle | sibilant | sibilance | les s | les esses | chuintant | esses | harsh s | hissy | hiss | les s qui sifflent | les ss | ca chuinte | de esser | deesser | desser | de ess | deess | de essing | deessing => presence +2
+defaut nasal       : nasal | nasillard | telephone | son de telephone | honky | dans le nez | nasally | on the phone | radio am => medium +2
+defaut carton      : boxy | carton | cartonneux | boite en carton | creux au milieu | cardboard | boite | en carton => bas_medium +1.5
+defaut creux       : creux | vide | maigre | thin | faiblard | chetif | anemique | sans corps | squelettique | tinny | hollow | empty | small sounding | sounds small | pas de corps | sans epaisseur => bas -1.5, bas_medium -1.5
+defaut boom        : boomy | bave | ca bave | elle bave | il bave | qui bave | bavent | ca resonne | resonne | bourdonne | ronfle | gonfle | ca bave en bas | trop rond | baffe | rumble | rumbly | woofy | flubby | bloated | trop de boom | ca bourdonne | ca vibre trop => bas +2, sub +1
+defaut distordu    : distordu | disto | ca sature | sature | grésille | gresille | ca craque | craque | crache | ca clip | clippe | grille | ca grille | crackle | distorted | ca bave | distortion | clipping | clip | clips | crackling | crackles | popping | ca crache | gresillement | ca fritte | ca frit | frit | son casse | ca casse | clipped | clippe | ca clippe | eclate | c est eclate | ca eclate => saturation +1, proprete -1
+defaut ecrase      : ecrase | aplati | sans vie | pompe | ca pompe | pompage | pumping | squashe | etouffe par le limiteur | trop compresse | surcompresse | plat | squashed | crushed | overcompressed | over compressed | lifeless | no dynamics | sans dynamique | brickwalled | brick walled | sausage | saucisse | trop limite | ca pompe trop | compresser | trop compresser | compresser a mort | trop limite | trop limiter | trop ecrase => densite +1, punch -1
+defaut mou         : mou | molasson | sans patate | sans peche | faible | timide | pas d impact | manque d impact | gentil | sage | weak | limp | pas de punch | aucun punch | zero punch | no punch | lacks punch | pas de patate | no impact | no energy | pas d energie | manque d energie | sans energie | flat dynamics | ca tape pas | tape pas | ca claque pas => punch -1, sonie -1
+defaut lointain    : lointain | en retrait | derriere | recule | distant | trop loin | noye | noyee | perdu dans le mix | enterre | far | far away | buried | in the back | drowned | drowning | lost in the mix | sits back | too far back | au fond | trop au fond | en arriere | wet | trop wet | mouille | trop mouille | trop de reverb | trop de reverbe | noye dans la reverb | trop de delay | reverb | reverbe | reverberation | delay | echo | ca ressort pas | ressort pas | on l entend pas => presence -1.5, medium -0.5
+defaut etroit      : etroit | serre | tout au centre | trop mono | petit | etrique | tiny | closed | ferme en stereo | trop serre => largeur -2
+defaut trop_large  : trop large | phase | hors phase | qui flotte | ca part sur les cotes | bizarre en mono | phasey | phasy | phasing | out of phase | weird in mono | collapses in mono | disparait en mono => largeur +2
+
+# ---- Énergie et dynamique ---------------------------------------------------
+qualite punch      : punch | punchy | patate | peche | impact | percutant | ca tape | qui tape | tape | ca claque | claque | qui claque | nerveux | snappy | attaque | qui cogne | cogne | slap | punchier | harder | hit harder | hits harder | hits | hits hard | hit hard | hard hitting | slaps | knock | knocks | knocky | thump | thumpy | smack | snap | snappier | attack | transients | ca gifle | gifle | qui gifle | ca tabasse | tabasse | qui tabasse | ca frappe | qui frappe | la frappe | ca bounce | bounce | bouncy | groove | groovy | rebond | qui rebondit | qui bouge => punch +1, presence +0.3
+qualite fort       : fort | loud | puissant | niveau | volume | sonie | gros son | qui envoie | envoie | pete | qui pete | vener | venere | enerve | louder | loudness | gain | crank | cranked | puissance | ca envoie | ca bute | ca defonce | ca arrache | qui arrache | qui defonce | qui bute | plus fort | bang | bangs | hard | goes hard | it goes hard => sonie +2
+qualite club       : club | boite de nuit | festival | soundsystem | sound system | banger | a fond | max | maximum | dancefloor | rave | pour le club | en club | en boite => sonie +4, densite +0.5
+qualite dynamique  : dynamique | respire | nuance | vivant | naturel | organique | aere dans la dynamique | qui respire | ouvert dans la dynamique | dynamic | dynamics | breathing | breathe | room to breathe | more dynamic | natural | organic | headroom | plus de headroom | de la marge | de la place pour respirer => sonie -3, densite -1, punch +0.5
+qualite dense      : dense | compact | compresse | homogene | tenu | coherent | cohesif | tight | tighter | together | gel | gelled | sticky => densite +1
+# Caractère du Match EQ : Analogique (phase minimale, cloches larges) ou Propre (phase linéaire).
+qualite eq_analog  : eq analogique | eq en analogique | en analogique | mode analogique | egaliseur analogique | analog eq | eq analog | eq vintage | eq a l ancienne | sans pre echo | sans pre ringing | no pre ringing | eq phase minimale | phase minimale | minimum phase => densite +0.05
+qualite eq_propre  : eq propre | eq transparent | eq lineaire | phase lineaire | linear phase | eq numerique | eq chirurgical | eq precis => densite +0.05
+# Compresseur de bus (module Comp) : la colle, et sa façon de compresser. Les noms de modèles
+# connus sont compris (jamais affichés : OMNIS répond avec le caractère, « Opto »…).
+qualite colle      : colle | glue | soude | colle bien | glued | gluey | qui colle | souder | coller le mix | bus comp | compresseur de bus | compression de bus | bus compression | glue comp | de la colle | plus de colle | mix soude => densite +0.05
+qualite comp_opto  : opto | optique | comp opto | compresseur opto | compression opto | compression douce | la2a | la 2a | la-2a | leveling amp => densite +0.05
+qualite comp_fet   : comp fet | compresseur fet | compression fet | fet comp | 1176 | compression rapide | compresseur rapide | compresseur qui claque => densite +0.05, punch +0.1
+qualite comp_vca   : vca | comp vca | compresseur vca | compression vca | ssl comp | bus ssl | compresseur ssl => densite +0.05
+qualite comp_varimu : vari mu | varimu | variable mu | vari-mu | comp vari mu | fairchild | compression arrondie | compresseur arrondi => densite +0.05
+qualite streaming  : spotify | streaming | apple music | deezer | youtube | soundcloud | tidal | plateformes | tiktok | tik tok | reels | insta | instagram | shorts | youtube shorts | amazon music | apple => cible_lufs -14
+
+# ---- Propreté / caractère ---------------------------------------------------
+qualite propre     : sec | seche | plus sec | dry | tight | propre | clean | net | precis | defini | lisible | transparent | pur | clair | limpide | nickel | carre net | soigne | sans bavure | cleaner | clarity | clear | clearer | tidy | defined | definition | detailed | detail | hifi | hi fi | cristallin propre | net net | super propre => proprete +1
+qualite sale       : sale | dirty | crade | cra cra | agressif | violent | brutal | rugueux | rough | gritty | trash | destroy | sature a fond | ecrase a fond | dirtier | grimy | raw | rawer | aggressive | sauvage | bestial | vener sale | grit | gritty | dirt | dirty | overdriven | overdrive | qui crache | ca crache | crache => proprete -1, saturation +0.5, sonie +1
+qualite saturation : saturation | la saturation | de la saturation | saturer | drive | overdrive | harmoniques | harmonics | chaleur harmonique | grain harmonique => saturation +1
+
+# ---- Largeur ------------------------------------------------------------------
+qualite large      : large | wide | stereo | ample | spacieux | immersif | espace | ecarte | 3d | largeur | panoramique | englobant | wider | width | spacious | spacey | spacy | huge stereo | big stereo | stereo wide | plus large | elargis | elargir | en largeur => largeur +2
+qualite mono       : mono | centre | compact au centre | narrow | resserre | focus | narrower | centered | centred | focused | more mono | plus mono | mono compatible | compatible mono | tient en mono | passe en mono => largeur -2
+
+# ---- Rapport à la référence ---------------------------------------------------
+qualite pareil     : pareil | identique | copie | clone | meme son | le meme | exactement pareil | a l identique | pile pareil => ressemblance +0.3
+qualite inspire    : inspire | inspiration | esprit | vibe | dans l esprit | influence | clin d oeil | rappelle | un rappel => ressemblance -0.2
+
+# ---- Éléments du morceau (sujets d'un niveau : « la caisse claire est trop forte ») --
+qualite caisse_claire : caisse claire | snare | snares | clap | claps | la snare | rimshot | rim => medium +1, presence +1
+qualite hats       : hi hat | hihat | hi hats | hihats | hats | charley | charleys | cymbales | cymbals | open hat | les hh => air +1.5, presence +0.5
+qualite melodie    : melodie | melo | melody | lead | nappe | pad | pads | synth | synthe | piano | guitare | guitar | sample | la melo | les melos | arp | arpege => medium +1, presence +0.5
+
+# ---- Niveau bas (« la voix est trop discrète », « the vocals are too quiet ») -----
+qualite discret    : discret | discrete | quiet | quieter | en sourdine | faible en volume | low volume | trop bas en volume => sonie -2

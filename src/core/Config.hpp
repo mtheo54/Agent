@@ -35,6 +35,7 @@ struct CompanionConfig {
 
     // --- Voix ---
     float fxIntensity = 0.15f;      // grain 8-bit de base (0 … 1) ; discret par défaut, la voix reste naturelle
+    float voiceQuirks = 0.5f;       // tics humains et bugs de robot (rire spontané, toux, syllabe qui accroche)
     bool neuralVoice = true;        // voix neuronale expressive (Qwen3-TTS sur GPU) ; sinon Piper
     bool neuralVoiceInGame = false; // en jeu : Piper (CPU) pour ne pas toucher au GPU, sauf si activé
     std::string neuralVoiceDevice;  // "Vulkan0", "CPU"… vide = automatique

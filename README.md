@@ -70,6 +70,15 @@ Il a ses animations selon ce qu'il fait :
   de `normal` (identité stable), l'intonation de la prise qui correspond à l'humeur. Les nombres et unités
   sont écrits en toutes lettres avant lecture (« -4.1 LUFS » → « moins quatre virgule un LUFS »).
   Pour lui donner une autre voix : remplace ces 4 fichiers (WAV 24 kHz mono + texte exact).
+- **Réactions humaines… et bugs de robot** (réglage `TICS & BUGS`, clé `voiceQuirks`) :
+  - vrais sons dans sa voix (`assets/voice/omnis/vocal/`) : rires, petit rire, soupir, « hmm », toux, « oh ! » ;
+    le modèle peut les placer avec `(rire)`, `(soupir)`, `(tousse)`, `(bug)`…, jamais prononcés ;
+  - spontanéité : une réponse drôle se dit en riant à moitié (prise `amused`), une surprise avec la voix qui
+    monte (`surprised`), parfois précédée d'un petit rire ou d'un « oh ! » ;
+  - de temps en temps une syllabe accroche comme un buffer qui saute (« je s-s-suis »), grain numérique qui
+    monte, parfois un ralenti façon bande ; une toux de robot finit en grésillement. Au plus un bug par 45 s,
+    une toux par 3 min, **jamais** quand il console ou calme quelqu'un ;
+  - l'intonation varie d'une phrase à l'autre, et il ne recommence pas deux réponses par la même interjection.
 - **En jeu**, la voix passe sur Piper (CPU) pour ne pas prendre de GPU au jeu ; les relances (« hmm… ») et
   répliques courtes restent celles de la voix neuronale, pré-calculées. `neuralVoiceInGame: true` pour la garder.
   Le grain 8-bit est discret par défaut (`fxIntensity` 0,15).
@@ -77,9 +86,13 @@ Il a ses animations selon ce qu'il fait :
   jargon de studio, un gros mot pour l'emphase, vannes ; jamais d'insulte envers toi, et pas de vannes si tu
   as l'air triste ou fatigué). Toutes ses répliques toutes faites (alertes, confirmations, relances)
   sont dans `assets/persona/phrases.json` : modifiables sans recompiler.
-- **Avis sur ton son** : l'analyse OMNIS (C++) pose d'abord un diagnostic d'ingé son déterministe
-  (saturation, loudness, dynamique, phase, spectre, note sur 10) ; le modèle local ne fait que le dire
-  avec sa personnalité. Un 3B seul lisait « -4 LUFS, 2980 clips » comme « top ».
+- **Avis sur ton son, dans le langage d'OMNIS** (dépôt `mtheo54/Mix-master`) :
+  - il comprend le jargon de beatmaker grâce au **lexique d'OMNIS** (`assets/omnis/lexique_fr.txt`) :
+    « la basse elle bave », « mon kick tape pas », « ça pique les oreilles » déclenchent l'écoute du mix ;
+  - le diagnostic reprend celui d'OMNIS (`MixDiagnosis`) : 0 dBFS touché, mix écrasé, **grave pas mono sous
+    120 Hz**, **perte en mono**, bas-médium boueux, médiums nasaux, aigus durs… avec l'action concrète dans FL ;
+  - partage des rôles : le modèle local fait **une phrase de réaction** (sa vanne), puis le **conseil exact**
+    est dit mot pour mot. Un 3B à qui on confie le conseil technique le déforme.
   Simulation reproductible : `tools/sim/beat.py` (beat raté exprès) + `tools/sim/studiosim.cpp`.
 
 ## Réglages

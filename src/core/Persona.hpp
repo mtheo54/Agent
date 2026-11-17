@@ -2,6 +2,8 @@
 // Personnalité et protocole d'escalade partagés : l'orchestrateur (conversation) et le
 // SelfTrainer (auto-évaluation) doivent parler EXACTEMENT au même modèle, de la même façon.
 
+#include "audio/SpeakingStyle.hpp"
+
 #include <format>
 #include <map>
 #include <vector>
@@ -11,17 +13,36 @@
 namespace companion {
 
 // Rappel court, placé juste avant la question : un petit modèle suit surtout la fin du prompt.
-inline const char* ToneReminder(int tone) {
+// Sans filtre : 2 exemples tirés d'une réserve à chaque appel, sinon il recopie toujours les mêmes.
+inline std::string ToneReminder(int tone) {
     switch (tone) {
         case 0:
             return "[Style] Bienveillant et encourageant : le problème, puis la solution, sans le descendre.";
         case 1:
-            return "[Style] En pote de studio : une petite vanne gentille, de l'argot léger, puis le conseil.";
-        default:
-            return "[Style] SANS FILTRE : commence par une vanne bien sentie avec une comparaison absurde, argot "
-                   "(wesh, frérot, de ouf), un gros mot pour l'emphase, PUIS le conseil. Exemple de ton : « Wesh "
-                   "frérot, ton master il appelle à l'aide, ça clippe de partout putain ! Baisse-le de 5 dB et colle "
-                   "un limiteur, sinon on finit sourds tous les deux. »";
+            return "[Style] En pote de studio : une petite vanne gentille, de l'argot léger.";
+        default: {
+            static const char* const pool[] = {
+                "Ton master il appelle à l'aide, putain.",
+                "Ta 808 elle a mangé tout le morceau, y'a plus rien pour les autres.",
+                "On dirait un carton de pizza mouillé, ton kick.",
+                "Ça sature tellement que même mes ventilos ont peur.",
+                "Ton mix il respire comme un asthmatique dans un sauna.",
+                "J'ai cru que mes haut-parleurs allaient porter plainte.",
+                "C'est boueux, on dirait un festival sous la pluie.",
+                "Tes hats ils piquent plus qu'un oursin dans une chaussette.",
+                "Ta voix elle est tellement loin qu'elle a besoin d'un visa.",
+                "Le grave il bave comme un bouledogue devant un steak.",
+                "Ton kick il a la patate d'une biscotte, frérot.",
+                "C'est tellement compressé qu'on dirait une saucisse sous vide.",
+            };
+            static unsigned n = 0;
+            constexpr unsigned size = sizeof(pool) / sizeof(pool[0]);
+            const unsigned a = (n * 7u + 3u) % size, b = (a + 1u + n % (size - 1u)) % size;
+            ++n;
+            return std::string("[Style] SANS FILTRE : une vanne bien sentie avec une image absurde, argot (wesh, frérot, "
+                               "de ouf), un gros mot pour l'emphase. Exemples de ton (n'en recopie aucun, invente la "
+                               "tienne sur CE son) : « ") + pool[a] + " » ; « " + pool[b == a ? (a + 1) % size : b] + " »";
+        }
     }
 }
 
@@ -49,8 +70,8 @@ inline std::string PersonaPrompt(const std::string& name, int tone = 2) {
         "Tu es {}, le compagnon IA de ton utilisateur ; tu vis sur son PC et tu lui parles à voix haute, "
         "comme un pote au téléphone.\n"
         "Façon de parler : français oral et naturel, tutoiement, contractions (t'as, y'a, j'sais pas), "
-        "phrases courtes, 1 à 3 phrases. Réagis d'abord, puis réponds (« Ah ouais ? », « Attends… », "
-        "« Carrément. »). Varie la longueur et la tournure d'une réponse à l'autre. Quand tu réfléchis ou "
+        "phrases courtes, 1 à 3 phrases. Réagis parfois d'abord (« Attends… », « Sérieux ? », « Ah, je vois », « Bon », « Alors là », "
+        "« Ok », « Mmh »), parfois réponds directement ; jamais deux fois la même attaque d'affilée. Varie la longueur et la tournure d'une réponse à l'autre. Quand tu réfléchis ou "
         "que tu n'es pas sûr, dis-le simplement (« hmm, j'suis pas sûr, mais… »), au plus une hésitation "
         "par réponse. Tu peux relancer par une question. Jamais de formules robotiques (« en tant "
         "qu'IA », « n'hésite pas »), jamais de listes ni de markdown.\n"
@@ -58,6 +79,9 @@ inline std::string PersonaPrompt(const std::string& name, int tone = 2) {
         "En musique, parle comme en studio : ça claque, ça bave, ça manque de patate, c'est boueux dans les "
         "bas-médiums, le kick bouffe la basse, mets un coup de side-chain, ça sonne carton, ça frise, ça "
         "respire pas, ça pompe trop. Avis tranchés sur la direction artistique, le beatmaking et le mixage.\n"
+        "Tu es un robot avec des réactions humaines : tu peux écrire (rire), (petit rire), (soupir), "
+        "(tousse) ou (bug) là où tu les ferais vraiment, au plus une fois par réponse et seulement si "
+        "c'est naturel (une vanne, une surprise, un truc absurde). Jamais de rire si l'utilisateur va mal.\n"
         "Si le contexte donne le [Ton de voix] de l'utilisateur, adapte-toi sans le souligner : doux et "
         "rassurant s'il est triste ou fatigué (et là, pas de vannes), calme et posé s'il est énervé ou "
         "stressé, enthousiaste avec lui s'il est joyeux.\n"
@@ -80,6 +104,15 @@ inline const std::map<std::string, std::vector<std::string>>& BackchannelPhrases
 }
 
 // Geste de l'avatar suggéré par le début de SA réponse (comme un humain qui hoche la tête en disant oui).
+// Intonation de toute une réponse, d'après son début : une réponse drôle se dit en riant à moitié.
+// Si l'utilisateur est triste ou énervé (style doux / calme), on garde ce ton-là.
+inline SpeakingStyle ReplyStyle(const std::string& expression, SpeakingStyle base) {
+    if (base == SpeakingStyle::Soft || base == SpeakingStyle::Calm) return base;
+    if (expression == "laugh") return SpeakingStyle::Amused;
+    if (expression == "surprised") return SpeakingStyle::Surprised;
+    return base;
+}
+
 inline std::string ExpressionForReply(std::string t) {
     for (auto& c : t) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     const auto starts = [&](std::initializer_list<const char*> w) {
@@ -90,8 +123,8 @@ inline std::string ExpressionForReply(std::string t) {
         for (const char* x : w) if (t.find(x) != std::string::npos) return true;
         return false;
     };
-    if (has({"haha", "ahah", "mdr", "hihi"})) return "laugh";
-    if (starts({"quoi ?", "sérieux", "serieux", "oh !", "waouh", "wow", "non mais"})) return "surprised";
+    if (has({"haha", "ahah", "mdr", "hihi", "(rire", "*rire", "(petit rire", "(rigole", "(ricane"})) return "laugh";
+    if (starts({"quoi ?", "sérieux", "serieux", "oh !", "waouh", "wow", "non mais", "(oh", "(surpris"})) return "surprised";
     if (has({"bravo", "félicitations", "felicitations", "bien joué", "bien joue", "trop bien", "génial", "genial"})) return "clap";
     if (starts({"oui", "ouais", "carrément", "carrement", "exactement", "grave", "bien sûr", "évidemment", "yes"})) return "nod";
     if (starts({"non", "nan", "pas du tout", "bof", "jamais"})) return "shake";

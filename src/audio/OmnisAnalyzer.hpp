@@ -40,12 +40,24 @@ struct MixMetrics {
     int clips = 0;
     float correlation = 1.f;  // +1 mono, 0 décorrélé, <0 problème de phase
     float width = 0.f;        // énergie Side / Mid
+    float lowCorrelation = 1.f;  // corrélation sous 120 Hz : le grave doit être mono (OMNIS)
+    float monoLossDb = 0.f;      // niveau perdu quand on écoute en mono (opposition de phase)
     std::array<float, kBands> bandDb{};  // écart à la pente de référence, en dB
 
     [[nodiscard]] std::string ToSummary() const;
     // Verdict d'ingé son, en clair et classé par gravité (niveau 0 : déterministe). Le modèle local
     // n'a plus qu'à le dire avec sa personnalité : un 3B ne sait pas lire « -4 LUFS, 2980 clips » seul.
     [[nodiscard]] std::string Diagnosis() const;
+    // Problèmes classés par gravité, chacun avec son sujet (« clip », « sub », « mud »…).
+    struct Issue {
+        int severity;
+        std::string topic;
+        std::string text;
+    };
+    [[nodiscard]] std::vector<Issue> Issues() const;
+    // Seulement ce qui touche à la plainte de l'utilisateur (sujets OMNIS), au plus `max` lignes.
+    // Vide si rien de mesuré ne correspond.
+    [[nodiscard]] std::string FocusedDiagnosis(const std::vector<std::string>& topics, int max = 2) const;
 };
 
 enum class MixAlert : std::uint8_t { Clipping, PhaseProblem };
@@ -73,6 +85,7 @@ public:
 private:
     struct Block {
         double kL = 0, kR = 0, l2 = 0, r2 = 0, lr = 0;
+        double lowL2 = 0, lowR2 = 0, lowLR = 0;  // grave (< 120 Hz)
         float peak = 0.f;
         int clips = 0;
         std::size_t n = 0;
@@ -101,6 +114,8 @@ private:
 
     // État d'analyse (thread d'analyse uniquement, sauf résultats protégés par mutex_)
     Biquad kShelfL_, kShelfR_, kHpL_, kHpR_;
+    Biquad lowL_, lowR_;  // passe-bas 120 Hz (Butterworth, 2 cascades = 24 dB/oct)
+    Biquad lowL2_, lowR2_;
     Block cur_;
     int runL_ = 0, runR_ = 0;
     std::vector<float> fftIn_;

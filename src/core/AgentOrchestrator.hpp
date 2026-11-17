@@ -19,6 +19,7 @@
 #include "audio/VoiceEngine.hpp"
 #include "audio/WasapiLoopback.hpp"
 #include "core/Config.hpp"
+#include "core/MixLexicon.hpp"
 #include "core/Phrases.hpp"
 #include "core/LocalBrain.hpp"
 #include "core/MemoryDB.hpp"
@@ -64,6 +65,7 @@ struct OrchestratorDeps {
     SelfTrainer& trainer;
     Phrases& phrases;
     std::filesystem::path dataDir;  // %LOCALAPPDATA%\CompanionAI (cache Data Dragon…)
+    std::filesystem::path assetsDir;  // assets/ (lexique OMNIS…)
 };
 
 class AgentOrchestrator {
@@ -148,6 +150,13 @@ private:
     EmotionEstimate lastEmotion_;
     std::chrono::steady_clock::time_point emotionAt_{};
     std::atomic<SpeakingStyle> style_{SpeakingStyle::Normal};
+    // Ses dernières façons d'attaquer une réponse : interdites la fois suivante (pas de « Ah ouais ? » en boucle).
+    std::deque<std::string> recentOpeners_;
+    MixLexicon lexicon_;  // jargon de beatmaker (lexique d'OMNIS)
+    bool studioFocus_ = false;  // question studio ciblée en cours (thread de l'orchestrateur)
+    void RememberOpener(const std::string& reply);
+    [[nodiscard]] std::string OpenerHint() const;
+    [[nodiscard]] std::string DropRepeatedOpener(const std::string& chunk) const;
     std::chrono::steady_clock::time_point moodUntil_{};
     bool moodActive_ = false;
     AvatarFn onExpression_, onMood_;

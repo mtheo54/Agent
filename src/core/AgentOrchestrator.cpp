@@ -55,6 +55,7 @@ bool Relevant(const KnowledgeHit& hit, const std::string& subject) {
 }  // namespace
 
 AgentOrchestrator::AgentOrchestrator(OrchestratorDeps deps) : d_(deps), cfg_(deps.cfg) {
+    lexicon_.Load(d_.assetsDir / L"omnis" / L"lexique_fr.txt");
     backchannels_ = cfg_.backchannels;
     expressiveness_ = cfg_.expressiveness;
     d_.analyzer.SetAlertCallback([this](MixAlert a, const MixMetrics& m) { OnMixAlert(a, m); });
@@ -291,7 +292,8 @@ std::string AgentOrchestrator::LiveContext(const std::string& question) const {
     if (auto lol = d_.coach.Latest()) ctx += lol->ToPromptSummary() + "\n";
     if (d_.loopback.Running()) {
         const auto mix = d_.analyzer.Snapshot();
-        if (mix.seconds >= 1.f) ctx += mix.ToSummary() + "\n" + mix.Diagnosis() + "\n";
+        // Demande ciblée : le constat ciblé suffit (ajouté par HandleStudioQuestion).
+        if (mix.seconds >= 1.f && !studioFocus_) ctx += mix.ToSummary() + "\n" + mix.Diagnosis() + "\n";
     }
     for (const auto& m : d_.db.SearchMemories(question, 3)) ctx += "Souvenir : " + m + "\n";
     // Fiches distillées pendant l'auto-entraînement : c'est ce qui évite de ré-escalader.
@@ -315,10 +317,49 @@ bool AgentOrchestrator::EnsureBrain() {
     return d_.brain.Load(bc);
 }
 
+// Les 2-3 premiers mots de la réponse (« Ah ouais ? », « Carrément. »), ponctuation comprise.
+void AgentOrchestrator::RememberOpener(const std::string& reply) {
+    std::string opener;
+    int words = 0;
+    for (char c : reply) {
+        if (c == ' ' && ++words == 2) break;
+        opener += c;
+        if ((c == '?' || c == '!' || c == '.' || c == ',') && words >= 0 && opener.size() > 2) break;
+    }
+    while (!opener.empty() && std::string_view(" ?!.,").find(opener.back()) != std::string_view::npos) opener.pop_back();
+    if (opener.empty()) return;
+    recentOpeners_.push_back(opener);
+    while (recentOpeners_.size() > 3) recentOpeners_.pop_front();
+}
+
+// Interjection d'ouverture déjà dite récemment (« Ah ouais ? ») : retirée, le reste de la phrase suffit.
+std::string AgentOrchestrator::DropRepeatedOpener(const std::string& chunk) const {
+    for (const auto& o : recentOpeners_) {
+        if (o.size() < 2 || chunk.rfind(o, 0) != 0) continue;
+        size_t cut = o.size();
+        while (cut < chunk.size() && std::string_view(" ?!.,…").find(chunk[cut]) != std::string_view::npos) ++cut;
+        // Seulement une vraie interjection (suivie de ponctuation), et s'il reste quelque chose à dire.
+        const std::string_view gap = std::string_view(chunk).substr(o.size(), cut - o.size());
+        if (gap.find_first_of("?!.,") == std::string_view::npos || chunk.size() - cut < 8) return chunk;
+        std::string rest = chunk.substr(cut);
+        rest[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(rest[0])));
+        return rest;
+    }
+    return chunk;
+}
+
+std::string AgentOrchestrator::OpenerHint() const {
+    if (recentOpeners_.empty()) return {};
+    std::string s = "[Style] Ne commence PAS ta réponse par :";
+    for (const auto& o : recentOpeners_) s += " « " + o + " »";
+    return s + " (tu viens de les dire). Attaque autrement.\n";
+}
+
 void AgentOrchestrator::Say(const std::string& text) {
     if (text.empty()) return;
-    React(ExpressionForReply(text));
-    d_.voice.Speak(text, style_.load());
+    const std::string expression = ExpressionForReply(text);
+    React(expression);
+    d_.voice.Speak(text, ReplyStyle(expression, style_.load()));
     d_.db.AddMessage("assistant", text);
 }
 
@@ -357,11 +398,18 @@ std::string AgentOrchestrator::GenerateSpoken(const std::vector<ChatTurn>& messa
         }
         bcCv.notify_all();
     };
+    SpeakingStyle replyStyle = style_.load();
     const auto speak = [&](const std::string& chunk) {
         cancelBackchannel();
-        if (!spoken) React(ExpressionForReply(chunk));  // geste porté par le début de la réponse
+        std::string said = chunk;
+        if (!spoken) {  // geste et intonation portés par le début de la réponse
+            said = DropRepeatedOpener(chunk);
+            const std::string expression = ExpressionForReply(said);
+            React(expression);
+            replyStyle = ReplyStyle(expression, style_.load());
+        }
         spoken = true;
-        d_.voice.Speak(chunk, style_.load());
+        if (!said.empty()) d_.voice.Speak(said, replyStyle);
     };
 
     GenerateOptions opt;
@@ -431,7 +479,8 @@ void AgentOrchestrator::Handle(const std::string& text, std::stop_token stop) {
     const bool mixSubject = ContainsAny(lower, {"mix", "ma prod", "la prod", "mon son", "ce son", "le morceau",
                                                 "mon morceau", "le master", "mon master", "mon beat", "ce beat"});
     const bool mixAsk = ContainsAny(lower, {"écoute", "ecoute", "avis", "pense", "comment", "sonne", "analyse", "trouve"});
-    if (mixSubject && mixAsk) {
+    // Jargon de beatmaker (lexique d'OMNIS) : « la basse elle bave », « mon kick tape pas »…
+    if ((mixSubject && mixAsk) || MixLexicon::IsMixRequest(lexicon_.Match(text), text)) {
         HandleStudioQuestion(text, history, stop);
         return;
     }
@@ -492,14 +541,17 @@ void AgentOrchestrator::HandleLevel1(const std::string& text, const std::vector<
     }
     std::vector<ChatTurn> messages{{"system", PersonaPrompt()}};
     messages.insert(messages.end(), history.begin(), history.end());
-    const std::string ctx = LiveContext(text) + extraContext;
+    const std::string ctx = LiveContext(text) + extraContext + OpenerHint();
     messages.push_back({"user", ctx.empty() ? text : "[Contexte]\n" + ctx + "\n[Message]\n" + text});
 
     bool escalation = false;
     const std::string out = GenerateSpoken(messages, kEscalateGrammar, stop, escalation);
     if (stop.stop_requested()) return;
     if (!escalation) {
-        if (!out.empty()) d_.db.AddMessage("assistant", out);
+        if (!out.empty()) {
+            d_.db.AddMessage("assistant", out);
+            RememberOpener(out);
+        }
         return;
     }
 
@@ -730,13 +782,39 @@ void AgentOrchestrator::HandleStudioQuestion(const std::string& text, const std:
         Say(Line("studioSilent", {}, "Je n'entends rien. Lance la lecture et redemande-moi."));
         return;
     }
-    // LiveContext ajoute déjà le résumé OMNIS ; on cadre juste l'exercice.
+    // Partage des rôles (cascade du rapport) : le C++ sait CE QUI NE VA PAS et QUOI FAIRE (diagnostic façon
+    // OMNIS, exact) ; le modèle local ne fait qu'UNE phrase de réaction avec sa personnalité. Un 3B à qui
+    // on confie le conseil technique le déforme (« ajoute un clipper », « baisse le kick » pour la 808).
+    const auto hits = lexicon_.Match(text);
+    const auto topics = MixLexicon::Topics(hits);
+    std::vector<MixMetrics::Issue> advice;
+    for (const auto& i : mix.Issues()) {
+        if (advice.size() >= 2) break;
+        if (!topics.empty() && std::ranges::find(topics, i.topic) == topics.end()) continue;
+        if (!advice.empty() && i.severity < 8) break;  // un 2e conseil seulement s'il est grave
+        advice.push_back(i);
+    }
+    std::string facts;
+    if (advice.empty() && !topics.empty()) {
+        facts = "Sur ce point précis, rien d'anormal mesuré. ";
+        for (const auto& i : mix.Issues()) { advice.push_back(i); break; }
+    }
+    for (const auto& i : advice) facts += i.text + " ";
+
+    studioFocus_ = true;  // pas de diagnostic brut dans le contexte : seulement les constats ci-dessous
     HandleLevel1(text, history,
-                 "[Consigne] Donne ton avis sur ce son en 2 ou 3 phrases. Appuie-toi UNIQUEMENT sur le "
-                 "diagnostic de l'ingé son (ne réinterprète pas les chiffres bruts) : commence par le problème le "
-                 "plus grave, cite un chiffre, donne UNE action concrète.\n" +
+                 MixLexicon::Describe(hits) + (facts.empty() ? "" : "[Constat de l'ingé son] " + facts + "\n") +
+                     "[Consigne] Réagis en UNE seule phrase courte à ce constat, avec ton style (une vanne, une image), "
+                     "SANS conseil technique, SANS chiffres : le conseil sera dit juste après toi.\n" +
                      std::string(ToneReminder(cfg_.tone)) + "\n",
                  stop);
+    studioFocus_ = false;
+    if (stop.stop_requested()) return;
+    if (facts.empty()) {
+        Say(Line("studioClean", {}, "Franchement, rien d'alarmant : équilibre, grave mono et marge corrects."));
+        return;
+    }
+    Say(facts);  // le conseil exact, mot pour mot (normalisé pour la voix : « -4.1 LUFS » → « moins quatre virgule un »)
 }
 
 // ---------------------------------------------------------------------------

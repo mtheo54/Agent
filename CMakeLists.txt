@@ -129,6 +129,7 @@ add_executable(CompanionAI WIN32
     src/core/LocalBrain.cpp
     src/core/MemoryDB.cpp
     src/core/Phrases.cpp
+    src/core/MixLexicon.cpp
     src/core/PermissionGate.cpp
     src/core/ResourceGovernor.cpp
     src/modules/GameCoach.cpp
@@ -140,6 +141,7 @@ add_executable(CompanionAI WIN32
     src/network/WebResearcher.cpp
     src/audio/VoiceEngine.cpp
     src/audio/NeuralVoice.cpp
+    src/audio/Expressivity.cpp
     src/audio/TextNormalizerFr.cpp
     src/render/OverlayWindow.cpp
     src/render/CartoonAvatar.cpp

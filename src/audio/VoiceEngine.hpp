@@ -91,6 +91,8 @@ public:
     [[nodiscard]] float VoiceRms() const noexcept;  // pour CartoonAvatar (thread-safe)
     void SetGamingMode(bool gaming) noexcept;       // réduit les threads STT, voix Piper (sauf neuralInGame)
     void SetNeuralVoice(bool enabled, bool inGame) noexcept;
+    // Tics humains et bugs de robot (rires spontanés, toux, syllabe qui accroche) : 0 jamais … 1 souvent.
+    void SetQuirks(float quirks01) noexcept;
     [[nodiscard]] bool HasNeuralVoice() const noexcept;  // voix neuronale chargée
 
     [[nodiscard]] bool HasStt() const noexcept;

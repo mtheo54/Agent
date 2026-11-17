@@ -262,6 +262,7 @@ float ConfigView::SliderValue(Field f) const {
         case Field::Scale: return (cfg_.avatarScale - 0.6f) / 1.0f;
         case Field::Opacity: return (cfg_.avatarOpacity - 0.3f) / 0.7f;
         case Field::Expressiveness: return cfg_.expressiveness;
+        case Field::Quirks: return cfg_.voiceQuirks;
         case Field::Fx: return cfg_.fxIntensity;
         case Field::Rate: return (1.2f - cfg_.speechRate) / 0.35f;  // à droite = plus rapide
         default: return 0.f;
@@ -274,6 +275,7 @@ void ConfigView::SetSliderValue(Field f, float v) {
         case Field::Scale: cfg_.avatarScale = 0.6f + v * 1.0f; break;
         case Field::Opacity: cfg_.avatarOpacity = 0.3f + v * 0.7f; preview_.SetOpacity(cfg_.avatarOpacity); break;
         case Field::Expressiveness: cfg_.expressiveness = v; break;
+        case Field::Quirks: cfg_.voiceQuirks = v; break;
         case Field::Fx: cfg_.fxIntensity = v; break;
         case Field::Rate: cfg_.speechRate = 1.2f - v * 0.35f; break;
         default: break;
@@ -451,6 +453,9 @@ void ConfigView::Render(ID2D1DeviceContext* ctx, float scale) {
         Slider(R + 18, y, RW - 36, L"EXPRESSIVITÉ", SliderValue(Field::Expressiveness),
                std::format(L"{:.0f} %", cfg_.expressiveness * 100), Field::Expressiveness);
         y += 28;
+        Slider(R + 18, y, RW - 36, L"TICS & BUGS", SliderValue(Field::Quirks),
+               cfg_.voiceQuirks < 0.01f ? std::wstring(L"jamais") : std::format(L"{:.0f} %", cfg_.voiceQuirks * 100), Field::Quirks);
+        y += 28;
         Leader(R + 18, y, RW - 36, L"s'entraîner pendant tes pauses", cfg_.autoTraining ? L"activé" : L"désactivé",
                cfg_.autoTraining ? "green" : "muted", Field::AutoTraining);
         y += 22;
@@ -485,7 +490,7 @@ ConfigView::Action ConfigView::MouseDown(float x, float y) {
         if (!Inside(h.r, x, y)) continue;
         dirty_ = true;
         switch (h.field) {
-            case Field::Scale: case Field::Opacity: case Field::Expressiveness: case Field::Fx: case Field::Rate:
+            case Field::Scale: case Field::Opacity: case Field::Expressiveness: case Field::Quirks: case Field::Fx: case Field::Rate:
                 dragging_ = h.field;
                 dragRect_ = h.r;
                 SetSliderValue(h.field, (x - h.r.left) / (h.r.right - h.r.left));
