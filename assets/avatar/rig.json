@@ -40,19 +40,33 @@
   "foot": [26, 13]
  },
  "palette": {
-  "base": "#A9AFB8",
-  "shadow": "#6C727B",
-  "backBase": "#868C95",
-  "backShadow": "#50555D",
+  "base": "#AEB5BF",
+  "shadow": "#646D7E",
+  "backBase": "#8A919C",
+  "backShadow": "#4A5262",
   "highlight": "#FFFFFF",
-  "outline": "#15181D",
+  "outline": "#18202E",
   "emote": "#2B3038",
-  "accent": "#7FD8FF"
+  "accent": "#7FD8FF",
+  "rim": "#C4E6FF",
+  "band": "#8A93A3",
+  "backBand": "#6A7383",
+  "joint": "#59606B",
+  "sole": "#323946",
+  "neck": "#545B66",
+  "speed": "#FFFFFF",
+  "groundShadow": "#5C6F8C",
+  "groundCore": "#41506A"
  },
  "style": {
-  "outline": 4.0,
-  "shadowOffset": [8, 7],
-  "limbShadowOffset": [5, 4]
+  "outline": 3.7,
+  "shadowOffset": [14, 12],
+  "limbShadowOffset": [5, 4],
+  "innerLine": 1.7,
+  "rimOffset": [3.2, 2.8],
+  "rimWidth": 2.2,
+  "weightOffset": [0.9, 0.9],
+  "weightRatio": 0.7
  },
  "rest": {
   "x": 0,
@@ -73,43 +87,70 @@
  },
  "clips": {
   "idle": {
-   "frames": 48,
+   "frames": 96,
    "loop": true,
    "keys": {
     "y": [
      [0, 0, "ease"],
      [24, -4, "ease"],
-     [48, 0]
+     [48, 0, "ease"],
+     [72, -4, "ease"],
+     [96, 0]
     ],
     "sq": [
      [0, 0.015, "ease"],
      [24, -0.02, "ease"],
-     [48, 0.015]
+     [48, 0.015, "ease"],
+     [72, -0.02, "ease"],
+     [96, 0.015]
     ],
     "head": [
-     [0, 0, "ease"],
-     [24, 2.5, "ease"],
-     [48, 0]
+     [0, 0, "hold"],
+     [30, 0, "out"],
+     [34, -9, "hold"],
+     [56, -9, "out"],
+     [60, 7, "hold"],
+     [80, 7, "out"],
+     [86, 0, "hold"],
+     [96, 0]
+    ],
+    "torso": [
+     [0, 0, "hold"],
+     [30, 0, "out"],
+     [36, -1.5, "hold"],
+     [56, -1.5, "out"],
+     [62, 1.5, "hold"],
+     [80, 1.5, "out"],
+     [88, 0, "hold"],
+     [96, 0]
     ],
     "aU": [
      [0, -12, "ease"],
      [26, -15, "ease"],
-     [48, -12]
+     [48, -12, "ease"],
+     [74, -15, "ease"],
+     [96, -12]
     ],
     "bU": [
      [0, 12, "ease"],
      [26, 15, "ease"],
-     [48, 12]
+     [48, 12, "ease"],
+     [74, 15, "ease"],
+     [96, 12]
     ],
     "aF": [
      [0, -6, "ease"],
      [28, -10, "ease"],
-     [48, -6]
+     [48, -6, "ease"],
+     [76, -10, "ease"],
+     [96, -6]
     ],
     "bF": [
      [0, 6, "ease"],
      [28, 10, "ease"],
-     [48, 6]
+     [48, 6, "ease"],
+     [76, 10, "ease"],
+     [96, 6]
     ]
    }
   },
@@ -146,11 +187,13 @@
     ],
     "aU": [
      [0, -12, "out"],
-     [3, -4, "out"],
-     [8, -142, "ease"],
-     [11, -128, "hold"],
-     [36, -128, "ease"],
-     [44, -12, "ease"],
+     [3, -2, "out"],
+     [7, -150, "out"],
+     [10, -122, "ease"],
+     [13, -130, "hold"],
+     [34, -130, "ease"],
+     [42, -8, "out"],
+     [45, -15, "ease"],
      [48, -12]
     ],
     "aF": [
@@ -172,7 +215,9 @@
      [40, 18, "ease"],
      [48, 12]
     ]
-   }
+   },
+   "trail": ["aHand"],
+   "emote": "sparkle"
   },
   "talk": {
    "frames": 24,
@@ -209,7 +254,8 @@
      [12, 18, "ease"],
      [24, 12]
     ]
-   }
+   },
+   "emote": "emphasis"
   },
   "listen": {
    "frames": 48,
@@ -422,5 +468,6 @@
     ]
    }
   }
- }
+ },
+ "_style": "Rendu anime : aplat, ombre nette (forme décalée), liseré de lumière dans l'ombre (contour décalé, découpé), bande de reflet chromé, reflets francs, trait plus épais côté ombre, détails en traits fins."
 }

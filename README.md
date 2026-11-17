@@ -10,9 +10,17 @@
 
 ## Le personnage
 
-Un bonhomme chromé gris, sans visage, **dessiné en 2D** (entre l'anime et le cartoon) et animé à
-**24 images par seconde** (12 en jeu) : aplats avec ombre nette, reflets blancs, contour sombre,
-écrasement/étirement, émotes. Il a ses animations selon ce qu'il fait :
+Un bonhomme chromé gris, sans visage, **dessiné en 2D dans un style d'animation japonaise** et animé à
+**24 images par seconde** (12 en jeu) :
+
+- chrome travaillé : ombre nette bleutée, horizon reflété sur la tête et le torse, liseré de lumière
+  dans l'ombre, reflets francs, étincelle ;
+- encrage bleu nuit, plus épais côté ombre ; détails en traits fins (plaque de torse, jointures) ;
+- articulations aux épaules, coudes et genoux, cou, mains-gants avec pouce, chaussures à semelle ;
+- traînée de mouvement sur les gestes rapides, traits d'emphase manga quand il parle, émotes ;
+- poses clés franches, dépassement puis stabilisation, regard qui balaie au repos.
+
+Il a ses animations selon ce qu'il fait :
 
 | Animation | Quand |
 |---|---|

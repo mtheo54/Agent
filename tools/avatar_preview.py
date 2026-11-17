@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 """Aperçu du personnage 2D (assets/avatar/rig.json) : rend les animations à 24 i/s.
 
-Même algorithme de dessin que src/render/CartoonAvatar.cpp (Direct2D) :
-squelette en cinématique directe, formes pleines, ombre en aplat (cel shading) par décalage,
-reflet blanc, contour sombre. Sert à régler les animations sans recompiler le compagnon.
+Même algorithme de dessin que src/render/CartoonAvatar.cpp (Direct2D), rendu « anime » :
+  - squelette 2D en cinématique directe ;
+  - pour chaque forme, à l'intérieur de la forme (découpe) : ombre, partie éclairée (forme décalée
+    vers la lumière), bande de reflet chromé, liseré de lumière dans l'ombre (contour décalé),
+    reflets francs ; puis le trait, plus épais côté ombre ;
+  - détails en traits fins (jointures, plaque de torse), articulations, semelles, cou ;
+  - effets : traînée de mouvement, traits d'emphase, étincelle, émotes.
 
-    python tools/avatar_preview.py --clip wave --out wave.mp4        # vidéo (ffmpeg)
-    python tools/avatar_preview.py --sheet planche.png               # planche de poses
+    python tools/avatar_preview.py --sequence idle,wave,talk --out apercu.mp4
+    python tools/avatar_preview.py --sheet planche.png
 Dépendances : pycairo (pip install pycairo), ffmpeg pour les vidéos.
 """
-import argparse, json, math, os, subprocess, sys, tempfile
+import argparse, json, math, os, subprocess, tempfile
 
 import cairo
 
@@ -17,12 +21,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 RIG = os.path.join(HERE, "..", "assets", "avatar", "rig.json")
 
 
+# --- Animation ----------------------------------------------------------------
 def ease(kind, t):
     if kind == "hold": return 0.0
     if kind == "linear": return t
     if kind == "in": return t * t * t
     if kind == "out": return 1 - (1 - t) ** 3
-    return t * t * (3 - 2 * t)  # "ease" : lent-rapide-lent
+    return t * t * (3 - 2 * t)
 
 
 def sample(clip, rest, frame):
@@ -38,25 +43,39 @@ def sample(clip, rest, frame):
     return pose
 
 
+# --- Géométrie ----------------------------------------------------------------
 def rgb(h): return tuple(int(h[i:i + 2], 16) / 255 for i in (1, 3, 5))
-
-
 def rot(a, v):
     r = math.radians(a); c, s = math.cos(r), math.sin(r)
     return (v[0] * c - v[1] * s, v[0] * s + v[1] * c)
-
-
-def direction(a):  # 0 = vers le bas, + = vers la droite
-    r = math.radians(a); return (math.sin(r), math.cos(r))
-
-
+def direction(a): r = math.radians(a); return (math.sin(r), math.cos(r))
 def add(p, q, k=1.0): return (p[0] + q[0] * k, p[1] + q[1] * k)
+def lerp(p, q, t): return (p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t)
 
 
-# --- Formes -----------------------------------------------------------------
+def skeleton(rig, pose, rms=0.0):
+    """Positions de toutes les articulations (repère du canevas, avant écrasement)."""
+    b = rig["body"]
+    H = (rig["hips"][0] + pose["x"], rig["hips"][1] + pose["y"] - rms * 30)
+    T = pose["torso"]
+    at = lambda v: add(H, rot(T, v))
+    j = {"H": H, "T": T, "at": at}
+    for side, key in (("a", "shoulderA"), ("b", "shoulderB")):
+        s = at(b[key]); up = pose[side + "U"] + T; fo = up + pose[side + "F"]
+        e = add(s, direction(up), b["upperArm"]); h = add(e, direction(fo), b["foreArm"])
+        j[side + "Shoulder"], j[side + "Elbow"], j[side + "Hand"], j[side + "Fore"] = s, e, h, fo
+    for side, key in (("a", "hipA"), ("b", "hipB")):
+        hp = add(H, b[key]); th = pose[side + "T"]; sh = th + pose[side + "S"]
+        k = add(hp, direction(th), b["thigh"]); an = add(k, direction(sh), b["shin"])
+        j[side + "Hip"], j[side + "Knee"], j[side + "Ankle"], j[side + "ShinA"] = hp, k, an, sh
+    j["neck"] = at((0, b["neckY"]))
+    j["ha"] = T + pose["head"]
+    j["hc"] = add(j["neck"], rot(j["ha"], (0, -(b["headRadius"] + b["headGap"]))))
+    return j
+
+
 def capsule(ctx, p0, p1, r0, r1):
-    dx, dy = p1[0] - p0[0], p1[1] - p0[1]; L = math.hypot(dx, dy) or 1e-3
-    ang = math.atan2(dy, dx)
+    dx, dy = p1[0] - p0[0], p1[1] - p0[1]; ang = math.atan2(dy, dx)
     ctx.new_sub_path()
     ctx.arc(p0[0], p0[1], r0, ang + math.pi / 2, ang + 3 * math.pi / 2)
     ctx.arc(p1[0], p1[1], r1, ang - math.pi / 2, ang + math.pi / 2)
@@ -68,119 +87,209 @@ def ellipse(ctx, c, rx, ry, angle=0.0):
     ctx.new_sub_path(); ctx.arc(0, 0, 1, 0, 2 * math.pi); ctx.restore()
 
 
-def cel(ctx, path_fn, base, shadow, offset, outline, lw, highlight_fn=None):
-    """Aplat + ombre portée en croissant (forme moins forme décalée) + reflet + contour."""
-    ctx.save(); path_fn(ctx); ctx.clip()
-    ctx.set_source_rgb(*shadow); ctx.paint()
-    ctx.save(); ctx.translate(-offset[0], -offset[1]); path_fn(ctx); ctx.restore()
-    ctx.set_source_rgb(*base); ctx.fill()
-    if highlight_fn: ctx.set_source_rgb(1, 1, 1); highlight_fn(ctx); ctx.fill()
-    ctx.restore()
-    path_fn(ctx); ctx.set_source_rgb(*outline); ctx.set_line_width(lw)
-    ctx.set_line_join(cairo.LINE_JOIN_ROUND); ctx.stroke()
+def star(ctx, c, r, angle=0.0):  # étincelle à 4 branches
+    ctx.new_sub_path()
+    for i in range(8):
+        a = math.radians(angle + i * 45); rr = r if i % 2 == 0 else r * 0.22
+        x, y = c[0] + math.sin(a) * rr, c[1] - math.cos(a) * rr
+        (ctx.move_to if i == 0 else ctx.line_to)(x, y)
+    ctx.close_path()
 
 
-def draw(ctx, rig, pose, frame, emote=None, rms=0.0):
-    b, pal, st = rig["body"], rig["palette"], rig["style"]
-    P = {k: rgb(v) for k, v in pal.items()}
-    lw = st["outline"]; so = tuple(st["shadowOffset"]); lo = tuple(st["limbShadowOffset"])
+class Painter:
+    def __init__(self, ctx, rig):
+        self.c, self.rig = ctx, rig
+        self.P = {k: rgb(v) for k, v in rig["palette"].items()}
+        st = rig["style"]
+        self.lw, self.inner = st["outline"], st["innerLine"]
+        self.so, self.lo = tuple(st["shadowOffset"]), tuple(st["limbShadowOffset"])
+        self.ro, self.rw = tuple(st["rimOffset"]), st["rimWidth"]
+        self.wo, self.wr = tuple(st["weightOffset"]), st["weightRatio"]
+
+    def part(self, path, back=False, big=False, highlight=None, band=None, details=None, rim=True):
+        """Une forme au rendu anime (même ordre de couches que CartoonAvatar::Part en C++)."""
+        c, P = self.c, self.P
+        base, shadow = (P["backBase"], P["backShadow"]) if back else (P["base"], P["shadow"])
+        off = self.so if big else self.lo
+        c.save(); path(c); c.clip()
+        c.set_source_rgb(*shadow); c.paint()                                     # 1. ombre
+        c.save(); c.translate(-off[0], -off[1]); path(c); c.restore()            # 2. partie éclairée
+        c.set_source_rgb(*base); c.fill()
+        if band:                                                                 # 3. bande de reflet
+            c.set_source_rgb(*(P["backBand"] if back else P["band"])); band(c)
+        if rim:                                                                  # 4. liseré de lumière
+            c.save(); c.translate(-self.ro[0], -self.ro[1]); path(c); c.restore()
+            c.set_source_rgba(*P["rim"], 0.55 if back else 0.9); c.set_line_width(self.rw); c.stroke()
+        if highlight and not back:                                               # 5. reflets francs
+            c.set_source_rgb(*P["highlight"]); highlight(c); c.fill()
+        if details:                                                              # 6. détails fins
+            c.set_source_rgba(*P["outline"], 0.85); c.set_line_width(self.inner)
+            c.set_line_cap(cairo.LINE_CAP_ROUND); details(c); c.stroke()
+        c.restore()
+        c.set_source_rgb(*P["outline"]); c.set_line_join(cairo.LINE_JOIN_ROUND)  # 7. trait
+        path(c); c.set_line_width(self.lw); c.stroke()
+        c.save(); c.translate(*self.wo); path(c); c.restore()                    #    plus épais côté ombre
+        c.set_line_width(self.lw * self.wr); c.stroke()
+
+
+def draw(ctx, rig, pose, frame, clip, rms=0.0, history=()):
+    b = rig["body"]; pn = Painter(ctx, rig); P = pn.P
     gx, gy = rig["hips"][0], rig["ground"]
-    # Écrasement / étirement autour du point au sol
-    ctx.save(); ctx.translate(gx, gy); ctx.scale(1 + pose["sq"] * 0.6, 1 - pose["sq"]); ctx.translate(-gx, -gy)
-    H = (rig["hips"][0] + pose["x"], rig["hips"][1] + pose["y"] - rms * 6)
-    T = pose["torso"]
+    sx, sy = 1 + pose["sq"] * 0.6, 1 - pose["sq"]
+    j = skeleton(rig, pose, rms)
+    at, T = j["at"], j["T"]
 
-    def at(local): return add(H, rot(T, local))
+    # Ombre au sol, deux tons nets (hors écrasement)
+    lift = max(0.0, -pose["y"]) / 40.0
+    ctx.set_source_rgba(*P["groundShadow"], 0.35); ellipse(ctx, (gx, gy + 6), 66 * (1 - lift * 0.3), 9); ctx.fill()
+    ctx.set_source_rgba(*P["groundCore"], 0.35); ellipse(ctx, (gx + 4, gy + 6), 38 * (1 - lift * 0.3), 5); ctx.fill()
 
-    def arm(side):
-        sh = at(b["shoulderA" if side == "a" else "shoulderB"])
-        up = pose[side + "U"] + T; fo = up + pose[side + "F"]
-        el = add(sh, direction(up), b["upperArm"]); ha = add(el, direction(fo), b["foreArm"])
-        return sh, el, ha
+    ctx.save(); ctx.translate(gx, gy); ctx.scale(sx, sy); ctx.translate(-gx, -gy)
 
-    def leg(side):
-        hp = add(H, b["hipA" if side == "a" else "hipB"])
-        th = pose[side + "T"]; sh = th + pose[side + "S"]
-        kn = add(hp, direction(th), b["thigh"]); an = add(kn, direction(sh), b["shin"])
-        return hp, kn, an, pose[side + "Foot"]
+    # Traînée de mouvement (positions des images précédentes) : derrière le personnage
+    for name in clip.get("trail", []):
+        pts = [h[name] for h in history] + [j[name]]
+        if len(pts) >= 2 and math.dist(pts[0], pts[-1]) > 14:
+            for i in range(len(pts) - 1):
+                ctx.set_source_rgba(*P["speed"], 0.25 + 0.5 * i / len(pts))
+                ctx.set_line_width(6 + 12 * i / len(pts)); ctx.set_line_cap(cairo.LINE_CAP_ROUND)
+                ctx.move_to(*pts[i]); ctx.line_to(*pts[i + 1]); ctx.stroke()
 
-    def streak(p0, p1, r):  # reflet allongé sur un membre, côté lumière (haut-gauche)
+    def streak(p0, p1, r):
         def f(c):
-            q0 = (p0[0] + (p1[0] - p0[0]) * 0.18 - r * 0.35, p0[1] + (p1[1] - p0[1]) * 0.18 - r * 0.35)
-            q1 = (p0[0] + (p1[0] - p0[0]) * 0.55 - r * 0.35, p0[1] + (p1[1] - p0[1]) * 0.55 - r * 0.35)
-            capsule(c, q0, q1, 2.6, 2.0)
+            o = (-r * 0.35, -r * 0.35)
+            capsule(c, add(lerp(p0, p1, 0.18), o), add(lerp(p0, p1, 0.55), o), 2.6, 2.0)
+            ellipse(c, add(lerp(p0, p1, 0.70), o), 1.8, 1.8)
         return f
 
-    def draw_arm(side, back):
-        base, sh_ = (P["backBase"], P["backShadow"]) if back else (P["base"], P["shadow"])
-        s, e, h = arm(side)
+    def limb_band(p0, p1, r):  # bande de reflet le long du membre, côté ombre
+        def f(c):
+            o = (r * 0.25, r * 0.2)
+            capsule(c, add(lerp(p0, p1, 0.05), o), add(lerp(p0, p1, 0.95), o), r * 0.28, r * 0.24); c.fill()
+        return f
+
+    def joint(p, ang, r, back):  # anneau d'articulation perpendiculaire au membre
+        pn.part(lambda c: ellipse(c, p, r * 1.06, r * 0.38, -ang), back=back, rim=False,
+                highlight=lambda c: ellipse(c, add(p, (-r * 0.35, -r * 0.12)), r * 0.32, r * 0.09, -ang))
+
+    def hand(side, back):
+        h, fo = j[side + "Hand"], j[side + "Fore"]
+        tdir = direction(fo + (55 if side == "a" else -55))  # pouce vers l'intérieur (vers le corps)
+        R = b["handR"]
+        def path(c):
+            ellipse(c, h, R, R * 0.92, -fo)
+            capsule(c, add(h, tdir, R * 0.35), add(h, tdir, R * 1.05), 5.5, 4.5)
+        pn.part(path, back=back, highlight=lambda c: ellipse(c, add(h, (-5, -6)), 4.5, 3, -30),
+                details=lambda c: (c.move_to(*add(h, rot(-fo, (-6, 4)))), c.line_to(*add(h, rot(-fo, (6, 4))))))
+
+    def arm(side, back):
+        s, e, h = j[side + "Shoulder"], j[side + "Elbow"], j[side + "Hand"]
         ur, fr = b["upperArmR"], b["foreArmR"]
-        cel(ctx, lambda c: capsule(c, s, e, ur[0], ur[1]), base, sh_, lo, P["outline"], lw, None if back else streak(s, e, ur[0]))
-        cel(ctx, lambda c: capsule(c, e, h, fr[0], fr[1]), base, sh_, lo, P["outline"], lw, None if back else streak(e, h, fr[0]))
-        cel(ctx, lambda c: ellipse(c, h, b["handR"], b["handR"]), base, sh_, lo, P["outline"], lw,
-            None if back else (lambda c: ellipse(c, add(h, (-5, -6)), 4.5, 3, -30)))
+        pn.part(lambda c: capsule(c, s, e, ur[0], ur[1]), back, highlight=streak(s, e, ur[0]), band=limb_band(s, e, ur[0]))
+        pn.part(lambda c: capsule(c, e, h, fr[0], fr[1]), back, highlight=streak(e, h, fr[0]), band=limb_band(e, h, fr[0]))
+        ang = math.degrees(math.atan2(h[0] - e[0], h[1] - e[1]))
+        joint(e, ang, fr[0], back)
+        hand(side, back)
+        joint(s, math.degrees(math.atan2(e[0] - s[0], e[1] - s[1])), ur[0] * 0.95, back)
 
-    def draw_leg(side, back):
-        base, sh_ = (P["backBase"], P["backShadow"]) if back else (P["base"], P["shadow"])
-        hp, kn, an, fa = leg(side)
+    def leg(side, back):
+        hp, k, an = j[side + "Hip"], j[side + "Knee"], j[side + "Ankle"]
         tr, sr = b["thighR"], b["shinR"]
-        cel(ctx, lambda c: capsule(c, hp, kn, tr[0], tr[1]), base, sh_, lo, P["outline"], lw, None if back else streak(hp, kn, tr[0]))
-        cel(ctx, lambda c: capsule(c, kn, an, sr[0], sr[1]), base, sh_, lo, P["outline"], lw, None if back else streak(kn, an, sr[0]))
-        out = -1 if side == "a" else 1  # pieds tournés vers l'extérieur
-        fc = add(an, (out * 9, 7)); ang = out * (8 + fa) if side == "a" else out * 8 + fa
-        cel(ctx, lambda c: ellipse(c, fc, b["foot"][0], b["foot"][1], ang), base, sh_, lo, P["outline"], lw)
+        pn.part(lambda c: capsule(c, hp, k, tr[0], tr[1]), back, highlight=streak(hp, k, tr[0]), band=limb_band(hp, k, tr[0]))
+        pn.part(lambda c: capsule(c, k, an, sr[0], sr[1]), back, highlight=streak(k, an, sr[0]), band=limb_band(k, an, sr[0]))
+        joint(k, math.degrees(math.atan2(an[0] - k[0], an[1] - k[1])), sr[0], back)
+        out = -1 if side == "a" else 1
+        fa = pose[side + "Foot"]; ang = out * (8 + fa) if side == "a" else out * 8 + fa
+        fc = add(an, (out * 9, 7)); fw, fh = b["foot"]
+        def sole(c):  # semelle : bas du pied
+            c.set_source_rgb(*P["sole"]); ellipse(c, add(fc, rot(ang, (0, fh * 0.95))), fw * 1.05, fh * 0.75, ang); c.fill()
+        pn.part(lambda c: ellipse(c, fc, fw, fh, ang), back, band=sole,
+                highlight=lambda c: ellipse(c, add(fc, rot(ang, (-out * 6, -5))), 7, 2.5, ang),
+                details=lambda c: (c.move_to(*add(fc, rot(ang, (out * 6, -fh * 0.9)))), c.line_to(*add(fc, rot(ang, (out * 9, 0))))))
 
-    # Ordre : bras arrière, jambes, torse, tête, bras avant
-    draw_arm("b", True)
-    draw_leg("b", True)
-    draw_leg("a", False)
+    # Ordre : bras arrière, jambe arrière, jambe avant, cou, torse, tête, bras avant
+    arm("b", True)
+    leg("b", True)
+    leg("a", False)
+
+    neck = j["neck"]
+    pn.part(lambda c: capsule(c, add(neck, rot(T, (0, 6))), add(neck, rot(j["ha"], (0, -16))), 13, 12),
+            back=True, rim=False)
 
     pts = [at(p) for p in b["torso"]]
     def torso(c):
         c.new_sub_path(); c.move_to(*pts[0])
         for i in range(1, len(pts), 3): c.curve_to(*pts[i], *pts[i + 1], *pts[i + 2])
         c.close_path()
-    cel(ctx, torso, P["base"], P["shadow"], so, P["outline"], lw,
-        lambda c: ellipse(c, at((-27, -78)), 7, 17, T + 18))
+    def torso_band(c):  # reflet d'horizon du chrome : bande sombre courbe sous la poitrine
+        ctx2 = c; ctx2.set_line_width(9)
+        p0, p1, p2 = at((-52, -54)), at((0, -40)), at((52, -54))
+        ctx2.move_to(*p0); ctx2.curve_to(*lerp(p0, p1, 0.6), *lerp(p2, p1, 0.6), *p2); ctx2.stroke()
+    def torso_details(c):  # plaque de poitrine et jointure centrale
+        p0, p2 = at((-34, -96)), at((30, -96))
+        c.move_to(*p0); c.curve_to(*at((-30, -70)), *at((26, -70)), *p2)
+        c.move_to(*at((-4, -66))); c.curve_to(*at((-6, -44)), *at((-6, -22)), *at((-4, -6)))
+    pn.part(torso, big=True, band=torso_band, details=torso_details,
+            highlight=lambda c: (ellipse(c, at((-27, -80)), 6.5, 16, T + 18), ellipse(c, at((-20, -54)), 2.6, 5, T + 18)))
 
-    neck = at((0, b["neckY"]))
-    hc = add(neck, rot(T + pose["head"], (0, -(b["headRadius"] + b["headGap"]))))
-    hr = b["headRadius"]; ha = T + pose["head"]
+    hc, ha, hr = j["hc"], j["ha"], b["headRadius"]
+    def head_band(c):  # horizon reflété sur la sphère chromée
+        cc = add(hc, rot(ha, (0, -hr * 1.25)))
+        c.set_line_width(hr * 0.17)
+        c.arc(cc[0], cc[1], hr * 1.62, math.radians(35 + ha), math.radians(145 + ha)); c.stroke()  # dépasse : découpé net
+        c.set_source_rgba(*P["rim"], 0.8); c.set_line_width(2)
+        c.arc(cc[0], cc[1], hr * 1.62 + hr * 0.13, math.radians(35 + ha), math.radians(145 + ha)); c.stroke()
     def head_hl(c):
         ellipse(c, add(hc, rot(ha, (-26, -28))), 20, 10.5, ha - 38)
         ellipse(c, add(hc, rot(ha, (-6, -44))), 4.5, 4.5)
-    cel(ctx, lambda c: ellipse(c, hc, hr, hr), P["base"], P["shadow"], so, P["outline"], lw, head_hl)
+        ellipse(c, add(hc, rot(ha, (-38, -6))), 3, 7, ha - 10)
+    pn.part(lambda c: ellipse(c, hc, hr, hr), big=True, band=head_band, highlight=head_hl)
 
-    draw_arm("a", False)
+    arm("a", False)
     ctx.restore()
 
-    # Émotes façon anime : hors écrasement pour rester nettes, à la position écrasée de la tête
-    sx, sy = 1 + pose["sq"] * 0.6, 1 - pose["sq"]
+    # Effets et émotes : hors écrasement, à la position écrasée de la tête
     hc = (gx + (hc[0] - gx) * sx, gy + (hc[1] - gy) * sy)
+    emote(ctx, P, clip.get("emote"), frame, hc, hr)
+    return j
+
+
+def emote(ctx, P, kind, frame, hc, hr):
     top = (hc[0], hc[1] - hr)
     ctx.set_source_rgb(*P["emote"]); ctx.set_line_width(3.2); ctx.set_line_cap(cairo.LINE_CAP_ROUND)
-    if emote == "dots":
-        for i in range(3):  # trois points qui apparaissent l'un après l'autre
+    if kind == "dots":
+        for i in range(3):
             if (frame // 8) % 4 > i:
                 ctx.new_sub_path(); ctx.arc(hc[0] + 58 + i * 16, top[1] + 10 - i * 10, 4.5 + i, 0, 2 * math.pi); ctx.fill()
-    elif emote == "sound":
-        for i in range(3):  # ondes sonores qui partent de la tête
+    elif kind == "sound":
+        for i in range(3):
             ph = ((frame / 16.0) + i / 3.0) % 1.0
             ctx.set_source_rgba(*P["emote"], 1 - ph)
             ctx.new_sub_path(); ctx.arc(hc[0] - hr - 4, hc[1] - 6, 14 + ph * 26, math.radians(140), math.radians(220)); ctx.stroke()
-    elif emote == "notes":
-        for i in range(2):  # notes de musique qui montent
+    elif kind == "notes":
+        for i in range(2):
             ph = ((frame / 24.0) + i * 0.5) % 1.0
             x = hc[0] + 70 - i * 12 + math.sin(ph * 6.28) * 6; y = hc[1] - 10 - ph * 60
             ctx.set_source_rgba(*P["emote"], 1 - ph)
             ellipse(ctx, (x, y), 7, 5, -20); ctx.fill()
             ctx.move_to(x + 6, y - 1); ctx.line_to(x + 6, y - 24); ctx.line_to(x + 14, y - 18); ctx.stroke()
-    elif emote == "sweat":
-        ph = (frame % 24) / 24.0  # goutte de sueur anime
+    elif kind == "sweat":
+        ph = (frame % 24) / 24.0
         x, y = hc[0] + hr * 0.75, hc[1] - hr * 0.55 + ph * 14
         ctx.set_source_rgb(*P["accent"])
         ctx.move_to(x, y - 12); ctx.curve_to(x + 8, y - 2, x + 7, y + 7, x, y + 7); ctx.curve_to(x - 7, y + 7, x - 8, y - 2, x, y - 12)
         ctx.fill_preserve(); ctx.set_source_rgb(*P["outline"]); ctx.set_line_width(2); ctx.stroke()
+    elif kind == "emphasis":  # traits d'emphase manga sur les accents de la phrase
+        if frame % 12 in (5, 6, 7):
+            for a in (-60, -30, 0):
+                r0, r1 = hr + 10, hr + 24
+                ca, sa = math.cos(math.radians(a - 90)), math.sin(math.radians(a - 90))
+                ctx.move_to(hc[0] + 18 + ca * r0, hc[1] + sa * r0); ctx.line_to(hc[0] + 18 + ca * r1, hc[1] + sa * r1); ctx.stroke()
+    elif kind == "sparkle":  # étincelle sur le chrome, au sommet du geste
+        if 8 <= frame <= 20:
+            s = 1 - abs(frame - 13) / 7.0
+            ctx.set_source_rgb(*P["highlight"]); star(ctx, (hc[0] - hr * 0.55, hc[1] - hr * 0.6), 13 * s, 15); ctx.fill_preserve()
+            ctx.set_source_rgba(*P["accent"], 0.9); ctx.set_line_width(1.2); ctx.stroke()
 
 
 def render_frame(rig, clip_name, frame, scale=2, bg=True):
@@ -188,12 +297,14 @@ def render_frame(rig, clip_name, frame, scale=2, bg=True):
     surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, int(w * scale), int(h * scale))
     ctx = cairo.Context(surf); ctx.scale(scale, scale)
     if bg:
-        g = cairo.LinearGradient(0, 0, 0, h); g.add_color_stop_rgb(0, 0.88, 0.93, 0.98); g.add_color_stop_rgb(1, 0.70, 0.80, 0.92)
+        g = cairo.LinearGradient(0, 0, 0, h); g.add_color_stop_rgb(0, 0.90, 0.94, 0.99); g.add_color_stop_rgb(1, 0.74, 0.83, 0.94)
         ctx.set_source(g); ctx.paint()
-        ctx.set_source_rgba(0, 0, 0, 0.12); ellipse(ctx, (rig["hips"][0], rig["ground"] + 6), 62, 8); ctx.fill()
     clip = rig["clips"][clip_name]
-    pose = sample(clip, rig["rest"], frame)
-    draw(ctx, rig, pose, frame, clip.get("emote"))
+    history = []
+    for k in (2, 1):  # deux images précédentes pour la traînée
+        if frame - k >= 0 and clip.get("trail"):
+            history.append(skeleton(rig, sample(clip, rig["rest"], frame - k)))
+    draw(ctx, rig, sample(clip, rig["rest"], frame), frame, clip, history=history)
     return surf
 
 
@@ -207,17 +318,17 @@ def main():
     ap.add_argument("--sequence", help="ex. idle,wave,talk : enchaîne plusieurs animations dans une vidéo")
     a = ap.parse_args()
     rig = json.load(open(a.rig, encoding="utf-8"))
-    if a.sheet:  # une image par animation (image clé du milieu)
+    if a.sheet:
         names = list(rig["clips"]); w, h = rig["canvas"]
-        sheet = cairo.ImageSurface(cairo.FORMAT_ARGB32, w * len(names), h + 30)
+        sheet = cairo.ImageSurface(cairo.FORMAT_ARGB32, w * len(names) * 2, (h + 30) * 2)
         c = cairo.Context(sheet); c.set_source_rgb(1, 1, 1); c.paint()
         for i, n in enumerate(names):
-            f = {"wave": 14, "train": 6}.get(n, rig["clips"][n]["frames"] // 2)
-            c.set_source_surface(render_frame(rig, n, f, scale=1), i * w, 0); c.paint()
-            c.set_source_rgb(0.1, 0.1, 0.1); c.select_font_face("Sans", 0, 1); c.set_font_size(16)
-            c.move_to(i * w + 12, h + 22); c.show_text(n)
+            f = {"wave": 13, "train": 6, "talk": 6, "idle": 40}.get(n, rig["clips"][n]["frames"] // 2)
+            c.set_source_surface(render_frame(rig, n, f, scale=2), i * w * 2, 0); c.paint()
+            c.set_source_rgb(0.1, 0.1, 0.1); c.select_font_face("Sans", 0, 1); c.set_font_size(30)
+            c.move_to(i * w * 2 + 20, h * 2 + 44); c.show_text(n)
         sheet.write_to_png(a.sheet); return
-    plan = []  # (animation, image)
+    plan = []
     for name in (a.sequence.split(",") if a.sequence else [a.clip]):
         clip = rig["clips"][name]
         plan += [(name, f % clip["frames"]) for f in range(clip["frames"] * (1 if not clip.get("loop") else a.loops))]
@@ -226,7 +337,7 @@ def main():
             render_frame(rig, name, f).write_to_png(os.path.join(tmp, f"{i:04d}.png"))
         out = a.out or f"{a.sequence.replace(',', '_') if a.sequence else a.clip}.mp4"
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-framerate", str(rig["fps"]), "-i", os.path.join(tmp, "%04d.png"),
-                        "-pix_fmt", "yuv420p", "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2", out], check=True)
+                        "-pix_fmt", "yuv420p", "-crf", "16", "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2", out], check=True)
         print(out)
 
 

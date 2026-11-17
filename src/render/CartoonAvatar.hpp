@@ -5,9 +5,12 @@
 // Le même fichier est lu par tools/avatar_preview.py, qui rend les animations en vidéo pour les régler
 // sans recompiler. Le dessin reproduit le même algorithme :
 //   - squelette 2D en cinématique directe (hanches -> torse -> tête / bras ; hanches -> jambes) ;
-//   - chaque forme : aplat, ombre en croissant (forme moins la forme décalée vers la lumière),
-//     reflet blanc net, contour sombre (cel shading façon anime) ;
-//   - écrasement / étirement autour du point au sol (cartoon) ; émotes (points, ondes, notes, sueur).
+//   - rendu anime, couche par couche à l'intérieur de chaque forme : ombre nette, partie éclairée
+//     (forme décalée vers la lumière), bande de reflet chromé, liseré de lumière dans l'ombre,
+//     reflets francs, détails en traits fins ; puis le trait, plus épais côté ombre ;
+//   - articulations, cou, mains-gants avec pouce, semelles ; ombre au sol en deux tons ;
+//   - écrasement / étirement (cartoon), traînée de mouvement, émotes (« … », ondes, notes, sueur,
+//     traits d'emphase, étincelle).
 // Cadence : une nouvelle image tous les 1/24 s (« on ones ») ; en jeu, 12 i/s (« on twos »).
 
 #include <d2d1_1.h>
@@ -54,6 +57,7 @@ private:
         bool loop = true;
         std::string then = "idle";
         std::string emote;
+        std::vector<std::string> trail;  // articulations qui laissent une traînée (ex. "aHand")
         std::map<std::string, std::vector<Key>> keys;
     };
     struct Body {
@@ -64,9 +68,17 @@ private:
         std::array<float, 2> upperArmR{}, foreArmR{}, thighR{}, shinR{}, foot{};
     };
 
+    struct Skeleton {
+        D2D1_POINT_2F H{}, neck{}, hc{};
+        float T = 0, ha = 0;
+        D2D1_POINT_2F shoulder[2]{}, elbow[2]{}, hand[2]{}, hip[2]{}, knee[2]{}, ankle[2]{};
+        float fore[2]{};
+    };
+
     Pose Sample(const Clip& clip, int frame) const;
+    Skeleton Solve(const Pose& pose) const;
     std::string ClipForState() const;
-    void Draw(ID2D1DeviceContext* ctx, ID2D1Factory1* factory, const Pose& pose, float scale);
+    void Draw(ID2D1DeviceContext* ctx, ID2D1Factory1* factory, const Pose& pose, const Clip& clip, float scale);
     void DrawEmote(ID2D1DeviceContext* ctx, ID2D1Factory1* factory, const std::string& emote, D2D1_POINT_2F headCenter);
     ID2D1SolidColorBrush* Brush(ID2D1DeviceContext* ctx, const std::string& name, float alpha = 1.f);
 
@@ -77,8 +89,8 @@ private:
     float ground_ = 395;
     Body body_;
     std::map<std::string, D2D1_COLOR_F> palette_;
-    float outline_ = 4.f;
-    D2D1_POINT_2F shadowOffset_{8, 7}, limbShadowOffset_{5, 4};
+    float outline_ = 4.f, innerLine_ = 1.7f, rimWidth_ = 2.2f, weightRatio_ = 0.7f;
+    D2D1_POINT_2F shadowOffset_{8, 7}, limbShadowOffset_{5, 4}, rimOffset_{3.2f, 2.8f}, weightOffset_{0.9f, 0.9f};
     Pose rest_;
     std::map<std::string, Clip> clips_;
 
