@@ -192,6 +192,9 @@ private:
     std::atomic<unsigned> rng_{0x51F15EEDu};
     std::atomic<bool> deviceDirty_{true};
     std::chrono::steady_clock::time_point lastBrainUse_{};
+    // En jeu : le jeu sature-t-il la carte ? (verdict gardé au moins 60 s : pas de rechargement en boucle)
+    bool gameGpuBusy_ = true;
+    std::chrono::steady_clock::time_point gpuVerdictAt_{};
     std::chrono::steady_clock::time_point lastAutoTraining_{};
     std::atomic<std::int64_t> listenUntilMs_{0};  // écoute du mix à la demande (hors FL Studio)
 };

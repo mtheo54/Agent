@@ -62,8 +62,17 @@ BrainChoice ModelPlanner::PlanNormal(const HardwareInfo& hw, bool neuralVoice) {
                std::format("Hors jeu, moitié de {:.0f} Go{}", hw.vramGiB, neuralVoice ? " moins la voix neuronale" : ""));
 }
 
-BrainChoice ModelPlanner::PlanGaming(const HardwareInfo& hw) {
+bool ModelPlanner::GameSaturatesGpu(double load, bool wasBusy) {
+    if (load < 0.0) return true;
+    return load >= (wasBusy ? kGpuBusyLeave : kGpuBusyEnter);
+}
+
+BrainChoice ModelPlanner::PlanGaming(const HardwareInfo& hw, bool gpuSaturated) {
     if (hw.vramGiB < 0.9) return OnCpu(hw, true, "En jeu, pas de carte graphique dédiée");
+    if (gpuSaturated)
+        return OnCpu(hw, true, hw.gameGpuLoad >= 0.0
+                                   ? std::format("En jeu, la carte graphique est prise à {:.0f} %", hw.gameGpuLoad * 100.0)
+                                   : std::string("En jeu, charge de la carte inconnue"));
     double budget = hw.vramGiB * kGamingShare;
     std::string rule = std::format("En jeu, un quart de {:.0f} Go", hw.vramGiB);
     // Gros jeu : s'il reste peu de VRAM libre, on prend encore moins (le jeu passe avant tout).
@@ -81,9 +90,10 @@ std::vector<Download> ModelPlanner::Required(const HardwareInfo& hw, bool neural
     // En jeu, sans mesure de VRAM libre, on prépare le modèle du quart (le plus fréquent).
     HardwareInfo calm = hw;
     calm.vramFreeGiB = -1.0;
-    const BrainChoice gaming = PlanGaming(calm);
+    const BrainChoice gaming = PlanGaming(calm, false);
+    const BrainChoice gamingCpu = PlanGaming(calm, true);  // jeu qui sature la carte : cerveau sur le processeur
     // + le plus petit, toujours : filet de sécurité quand un gros jeu ne laisse presque plus de VRAM.
-    for (const auto* m : {normal.model, gaming.model, &Brains().front()})
+    for (const auto* m : {normal.model, gaming.model, gamingCpu.model, &Brains().front()})
         if (m && std::ranges::none_of(d, [&](const Download& x) { return x.file == m->file; }))
             d.push_back({m->file, m->url, m->bytes});
     const std::string w = v.whisperFile;

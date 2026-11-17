@@ -98,6 +98,7 @@ void SetEcoQoS(bool on) {
 //    Windows 10+ ; sur un CPU hybride, un cœur de la classe la plus économe. Le jeu garde tous les autres.
 //  - priorité « inférieure à la normale » (le fil audio garde MMCSS pour ne pas craquer) ;
 //  - mémoire en priorité basse + rognage du working set : sous pression, ce sont nos pages qui partent.
+//  - carte graphique en priorité d'ordonnancement basse : le jeu passe devant nos calculs.
 // API résolues dynamiquement (absentes des vieux en-têtes MinGW, et de Windows < 10) : sinon, ignoré.
 void SetGameIsolation(bool on) {
     using GetInfoFn = BOOL(WINAPI*)(void*, ULONG, PULONG, HANDLE, ULONG);
@@ -158,6 +159,13 @@ void SetGameIsolation(bool on) {
     mp.MemoryPriority = on ? MEMORY_PRIORITY_LOW : MEMORY_PRIORITY_NORMAL;
     SetProcessInformation(GetCurrentProcess(), ProcessMemoryPriority, &mp, sizeof(mp));
     if (on) SetProcessWorkingSetSize(GetCurrentProcess(), static_cast<SIZE_T>(-1), static_cast<SIZE_T>(-1));  // rend la RAM inutilisée
+    // Carte graphique : classe d'ordonnancement GPU « sous la normale » pour tout le processus (cerveau, voix,
+    // avatar). Quand le jeu et nous voulons la carte au même moment, le planificateur de Windows sert le jeu
+    // d'abord. Baisser sa propre priorité ne demande aucun droit. gdi32, résolu dynamiquement (Windows 10+).
+    using SetGpuClassFn = LONG(APIENTRY*)(HANDLE, int);
+    if (const auto setGpuClass = reinterpret_cast<SetGpuClassFn>(reinterpret_cast<void*>(
+            GetProcAddress(GetModuleHandleW(L"gdi32.dll"), "D3DKMTSetProcessSchedulingPriorityClass"))))
+        setGpuClass(GetCurrentProcess(), on ? 1 /*BELOW_NORMAL*/ : 2 /*NORMAL*/);
 }
 
 }  // namespace

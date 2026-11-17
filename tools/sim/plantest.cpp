@@ -20,4 +20,13 @@ int main() {
         const auto g = ModelPlanner::PlanGaming(hw);
         std::printf("  %4.1f Go libres -> %s\n", fr, g.why.c_str());
     }
+
+    std::printf("\nCarte ou processeur, selon ce que le jeu sature (ta carte, 16 Go) :\n");
+    bool busy = true;  // verdict initial prudent
+    for (double load : {-1.0, 0.45, 0.80, 0.90, 0.78, 0.65, 0.99}) {
+        HardwareInfo hw; hw.vramGiB = 15.9; hw.ramGiB = 32; hw.gameGpuLoad = load;
+        busy = ModelPlanner::GameSaturatesGpu(load, busy);
+        const auto g = ModelPlanner::PlanGaming(hw, busy);
+        std::printf("  carte 3D %5.0f %% -> %s\n", load * 100, g.why.c_str());
+    }
 }

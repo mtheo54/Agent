@@ -55,7 +55,7 @@ struct GovernorConfig {
 struct SystemSnapshot {
     SystemMode mode = SystemMode::Interactive;
     float cpuLoad = 0.f;   // 0..1
-    float gpuLoad = -1.f;  // 0..1, -1 = inconnu (n'est échantillonné qu'en Idle)
+    float gpuLoad = -1.f;  // 0..1 (3D, hors nous), -1 = inconnu ; échantillonné en Idle et en jeu (moyenne ~8 s)
     std::chrono::milliseconds idleFor{0};
     bool backgroundWorkActive = false;
 };
@@ -146,6 +146,8 @@ private:
     PDH_HQUERY pdhQuery_ = nullptr;
     PDH_HCOUNTER pdhGpuCounter_ = nullptr;
     std::vector<std::byte> pdhBuffer_;
+    float gpuEma_ = -1.f;  // en jeu : charge 3D lissée
+    unsigned gpuTick_ = 0;
 
     std::chrono::steady_clock::time_point lastTick_{};
     std::chrono::steady_clock::time_point lastScan_{};

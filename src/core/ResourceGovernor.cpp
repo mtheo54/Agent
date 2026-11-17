@@ -7,6 +7,7 @@
 #include <tlhelp32.h>
 
 #include <algorithm>
+#include <cwchar>
 #include <cwctype>
 
 namespace companion {
@@ -231,8 +232,21 @@ void ResourceGovernor::Tick(bool forceProcessScan) {
     else if (dawRunning_) m = SystemMode::Studio;
     else if (idle >= cfg_.idleThreshold) m = SystemMode::Idle;
 
-    // Le compteur GPU PDH coûte quelques ms : on ne l'interroge que lorsqu'il sert.
-    gpuLoad_.store(m == SystemMode::Idle ? SampleGpuLoad() : -1.f, std::memory_order_relaxed);
+    // Le compteur GPU PDH coûte quelques ms : on ne l'interroge que lorsqu'il sert. En jeu, toutes les 2 s :
+    // il dit si le jeu sature la carte graphique (cerveau sur le processeur) ou le processeur (cerveau sur
+    // la carte, en priorité basse). Moyenne glissante (~8 s) pour ignorer les pics d'un chargement.
+    if (m == SystemMode::Idle) {
+        gpuLoad_.store(SampleGpuLoad(), std::memory_order_relaxed);
+    } else if (m == SystemMode::Gaming) {
+        if (mode_.load(std::memory_order_relaxed) != SystemMode::Gaming) gpuEma_ = -1.f;
+        if (++gpuTick_ % 2 == 0 || gpuEma_ < 0.f) {
+            const float g = SampleGpuLoad();
+            if (g >= 0.f) gpuEma_ = gpuEma_ < 0.f ? g : gpuEma_ + 0.25f * (g - gpuEma_);
+        }
+        gpuLoad_.store(gpuEma_, std::memory_order_relaxed);
+    } else {
+        gpuLoad_.store(-1.f, std::memory_order_relaxed);
+    }
 
     SetMode(m);
 
@@ -364,9 +378,16 @@ float ResourceGovernor::SampleGpuLoad() {
     if (PdhGetFormattedCounterArrayW(pdhGpuCounter_, PDH_FMT_DOUBLE, &bytes, &count, items) != ERROR_SUCCESS)
         return -1.f;
 
+    // Instances « pid_1234_luid_..._engtype_3D » : notre propre travail (le cerveau sur la carte) est exclu,
+    // sinon il se mesurerait lui-même et se croirait chassé par le jeu.
+    wchar_t self[32];
+    const int selfLen = swprintf(self, 32, L"pid_%lu_", GetCurrentProcessId());
     double total = 0.0;
-    for (DWORD i = 0; i < count; ++i)
-        if (items[i].FmtValue.CStatus == PDH_CSTATUS_VALID_DATA) total += items[i].FmtValue.doubleValue;
+    for (DWORD i = 0; i < count; ++i) {
+        if (items[i].FmtValue.CStatus != PDH_CSTATUS_VALID_DATA) continue;
+        if (selfLen > 0 && items[i].szName && wcsncmp(items[i].szName, self, static_cast<size_t>(selfLen)) == 0) continue;
+        total += items[i].FmtValue.doubleValue;
+    }
     return static_cast<float>(std::clamp(total / 100.0, 0.0, 1.0));
 }
 

@@ -16,6 +16,7 @@
 
 #include "core/MemoryDB.hpp"  // ChatTurn
 
+#include <chrono>
 #include <filesystem>
 #include <functional>
 #include <optional>
@@ -37,6 +38,7 @@ struct LocalBrainConfig {
     int contextTokens = 4096;
     int gpuLayers = 99;
     int threads = 4;
+    int ubatch = 512;  // en jeu sur la carte : 64, des calculs courts qui laissent passer les images du jeu
 };
 
 struct GenerateOptions {
@@ -66,6 +68,10 @@ public:
 
     // Bascule GPU <-> CPU (recharge si nécessaire). threads s'applique immédiatement.
     bool Configure(bool useGpu, int threads);
+    [[nodiscard]] bool UsesGpu() const noexcept { return useGpu_; }
+    [[nodiscard]] int Ubatch() const noexcept { return cfg_.ubatch; }
+    // Débit maximal (tokens/s, 0 = libre). En jeu : salves courtes et espacées, au rythme de la voix.
+    void SetPacing(int tokensPerSecond) noexcept { pacingTps_ = tokensPerSecond; }
 
     std::optional<std::string> Generate(const std::vector<ChatTurn>& messages, const GenerateOptions& opt);
 
@@ -81,6 +87,8 @@ private:
 
     LocalBrainConfig cfg_{};
     bool useGpu_ = true;
+    int pacingTps_ = 0;
+    void Pace(std::chrono::steady_clock::time_point& next) const;
     llama_model* model_ = nullptr;
     llama_context* ctx_ = nullptr;
     mtmd_context* mtmd_ = nullptr;

@@ -31,6 +31,8 @@
   "llmContext": 4096,
   "llmThreads": 4,
   "llmThreadsGaming": 2,
+  // En jeu, débit max du cerveau (tokens/s) : courtes salves au rythme de la voix au lieu d'occuper la carte. 0 = libre.
+  "llmGamingTokensPerSecond": 12,
   "llmUnloadAfterMinutes": 10,
 
   // Auto-entraînement pendant l'inactivité (processus isolé, tué dès que tu reviens).

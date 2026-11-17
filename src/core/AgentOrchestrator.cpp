@@ -284,8 +284,11 @@ void AgentOrchestrator::WorkerMain(std::stop_token st) {
             const bool gaming = mode_.load() == SystemMode::Gaming;
             // Entrée en jeu : tout est libéré (VRAM et RAM rendues au jeu), rien n'est rechargé tant qu'on ne lui
             // parle pas. Sortie : retour au périphérique du cerveau principal (rechargé à la 1re question).
-            if (gaming) d_.brain.Unload();
-            else d_.brain.Configure(cfg_.llmGpuLayers > 0, cfg_.llmThreads);
+            if (gaming) {
+                d_.brain.Unload();
+                gameGpuBusy_ = true;  // nouvelle partie : verdict refait sur les mesures de ce jeu
+                gpuVerdictAt_ = {};
+            } else d_.brain.Configure(cfg_.llmGpuLayers > 0, cfg_.llmThreads);
         }
         if (job) {
             std::stop_token jobStop;
@@ -390,9 +393,21 @@ bool AgentOrchestrator::EnsureBrain() {
     if (gaming) {
         wanted = cfg_.llmGamingModel;
         gpu = false;
-        // En jeu : un quart de la VRAM au plus, moins si le jeu en occupe beaucoup (mesure du moment).
+        // En jeu : carte ou processeur selon ce que le jeu sature, puis un quart de la VRAM au plus, moins si
+        // le jeu en occupe beaucoup (mesures du moment).
         if (cfg_.llmGamingAuto && d_.probe) {
-            const BrainChoice c = ModelPlanner::PlanGaming(d_.probe());
+            HardwareInfo hw = d_.probe();
+            hw.gameGpuLoad = d_.governor.Snapshot().gpuLoad;
+            const auto now = std::chrono::steady_clock::now();
+            if (gpuVerdictAt_ == std::chrono::steady_clock::time_point{} || now - gpuVerdictAt_ >= std::chrono::seconds(60)) {
+                const bool busy = ModelPlanner::GameSaturatesGpu(hw.gameGpuLoad, gameGpuBusy_);
+                if (busy != gameGpuBusy_ || gpuVerdictAt_ == std::chrono::steady_clock::time_point{})
+                    log::Info("Orchestrator: jeu {} (carte 3D {:.0f} %)", busy ? "limité par la carte graphique" : "limité par le processeur",
+                              hw.gameGpuLoad * 100.0);
+                gameGpuBusy_ = busy;
+                gpuVerdictAt_ = now;
+            }
+            const BrainChoice c = ModelPlanner::PlanGaming(hw, gameGpuBusy_);
             const auto dir = cfg_.llmGamingModel.parent_path();
             const ModelInfo* pick = nullptr;  // le plus gros DÉJÀ téléchargé qui tient dans le budget
             for (const auto& m : ModelPlanner::Brains())
@@ -405,7 +420,12 @@ bool AgentOrchestrator::EnsureBrain() {
         }
         if (!std::filesystem::exists(wanted)) wanted = cfg_.llmModel;  // rien de mieux : le principal
     }
-    if (d_.brain.IsLoaded() && d_.brain.ModelPath() == wanted) return true;
+    // En jeu : calculs courts (micro-lots de 64) et débit plafonné, sur la carte comme sur le processeur.
+    const int ubatch = gaming && gpu ? 64 : 512;
+    d_.brain.SetPacing(gaming ? cfg_.llmGamingTokensPerSecond : 0);
+    if (d_.brain.IsLoaded() && d_.brain.ModelPath() == wanted && d_.brain.UsesGpu() == gpu && d_.brain.Ubatch() == ubatch)
+        return true;
+    if (d_.brain.IsLoaded()) d_.brain.Unload();  // autre modèle, périphérique ou découpage : rechargement propre
     const bool small = wanted != cfg_.llmModel;
     LocalBrainConfig bc;
     bc.model = wanted;
@@ -414,6 +434,7 @@ bool AgentOrchestrator::EnsureBrain() {
     bc.contextTokens = cfg_.llmContext;
     bc.gpuLayers = 99;
     bc.threads = gaming ? cfg_.llmThreadsGaming : cfg_.llmThreads;
+    bc.ubatch = ubatch;
     d_.brain.Configure(gpu, bc.threads);
     return d_.brain.Load(bc);
 }

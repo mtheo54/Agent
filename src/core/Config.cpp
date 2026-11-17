@@ -65,6 +65,7 @@ CompanionConfig LoadConfig(const std::filesystem::path& jsonFile) {
         cfg.llmGpuLayers = j.value("llmGpuLayers", cfg.llmGpuLayers);
         cfg.llmThreads = j.value("llmThreads", cfg.llmThreads);
         cfg.llmThreadsGaming = j.value("llmThreadsGaming", cfg.llmThreadsGaming);
+        cfg.llmGamingTokensPerSecond = std::clamp(j.value("llmGamingTokensPerSecond", cfg.llmGamingTokensPerSecond), 0, 1000);
         cfg.llmUnloadAfterMinutes = j.value("llmUnloadAfterMinutes", cfg.llmUnloadAfterMinutes);
         cfg.userAgent = j.value("userAgent", cfg.userAgent);
         cfg.knowledgeMaxAgeDays = j.value("knowledgeMaxAgeDays", cfg.knowledgeMaxAgeDays);

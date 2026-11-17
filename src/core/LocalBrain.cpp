@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
+#include <thread>
 
 namespace companion {
 
@@ -57,7 +58,7 @@ bool LocalBrain::Load(const LocalBrainConfig& cfg) {
     cp.n_ctx = static_cast<uint32_t>(cfg.contextTokens);
     const bool vision = !cfg.mmproj.empty();
     cp.n_batch = vision ? 1024 : 512;  // une image fait plusieurs centaines de tokens
-    cp.n_ubatch = vision ? 1024 : 512;
+    cp.n_ubatch = vision ? 1024 : static_cast<uint32_t>(std::clamp(cfg.ubatch, 32, 512));
     cp.n_threads = cfg.threads;
     cp.n_threads_batch = cfg.threads;
     cp.no_perf = true;
@@ -204,10 +205,14 @@ std::optional<std::string> LocalBrain::Generate(const std::vector<ChatTurn>& mes
     }
     cachedTokens_.assign(tokens.begin(), tokens.begin() + static_cast<std::ptrdiff_t>(common));
 
+    // En jeu (débit limité) : le préremplissage avance par morceaux d'un micro-lot, avec une courte pause
+    // entre deux, pour ne jamais occuper la carte ou la mémoire plus de quelques millisecondes d'affilée.
+    const size_t step = pacingTps_ > 0 ? static_cast<size_t>(llama_n_ubatch(ctx_)) : 512;
     for (size_t i = common; i < tokens.size();) {
         if (opt.stop.stop_requested()) return std::nullopt;
+        if (pacingTps_ > 0 && i > common) std::this_thread::sleep_for(std::chrono::milliseconds(2));
         // On s'arrête pile à la fin de la personnalité pour en prendre la photo (une seule fois par personnalité).
-        size_t end = std::min(tokens.size(), i + 512);
+        size_t end = std::min(tokens.size(), i + step);
         const bool snapHere = sysLen > i && sysLen < end && (snapTokens_.size() != sysLen ||
                                                              !std::equal(snapTokens_.begin(), snapTokens_.end(), tokens.begin()));
         if (snapHere) end = sysLen;
@@ -308,8 +313,10 @@ std::string LocalBrain::SampleLoop(const GenerateOptions& opt, int nCtx, bool tr
 
     std::string out;
     char piece[256];
+    std::chrono::steady_clock::time_point next{};
     for (int i = 0; i < opt.maxTokens; ++i) {
         if (opt.stop.stop_requested()) break;
+        Pace(next);
         llama_token tok = llama_sampler_sample(smpl, ctx_, -1);
         if (llama_vocab_is_eog(vocab, tok)) break;
         const int len = llama_token_to_piece(vocab, tok, piece, sizeof(piece), 0, false);
@@ -323,6 +330,17 @@ std::string LocalBrain::SampleLoop(const GenerateOptions& opt, int nCtx, bool tr
     }
     llama_sampler_free(smpl);
     return out;
+}
+
+// Au plus pacingTps_ tokens par seconde : on dort jusqu'au créneau suivant. Les 6 premiers tokens partent
+// sans attendre (la 1re phrase arrive vite), ensuite le cerveau suit la voix au lieu de la devancer.
+void LocalBrain::Pace(std::chrono::steady_clock::time_point& next) const {
+    if (pacingTps_ <= 0) return;
+    const auto now = std::chrono::steady_clock::now();
+    const auto slot = std::chrono::microseconds(1'000'000 / pacingTps_);
+    if (next == std::chrono::steady_clock::time_point{} || now - next > slot * 6) next = now - slot * 6;
+    if (next > now) std::this_thread::sleep_until(next);
+    next += slot;
 }
 
 bool LocalBrain::HasVision() const {

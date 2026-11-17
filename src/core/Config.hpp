@@ -83,7 +83,10 @@ struct CompanionConfig {
     int llmContext = 4096;
     int llmGpuLayers = 99;       // hors jeu : tout sur la RX 9060 XT (Vulkan)
     int llmThreads = 4;
-    int llmThreadsGaming = 2;    // en jeu : CPU uniquement, 2 threads, 0 Mo de VRAM
+    int llmThreadsGaming = 2;    // en jeu : 2 threads (sur le cœur isolé)
+    // En jeu, le cerveau ne dépasse pas ce débit : la voix en lit ~5 par seconde, inutile d'aller plus vite.
+    // Il travaille par courtes salves espacées au lieu d'occuper la carte ou la mémoire en continu (0 = libre).
+    int llmGamingTokensPerSecond = 12;
     // En jeu : petit modèle sur CPU, chargé seulement si tu lui parles (VRAM laissée au jeu). Absent :
     // le modèle principal sur CPU (plus lent).
     std::filesystem::path llmGamingModel = L"auto";

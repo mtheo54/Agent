@@ -139,7 +139,8 @@ Dès qu'un jeu est détecté (processus connu ou appli plein écran) :
 | Ressource | Ce que fait le compagnon |
 |---|---|
 | **VRAM** | Le cerveau (≈ 5,7 Go) et la voix neuronale (≈ 1,5 Go) **quittent la carte graphique** immédiatement. Rien n'est rechargé tant que tu ne lui parles pas. |
-| **Cerveau** | Si tu lui parles en jeu : petit modèle (`llmGamingModel`, Qwen3.5 2B ≈ 1,3 Go) **sur CPU**, 2 threads. Une **photo de l'état** après sa personnalité est gardée sur disque (`%LOCALAPPDATA%\CompanionAI\brain-cache`, ~30 Mo) : 1er mot en **0,8 s au lieu de 15 s**, dès la 1re question de la partie (mesuré sur 2 threads). Après la partie, le gros modèle revient sur GPU à la première question. |
+| **Cerveau** | Si tu lui parles en jeu, Omnis regarde **ce que le jeu sature** (charge 3D de la carte, hors lui, moyenne sur ~8 s) : **jeu limité par la carte** (AAA, carte ≥ 85 %) → petit modèle **sur le processeur**, cœur isolé ; **jeu limité par le processeur** (LoL, Valorant, CS2 à haut FPS : la carte attend) → modèle du quart de VRAM **sur la carte**, en **priorité GPU basse** et en micro-lots de 64 tokens (des calculs de quelques ms, jamais une image du jeu bloquée longtemps). Sur le processeur, il volerait justement la bande passante mémoire dont un jeu à 240 fps a besoin. Verdict gardé au moins 60 s (pas de rechargement en boucle). Dans les deux cas, **débit plafonné** à 12 tokens/s (`llmGamingTokensPerSecond`) : la voix en lit ~5 par seconde, le cerveau travaille donc par courtes salves au lieu d'occuper la carte ou la mémoire en continu (mesuré : occupation divisée d'autant que le débit). Une **photo de l'état** après sa personnalité est gardée sur disque (`%LOCALAPPDATA%\CompanionAI\brain-cache`, ~30 Mo) : 1er mot en **0,8 s au lieu de 15 s**, dès la 1re question de la partie (mesuré sur 2 threads). Après la partie, le gros modèle revient sur GPU à la première question. |
+| **GPU** | Classe d'ordonnancement GPU du processus « sous la normale » (`D3DKMTSetProcessSchedulingPriorityClass`) : quand le jeu et lui veulent la carte au même moment, Windows sert le jeu d'abord. |
 | **CPU** | Processus **confiné au dernier cœur physique** (ses 2 threads SMT) : le jeu garde les 5 autres cœurs pour lui seul. Priorité « inférieure à la normale », EcoQoS (Windows 11). Le fil audio garde MMCSS : pas de craquements. |
 | **RAM** | Priorité mémoire basse et working set rogné à l'entrée en jeu : sous pression, ce sont ses pages qui partent, pas celles du jeu. |
 | **Affichage** | L'avatar est **caché** (une fenêtre posée sur le jeu peut le sortir du *flip indépendant* : latence, FPS) ; il n'apparaît que quand il parle ou t'écoute (`avatarInGame`). Caché, rien n'est dessiné et la boucle ne se réveille que 10 fois par seconde. |
@@ -243,7 +244,12 @@ conviennent (en arrière-plan, avec reprise si la connexion coupe ; tu peux joue
 
 **La règle** : hors jeu, le compagnon (cerveau + voix neuronale) prend **au plus la moitié de la VRAM** ;
 en jeu, le cerveau prend **au plus un quart**, et moins si le jeu en occupe déjà beaucoup (VRAM libre
-remesurée au moment où tu lui parles, 1 Go laissé au jeu). Pas assez ? Le cerveau passe sur le processeur.
+remesurée au moment où tu lui parles, 1 Go laissé au jeu). Pas assez, ou jeu qui sature déjà la carte ? Le
+cerveau passe sur le processeur.
+
+**Pourquoi pas plus gros, ni « MoE » ?** Le seul petit MoE plus malin que le 9B (Gemma 4 26B-A4B : 4 milliards
+de paramètres actifs sur 26) pèse 15 à 18 Go en 4 bits ; Gemma 4 12B fait jeu égal avec Qwen3.5 9B en étant
+plus lent. Le 9B reste le meilleur rapport intelligence / ressources pour ce que fait Omnis.
 
 | PC | Hors jeu | En jeu | Téléchargé |
 |---|---|---|---|
@@ -253,7 +259,7 @@ remesurée au moment où tu lui parles, 1 Go laissé au jeu). Pas assez ? Le cer
 | 4-6 Go | 2B (GPU) + Piper | 0.8B (GPU) | 1,9 Go |
 | 8 Go | 2B (GPU) + voix neuronale | 2B (GPU) | 2,7 Go |
 | 12 Go | 4B (GPU) + voix neuronale | 2B (GPU) | 5,4 Go |
-| 16 Go (RX 9060 XT) | **9B** (GPU) + voix neuronale | **4B** (GPU) ; gros jeu : 2B ou 0.8B | 9,8 Go |
+| 16 Go (RX 9060 XT) | **9B** (GPU) + voix neuronale | **4B** (GPU, prio basse) ; jeu qui sature la carte : 2B (CPU) | 11,6 Go |
 | 24 Go | 9B + voix neuronale | 9B | 7,1 Go |
 
 Modèles : Qwen3.5 0.8B / 2B / 4B / 9B (Q4_K_M, `unsloth/Qwen3.5-*-GGUF`, Apache 2.0), Whisper base ou tiny,
