@@ -9,6 +9,7 @@
 //  - Grammaire GBNF optionnelle : force le format [ESCALATE | ...] quand le modèle escalade.
 //  - Vision locale (optionnelle) : avec un modèle vision-langage (ex. Qwen2.5-VL-3B) et son
 //    projecteur mmproj, GenerateWithImage() analyse une capture d'écran SANS quitter le PC.
+//  - Adaptateur LoRA optionnel (lora.gguf, rapport §4.E) appliqué au chargement s'il est présent.
 //  - Unload() libère ~2 Go de RAM pour revenir au budget veille (< 80 Mo).
 //
 // Non thread-safe : à utiliser depuis un seul thread (celui de l'AgentOrchestrator).
@@ -32,6 +33,7 @@ namespace companion {
 struct LocalBrainConfig {
     std::filesystem::path model;
     std::filesystem::path mmproj;  // vide = pas de vision
+    std::filesystem::path lora;    // adaptateur LoRA (lora.gguf) appliqué s'il existe
     int contextTokens = 4096;
     int gpuLayers = 99;
     int threads = 4;

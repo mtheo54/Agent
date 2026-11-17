@@ -11,6 +11,11 @@
   "llmThreadsGaming": 2,
   "llmUnloadAfterMinutes": 10,
 
+  // Auto-entraînement pendant l'inactivité (processus isolé, tué dès que tu reviens).
+  "autoTraining": true,
+  "autoTrainingEveryMinutes": 120,
+  "trainerMemoryLimitMb": 6144,
+
   // Studio : capture ciblée sur ce processus, alertes niveau 0 (clipping, phase).
   "studioProcess": "FL64.exe",
   "studioAlerts": true,

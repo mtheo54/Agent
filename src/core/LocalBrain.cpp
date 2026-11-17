@@ -66,6 +66,16 @@ bool LocalBrain::Load(const LocalBrainConfig& cfg) {
         return false;
     }
     cachedTokens_.clear();
+    if (!cfg.lora.empty() && std::filesystem::exists(cfg.lora)) {
+        // Libéré automatiquement avec le modèle.
+        if (llama_adapter_lora* adapter = llama_adapter_lora_init(model_, log::Narrow(cfg.lora.wstring()).c_str())) {
+            float scale = 1.0f;
+            llama_set_adapters_lora(ctx_, &adapter, 1, &scale);
+            log::Info("LocalBrain: adaptateur LoRA appliqué");
+        } else {
+            log::Info("LocalBrain: lora.gguf incompatible avec ce modèle, ignoré");
+        }
+    }
     log::Info("LocalBrain: modèle chargé ({}, ctx {})", useGpu_ ? "GPU" : "CPU", cfg.contextTokens);
     return true;
 }

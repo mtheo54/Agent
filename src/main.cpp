@@ -23,6 +23,7 @@
 #include "core/PermissionGate.hpp"
 #include "core/ResourceGovernor.hpp"
 #include "modules/GameCoach.hpp"
+#include "modules/SelfTrainer.hpp"
 #include "modules/SystemControl.hpp"
 #include "network/ClaudeClient.hpp"
 #include "network/HttpClient.hpp"
@@ -36,9 +37,11 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <filesystem>
 #include <string>
+#include <string_view>
 
 using namespace companion;
 
@@ -71,7 +74,21 @@ void SetEcoQoS(bool on) {
 
 }  // namespace
 
-int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
+int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
+    // Processus enfant d'auto-entraînement (lancé par SelfTrainer dans un Job Object, priorité IDLE).
+    if (cmdLine && std::wstring_view(cmdLine).find(L"--trainer") != std::wstring_view::npos) {
+        SetPriorityClass(GetCurrentProcess(), PROCESS_MODE_BACKGROUND_BEGIN);  // E/S et mémoire basses
+        if (FAILED(CoInitializeEx(nullptr, COINIT_MULTITHREADED))) return 1;
+        const auto root = ExeDir();
+        CompanionConfig cfg = LoadConfig(root / L"companion.json");
+        if (cfg.llmModel.is_relative()) cfg.llmModel = root / cfg.llmModel;
+        if (cfg.loraAdapter.is_relative()) cfg.loraAdapter = root / cfg.loraAdapter;
+        const bool gpu = std::wstring_view(cmdLine).find(L"--gpu") != std::wstring_view::npos;
+        const int code = RunTrainerSession(cfg, DataDir(), gpu);
+        CoUninitialize();
+        return code;
+    }
+
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     SetEcoQoS(false);  // activé dynamiquement en mode Gaming
     if (FAILED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED))) return 1;
@@ -83,6 +100,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     CompanionConfig cfg = LoadConfig(root / L"companion.json");
     if (cfg.llmModel.is_relative()) cfg.llmModel = root / cfg.llmModel;
     if (!cfg.llmMmproj.empty() && cfg.llmMmproj.is_relative()) cfg.llmMmproj = root / cfg.llmMmproj;
+    if (cfg.loraAdapter.is_relative()) cfg.loraAdapter = root / cfg.loraAdapter;
 
     // --- Overlay + avatar ---------------------------------------------------
     OverlayWindow overlay;
@@ -120,7 +138,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     SystemControl system(governor, cfg.apps);
     WasapiLoopback loopback;
     OmnisAnalyzer analyzer;
-    AgentOrchestrator orchestrator({cfg, governor, voice, db, brain, gate, web, claude, coach, system, loopback, analyzer, dataDir});
+    SelfTrainer trainer(cfg, dataDir);
+    AgentOrchestrator orchestrator(
+        {cfg, governor, voice, db, brain, gate, web, claude, coach, system, loopback, analyzer, trainer, dataDir});
 
     std::atomic<SystemMode> mode{SystemMode::Interactive};
     governor.SetModeListener([&](SystemMode, SystemMode current) {
@@ -129,7 +149,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         orchestrator.OnModeChanged(current);
         SetEcoQoS(current == SystemMode::Gaming);
     });
-    voice.SetTranscriptCallback([&orchestrator](std::string text) { orchestrator.OnTranscript(std::move(text)); });
+    std::atomic<bool> waveRequested{true};  // il salue au démarrage
+    voice.SetTranscriptCallback([&orchestrator, &waveRequested](std::string text) {
+        std::string lower(text);
+        std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (lower.find("salut") != std::string::npos || lower.find("bonjour") != std::string::npos ||
+            lower.find("coucou") != std::string::npos || lower.find("hello") != std::string::npos)
+            waveRequested = true;  // il te rend ton salut
+        orchestrator.OnTranscript(std::move(text));
+    });
 
     orchestrator.Start();
     coach.Start();
@@ -194,6 +222,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         else if (m == SystemMode::Gaming) state = AvatarState::Gaming;
         else if (m == SystemMode::Studio) state = AvatarState::Studio;
         avatar.SetState(state);
+        if (waveRequested.exchange(false)) avatar.Wave();
         avatar.Update(dt, voice.VoiceRms());
 
         if (overlay.IsVisible()) {

@@ -1,6 +1,7 @@
 #include "core/AgentOrchestrator.hpp"
 
 #include "core/Log.hpp"
+#include "core/Persona.hpp"
 
 #include <objbase.h>
 
@@ -11,18 +12,6 @@
 
 namespace companion {
 namespace {
-
-// Le modèle local répond normalement, OU émet exactement une balise d'escalade (rapport §3).
-constexpr const char* kEscalateGrammar = R"GBNF(
-root      ::= [ ]* ( escalate | answer )
-escalate  ::= "[ESCALATE | type: " kind " | sujet: " subject "]"
-kind      ::= "WEB" | "VISION" | "REASON"
-subject   ::= [^\]\n] [^\]\n]*
-answer    ::= [^\[ \n] [^\x00]*
-)GBNF";
-
-// Balise d'escalade, crochets facultatifs (tolérance aux petits modèles).
-const std::regex kEscalateTag(R"(\[?ESCALATE\s*\|\s*type:\s*(WEB|VISION|REASON)\s*\|\s*sujet:\s*([^\]\n]+)\]?)");
 
 std::int64_t NowMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -84,7 +73,7 @@ void AgentOrchestrator::Stop() {
         worker_.request_stop();
         worker_.join();
     }
-    if (training_.joinable()) training_.join();  // le governor a déjà révoqué le bail
+    d_.trainer.Kill();  // normalement déjà fait par la révocation du bail par le governor
     d_.loopback.Stop();
     d_.analyzer.Stop();
 }
@@ -155,6 +144,13 @@ void AgentOrchestrator::WorkerMain(std::stop_token st) {
             job(jobStop);
             activity_ = AgentActivity::Idle;
         }
+        // Auto-entraînement : PC inactif (> 5 min, charge < 25 %), des sujets à apprendre, pas trop souvent.
+        if (d_.cfg.autoTraining && !d_.trainer.Running() &&
+            std::chrono::steady_clock::now() - lastAutoTraining_ > std::chrono::minutes(d_.cfg.autoTrainingEveryMinutes) &&
+            d_.governor.CanStartAutoTraining() &&
+            !d_.db.PendingTrainingTopics(1, d_.cfg.knowledgeMaxAgeDays * 86400LL, 86400).empty())
+            StartTraining(/*manual=*/false);
+
         // Budget RAM veille (< 80 Mo) : on décharge le modèle après une période sans conversation.
         if (d_.brain.IsLoaded() &&
             std::chrono::steady_clock::now() - lastBrainUse_ > std::chrono::minutes(d_.cfg.llmUnloadAfterMinutes)) {
@@ -193,19 +189,7 @@ void AgentOrchestrator::OnMixAlert(MixAlert alert, const MixMetrics& m) {
 }
 
 // ---------------------------------------------------------------------------
-std::string AgentOrchestrator::PersonaPrompt() const {
-    // Stable d'un appel à l'autre (aucune date, aucun contexte variable) : le cache KV le réutilise.
-    return std::format(
-        "Tu es {}, le compagnon IA de ton utilisateur ; tu vis sur son PC. Tu parles à voix haute : "
-        "réponds en 1 à 3 phrases courtes, en français parlé, en le tutoyant. Ton direct, avis tranchés, "
-        "surtout sur la direction artistique, le beatmaking, l'arrangement, le mixage et le jeu vidéo. "
-        "Jamais de formules robotiques (« en tant qu'IA », « n'hésite pas », « bien sûr ! »), pas de markdown.\n"
-        "Si la réponse dépend d'infos récentes ou précises que tu n'as pas (build, patch, stats, quête, "
-        "actualité), n'invente rien et réponds UNIQUEMENT : [ESCALATE | type: WEB | sujet: <recherche courte>]\n"
-        "Si tu dois voir l'écran : [ESCALATE | type: VISION | sujet: <ce qu'il faut regarder>]\n"
-        "Si c'est trop complexe pour toi : [ESCALATE | type: REASON | sujet: <résumé court>]",
-        d_.cfg.name);
-}
+std::string AgentOrchestrator::PersonaPrompt() const { return companion::PersonaPrompt(d_.cfg.name); }
 
 std::string AgentOrchestrator::LiveContext(const std::string& question) const {
     std::string ctx;
@@ -215,6 +199,9 @@ std::string AgentOrchestrator::LiveContext(const std::string& question) const {
         if (mix.seconds >= 1.f) ctx += mix.ToSummary() + "\n";
     }
     for (const auto& m : d_.db.SearchMemories(question, 3)) ctx += "Souvenir : " + m + "\n";
+    // Fiches distillées pendant l'auto-entraînement : c'est ce qui évite de ré-escalader.
+    for (const auto& l : d_.db.SearchLessons(question, 2))
+        if (MemoryDB::CoversSubject(question, l.subject)) ctx += "Fiche apprise (" + l.subject + ") : " + l.fiche + "\n";
     return ctx;
 }
 
@@ -225,6 +212,7 @@ bool AgentOrchestrator::EnsureBrain() {
     LocalBrainConfig bc;
     bc.model = d_.cfg.llmModel;
     bc.mmproj = d_.cfg.llmMmproj;
+    bc.lora = d_.cfg.loraAdapter;
     bc.contextTokens = d_.cfg.llmContext;
     bc.gpuLayers = d_.cfg.llmGpuLayers;
     bc.threads = gaming ? d_.cfg.llmThreadsGaming : d_.cfg.llmThreads;
@@ -272,7 +260,7 @@ std::string AgentOrchestrator::GenerateSpoken(const std::vector<ChatTurn>& messa
                            : d_.brain.Generate(messages, opt);
     lastBrainUse_ = std::chrono::steady_clock::now();
     if (!out) return {};
-    if (!isEscalation && std::regex_search(*out, kEscalateTag)) {
+    if (!isEscalation && std::regex_search(*out, EscalateTag())) {
         isEscalation = true;  // balise en fin de réponse : on escalade (et on ne la prononce pas)
         return Trim(*out);
     }
@@ -283,6 +271,18 @@ std::string AgentOrchestrator::GenerateSpoken(const std::vector<ChatTurn>& messa
 // ---------------------------------------------------------------------------
 void AgentOrchestrator::Handle(const std::string& text, std::stop_token stop) {
     log::Info("Orchestrator: « {} »", text);
+    struct ReportAfter {  // "Pendant ta pause, j'ai appris…" : dit après la réponse, une seule fois
+        AgentOrchestrator& self;
+        std::stop_token stop;
+        ~ReportAfter() {
+            if (stop.stop_requested()) return;
+            const auto r = self.d_.db.GetProfile("training.pending_report");
+            if (r && !r->empty()) {
+                self.d_.db.SetProfile("training.pending_report", "");
+                self.Say(*r);
+            }
+        }
+    } reportAfter{*this, stop};
     const auto history = d_.db.RecentMessages(8);  // avant d'ajouter la question courante
     d_.db.AddMessage("user", text);
     if (HandleLevel0(text, stop)) return;
@@ -302,7 +302,7 @@ bool AgentOrchestrator::HandleLevel0(const std::string& text, std::stop_token st
     const std::string lower = Lower(text);
 
     if (lower.find("entra") != std::string::npos && lower.find("toi") != std::string::npos) {  // « entraîne-toi »
-        StartTraining();
+        StartTraining(/*manual=*/true);
         return true;
     }
 
@@ -357,7 +357,7 @@ void AgentOrchestrator::HandleLevel1(const std::string& text, const std::vector<
     }
 
     std::smatch m;
-    if (!std::regex_search(out, m, kEscalateTag)) {
+    if (!std::regex_search(out, m, EscalateTag())) {
         Say("Je bloque là-dessus.");
         return;
     }
@@ -377,6 +377,11 @@ void AgentOrchestrator::ResearchLocally(const std::string& subject, const std::s
     const auto maxAge = static_cast<std::int64_t>(d_.cfg.knowledgeMaxAgeDays) * 86400;
     std::string sources;
     std::string origin;
+    for (const auto& l : d_.db.SearchLessons(subject + " " + question, 2)) {
+        if (!MemoryDB::CoversSubject(l.subject + " " + l.fiche, subject)) continue;
+        sources += "### Fiche apprise : " + l.subject + "\n" + l.fiche + "\n";
+        origin = "fiche-apprise";
+    }
     for (const auto& hit : d_.db.SearchKnowledge(subject, 3)) {
         if (hit.ageSeconds > maxAge || !Relevant(hit, subject)) continue;
         sources += "### " + hit.title + "\n" + WebResearcher::BestPassages(hit.content, subject + " " + question, 1500);
@@ -427,7 +432,7 @@ void AgentOrchestrator::AnswerFromSources(const std::string& question, const std
     const std::string answer = GenerateSpoken(messages, nullptr, stop, escalation);
     if (stop.stop_requested() || answer.empty()) return;
     d_.db.AddMessage("assistant", answer);
-    d_.db.LogEscalation("WEB", subject, origin, answer);
+    d_.db.LogEscalation("WEB", subject, origin, answer, question);
 }
 
 void AgentOrchestrator::EscalateCloud(const std::string& type, const std::string& subject,
@@ -436,14 +441,14 @@ void AgentOrchestrator::EscalateCloud(const std::string& type, const std::string
     if (!d_.cfg.cloudEnabled || !d_.claude.HasCredentials()) {
         Say(d_.brain.Available() ? "Je ne trouve pas en local, et Claude n'est pas configuré."
                                  : "Mon modèle local n'est pas installé, et Claude n'est pas configuré.");
-        d_.db.LogEscalation(type, subject, "non-resolu", "");
+        d_.db.LogEscalation(type, subject, "non-resolu", "", question);
         return;
     }
     if (d_.cfg.cloudAsksPermission &&
         !d_.gate.Request(PermissionScope::Cloud, "claude", "Je ne trouve pas en local. Je demande à Claude ?",
                          std::chrono::seconds(20), stop)) {
         if (!stop.stop_requested()) Say("Ok, on reste en local.");
-        d_.db.LogEscalation(type, subject, "refuse", "");
+        d_.db.LogEscalation(type, subject, "refuse", "", question);
         return;
     }
     activity_ = AgentActivity::Cloud;
@@ -463,24 +468,43 @@ void AgentOrchestrator::EscalateCloud(const std::string& type, const std::string
     }
     Say(reply.text);
     if (!jpeg) d_.db.AddKnowledge("claude", subject, reply.text);  // réponse validée : réutilisable en local
-    d_.db.LogEscalation(type, subject, "claude", reply.text);
+    d_.db.LogEscalation(type, subject, "claude", reply.text, question);
 }
 
-void AgentOrchestrator::StartTraining() {
-    auto token = d_.governor.BeginBackgroundWork(/*manualRequest=*/true);
-    if (!token) {
-        Say("Pas maintenant, un jeu ou FL Studio tourne.");
+void AgentOrchestrator::StartTraining(bool manual) {
+    if (d_.trainer.Running()) {
+        if (manual) Say("Je suis déjà en train de m'entraîner.");
         return;
     }
-    Say("Ok, je m'entraîne. Touche à quoi que ce soit et j'arrête.");
-    if (training_.joinable()) training_.join();  // bail précédent déjà terminé
-    // Placeholder du SelfTrainer (étape 4) : boucle interrompable qui vérifie le token toutes les 10 ms.
-    training_ = std::jthread([this, t = *token] {
-        ResourceGovernor::EnterBackgroundPriority();
-        while (!t.stop_requested()) Sleep(10);
-        ResourceGovernor::LeaveBackgroundPriority();
+    auto token = d_.governor.BeginBackgroundWork(manual);
+    if (!token) {
+        if (manual) Say("Pas maintenant, un jeu ou FL Studio tourne.");
+        return;
+    }
+    lastAutoTraining_ = std::chrono::steady_clock::now();
+    d_.brain.Unload();  // la session charge son propre modèle : pas de double occupation RAM/VRAM
+    if (manual) Say("Ok, je m'entraîne. Touche à quoi que ce soit et j'arrête.");
+
+    const bool started = d_.trainer.Start(*token, mode_.load() != SystemMode::Gaming, [this, manual](const TrainerOutcome& o) {
         d_.governor.EndBackgroundWork();
+        if (o.interrupted) {
+            log::Info("SelfTrainer: session interrompue");
+            return;
+        }
+        const std::string report = d_.db.GetProfile("training.report").value_or("");
+        if (!o.completed || report.empty()) return;
+        // Manuel : tu attends la réponse. Automatique : tu étais absent, on te le dira à ton retour.
+        if (manual) {
+            d_.voice.Speak(report);
+            d_.db.AddMessage("assistant", report);
+        } else {
+            d_.db.SetProfile("training.pending_report", report);
+        }
     });
+    if (!started) {
+        d_.governor.EndBackgroundWork();
+        if (manual) Say("Je n'arrive pas à lancer l'entraînement.");
+    }
 }
 
 }  // namespace companion
@@ -590,7 +614,7 @@ void AgentOrchestrator::HandleVision(const std::string& question, std::stop_toke
             return;
         }
         std::smatch m;
-        if (escalation && std::regex_search(out, m, kEscalateTag)) {
+        if (escalation && std::regex_search(out, m, EscalateTag())) {
             if (m[1].str() == "WEB") {  // ex. nom de quête lu à l'écran -> wiki en liste blanche
                 ResearchLocally(Trim(m[2].str()), question, stop);
                 return;

@@ -6,7 +6,9 @@
 //   memories     FTS5 — faits retenus sur toi et tes projets ("retiens que...")
 //   knowledge    FTS5 — connaissances apprises (pages de wiki, réponses de Claude) :
 //                une question déjà résolue est ensuite traitée 100 % en local
-//   escalations  journal des [ESCALATE] (et de leur résolution) — futur SelfTrainer
+//   escalations  journal des [ESCALATE] (et de leur résolution) — matière première du SelfTrainer
+//   lessons      FTS5 — fiches distillées par le SelfTrainer pendant l'inactivité du PC
+//   training_log sujets déjà travaillés (appris / partiel / échec / sans-permission)
 //   permissions  décisions mémorisées du Permission Gate ("toujours" / "jamais")
 
 #include <cstdint>
@@ -24,6 +26,18 @@ namespace companion {
 struct ChatTurn {
     std::string role;  // "system" | "user" | "assistant"
     std::string content;
+};
+
+struct Lesson {
+    std::string subject;
+    std::string question;
+    std::string fiche;
+};
+
+struct TrainingTopic {
+    std::string type;  // WEB | REASON
+    std::string subject;
+    std::string question;
 };
 
 struct KnowledgeHit {
@@ -61,7 +75,15 @@ public:
 
     // Escalades
     void LogEscalation(std::string_view type, std::string_view subject, std::string_view resolvedBy,
-                       std::string_view answer);
+                       std::string_view answer, std::string_view question = {});
+
+    // Auto-entraînement
+    // Sujets escaladés pas encore appris (ni re-tentés trop récemment), du plus récent au plus ancien.
+    std::vector<TrainingTopic> PendingTrainingTopics(int limit, std::int64_t relearnAfterSec, std::int64_t retryAfterSec);
+    void MarkTrained(std::string_view subject, std::string_view status);
+    void AddLesson(std::string_view subject, std::string_view question, std::string_view fiche);
+    std::vector<Lesson> SearchLessons(std::string_view query, int limit);
+    int CountLessons();
 
     // Permission Gate
     std::optional<bool> GetPermission(std::string_view scope, std::string_view target);
@@ -69,6 +91,8 @@ public:
 
     // Requête FTS5 sûre à partir d'un texte libre : mots >= 3 lettres, entre guillemets, en OR.
     static std::string ToFtsQuery(std::string_view text);
+    // Au moins la moitié des mots (>= 3 lettres) de `subject` figurent dans `text`.
+    static bool CoversSubject(std::string_view text, std::string_view subject);
 
 private:
     bool Exec(const char* sql);

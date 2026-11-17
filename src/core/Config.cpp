@@ -23,6 +23,9 @@ CompanionConfig LoadConfig(const std::filesystem::path& jsonFile) {
             const auto utf8 = j["llmMmproj"].get<std::string>();
             cfg.llmMmproj = std::filesystem::path(std::u8string(utf8.begin(), utf8.end()));
         }
+        cfg.autoTraining = j.value("autoTraining", cfg.autoTraining);
+        cfg.autoTrainingEveryMinutes = j.value("autoTrainingEveryMinutes", cfg.autoTrainingEveryMinutes);
+        cfg.trainerMemoryLimitMb = j.value("trainerMemoryLimitMb", cfg.trainerMemoryLimitMb);
         cfg.studioProcess = j.value("studioProcess", cfg.studioProcess);
         cfg.studioAlerts = j.value("studioAlerts", cfg.studioAlerts);
         if (j.contains("apps")) {

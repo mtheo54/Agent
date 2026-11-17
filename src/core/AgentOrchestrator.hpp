@@ -24,6 +24,7 @@
 #include "core/PermissionGate.hpp"
 #include "core/ResourceGovernor.hpp"
 #include "modules/GameCoach.hpp"
+#include "modules/SelfTrainer.hpp"
 #include "modules/SystemControl.hpp"
 #include "network/ClaudeClient.hpp"
 #include "network/WebResearcher.hpp"
@@ -58,6 +59,7 @@ struct OrchestratorDeps {
     SystemControl& system;
     WasapiLoopback& loopback;
     OmnisAnalyzer& analyzer;
+    SelfTrainer& trainer;
     std::filesystem::path dataDir;  // %LOCALAPPDATA%\CompanionAI (cache Data Dragon…)
 };
 
@@ -96,7 +98,7 @@ private:
                            const std::string& subject, std::stop_token stop);
     void EscalateCloud(const std::string& type, const std::string& subject, const std::string& question,
                        std::stop_token stop, const std::vector<std::uint8_t>* jpeg = nullptr);
-    void StartTraining();
+    void StartTraining(bool manual);
 
     std::string PersonaPrompt() const;
     std::string LiveContext(const std::string& question) const;
@@ -115,7 +117,7 @@ private:
     std::atomic<SystemMode> mode_{SystemMode::Interactive};
     std::atomic<bool> deviceDirty_{true};
     std::chrono::steady_clock::time_point lastBrainUse_{};
-    std::jthread training_;
+    std::chrono::steady_clock::time_point lastAutoTraining_{};
     std::atomic<std::int64_t> listenUntilMs_{0};  // écoute du mix à la demande (hors FL Studio)
 };
 

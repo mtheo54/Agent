@@ -1,8 +1,8 @@
 #pragma once
-// ProceduralAvatar : personnage chromé minimaliste généré en C++ (< 2000 triangles).
+// ProceduralAvatar : bonhomme chromé gris façon années 2000, généré en C++ (< 2000 triangles).
 //
-//   Tête flottante (ellipsoïde) + deux yeux émissifs, torse capsule effilé,
-//   bras en deux segments (épaule / coude). Texture MatCap : assets/textures/matcap_chrome.png
+//   Grosse tête sphérique sans visage, torse arrondi large aux épaules, bras épais en deux
+//   segments (épaule / coude). Geste de salut : bras levé, avant-bras qui oscille (Wave()). Texture MatCap : assets/textures/matcap_chrome.png
 //   (256x256, chargée via WIC) ; si elle manque, un chrome équivalent est généré en C++.
 //
 // Animation : respiration et flottement sinusoïdaux au repos ; rebond de tête, inclinaison
@@ -32,6 +32,7 @@ public:
     bool Initialize(ID3D11Device* device, const std::filesystem::path& shaderFile,
                     const std::filesystem::path& matcapFile);
     void SetState(AvatarState s) noexcept { state_ = s; }
+    void Wave(float seconds = 2.8f) noexcept { waveTimer_ = seconds; }  // coucou
     [[nodiscard]] AvatarState State() const noexcept { return state_; }
 
     void Update(float dtSeconds, float voiceRms) noexcept;
@@ -73,7 +74,7 @@ private:
 
     std::vector<Vertex> vertices_;
     std::vector<std::uint16_t> indices_;
-    Mesh head_, eye_, torso_, upperArm_, forearm_;
+    Mesh head_, torso_, upperArm_, forearm_;
 
     Microsoft::WRL::ComPtr<ID3D11Buffer> vb_, ib_, frameCb_, objectCb_;
     Microsoft::WRL::ComPtr<ID3D11VertexShader> vs_;
@@ -91,6 +92,8 @@ private:
     float rmsEnv_ = 0.f;
     float talk_ = 0.f;
     float opacity_ = 1.f;
+    float waveTimer_ = 0.f;
+    float waveAmt_ = 0.f;
     DirectX::XMFLOAT3 tint_{0.35f, 0.85f, 1.f};
 };
 

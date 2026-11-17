@@ -112,6 +112,7 @@ add_executable(CompanionAI WIN32
     src/core/ResourceGovernor.cpp
     src/modules/GameCoach.cpp
     src/modules/ScreenCapture.cpp
+    src/modules/SelfTrainer.cpp
     src/modules/SystemControl.cpp
     src/network/ClaudeClient.cpp
     src/network/HttpClient.cpp

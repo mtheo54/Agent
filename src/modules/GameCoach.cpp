@@ -211,6 +211,10 @@ bool GameCoach::DownloadStaticData(const std::filesystem::path& cacheDir) {
 
     const auto dir = cacheDir / L"ddragon" / std::filesystem::path(version);
     std::error_code ec;
+    if (std::filesystem::exists(dir / L"item.json") && std::filesystem::exists(dir / L"champion.json")) {
+        std::filesystem::last_write_time(dir / L"item.json", std::filesystem::file_time_type::clock::now(), ec);
+        return LoadStaticFiles(dir, version);  // patch déjà en cache : rien à télécharger
+    }
     std::filesystem::create_directories(dir, ec);
     for (const char* file : {"item.json", "champion.json"}) {
         const auto res = http_.Get(std::string(kDdragon) + "/cdn/" + version + "/data/fr_FR/" + file, 20000);

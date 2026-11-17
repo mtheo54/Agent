@@ -5,6 +5,28 @@
   `PermissionGate`, `WebResearcher` (wikis en liste blanche), `ClaudeClient` (dernier recours), `GameCoach` (LoL).
 - **Étape 3** : studio (`WasapiLoopback` + `OmnisAnalyzer`), vision (capture DXGI, analysée en local puis
   Claude Vision en secours), conseiller de build LoL local, `SystemControl` (volume, musique, applis).
+- **Étape 4** : `SelfTrainer` — auto-entraînement pendant l'inactivité du PC, dans un processus isolé ;
+  avatar « bonhomme chromé » gris, sans visage, qui salue.
+
+## Auto-entraînement (étape 4)
+
+Après 5 minutes sans clavier ni souris (charge CPU/GPU < 25 %), ou quand tu dis « entraîne-toi » :
+
+1. il relit les sujets qui ont provoqué un `[ESCALATE]` ;
+2. il collecte des sources sur les wikis de la liste blanche — **uniquement ceux pour lesquels tu as
+   répondu « toujours »**, puisque personne n'est là pour valider ;
+3. le modèle local rédige une **fiche** de faits clés, puis rejoue ta question d'origine avec elle : s'il
+   répond sans escalader, le sujet est appris et la prochaine fois tout reste en local ;
+4. à ton retour : « Pendant ta pause, j'ai appris 2 sujets : … ».
+
+La session tourne dans un processus enfant (`CompanionAI.exe --trainer`) en priorité IDLE, dans un Job
+Object avec plafond de RAM. Toucher le clavier ou la souris, lancer un jeu ou FL Studio, ou dire « pause »
+le **tue instantanément** (réseau, CPU et RAM libérés) ; chaque sujet terminé est déjà enregistré.
+
+**Pourquoi pas de LoRA entraîné sur place** : l'entraînement de llama.cpp est expérimental, en FP32 seulement,
+et demande ~24 Go pour un modèle 1B — un 3B ne tient pas dans 32 Go. Les exemples validés sont exportés dans
+`%LOCALAPPDATA%\CompanionAI\training\dataset.jsonl` (format chat) : si tu entraînes un LoRA ailleurs,
+dépose `lora.gguf` dans `assets/models/`, il est appliqué automatiquement.
 
 ## Cascade
 
@@ -29,6 +51,8 @@ Ce qui a été appris sur le web ou auprès de Claude est stocké : la même que
 | « Musique suivante », « mets la musique en pause » | Touches multimédia — **refusées pendant un jeu** (anti-cheat) |
 | « Lance Spotify » | Applis de la liste blanche (`apps` dans `companion.json`), après ta permission |
 | « Retiens que mon projet s'appelle… » | Mémoire SQLite, réutilisée dans les conversations |
+| « Entraîne-toi » | Lance une session d'auto-entraînement tout de suite |
+| « Salut ! » | Il te rend ton salut (il salue aussi au démarrage) |
 
 ## Dépendances (dans `external/`)
 

@@ -17,11 +17,12 @@ namespace {
 
 constexpr float kPi = std::numbers::pi_v<float>;
 
-// Proportions (unités arbitraires, Y vers le haut, l'avatar regarde vers -Z, la caméra).
-constexpr float kHeadY = 0.95f;
-constexpr float kHeadRadius = 0.42f;
-constexpr float kShoulderX = 0.43f, kShoulderY = 0.30f;
-constexpr float kUpperArmLen = 0.36f, kForearmLen = 0.32f;
+// Proportions du bonhomme chromé (unités arbitraires, Y vers le haut, il regarde vers -Z, la caméra) :
+// grosse tête sphérique à peine détachée du torse, torse arrondi large aux épaules, bras épais.
+constexpr float kHeadY = 0.88f;
+constexpr float kHeadRadius = 0.40f;
+constexpr float kShoulderX = 0.36f, kShoulderY = 0.22f;
+constexpr float kUpperArmLen = 0.30f, kForearmLen = 0.28f;
 
 XMFLOAT3 StateTint(AvatarState s) noexcept {
     switch (s) {
@@ -47,25 +48,23 @@ float SmoothStep(float e0, float e1, float x) noexcept {
 // Environnement "chrome Frutiger Aero" évalué pour une normale de la demi-sphère visible.
 XMFLOAT3 ChromeEnvironment(float x, float y) noexcept {
     const float z = std::sqrt(std::max(0.f, 1.f - x * x - y * y));
-    const float horizon = -0.08f + 0.12f * x;  // horizon légèrement incliné : plus organique
-    XMVECTOR c;
-    if (y > horizon) {
-        const float t = SmoothStep(horizon, 1.f, y);
-        c = XMVectorLerp(XMVectorSet(0.92f, 0.97f, 1.00f, 0), XMVectorSet(0.30f, 0.58f, 0.95f, 0), t);
-    } else {
-        const float t = SmoothStep(horizon, -1.f, y);
-        c = XMVectorLerp(XMVectorSet(0.10f, 0.12f, 0.16f, 0), XMVectorSet(0.52f, 0.55f, 0.60f, 0), t);
-    }
+    const float horizon = -0.30f + 0.10f * x;  // horizon bas et incliné : chrome gris uniforme
+    // Ciel et sol mélangés en douceur autour de l'horizon : aucune arête sur les flancs du torse.
+    const XMVECTOR sky = XMVectorLerp(XMVectorSet(0.74f, 0.75f, 0.77f, 0), XMVectorSet(0.40f, 0.41f, 0.44f, 0),
+                                      SmoothStep(horizon, 1.f, y));
+    const XMVECTOR ground = XMVectorLerp(XMVectorSet(0.16f, 0.16f, 0.18f, 0), XMVectorSet(0.34f, 0.35f, 0.37f, 0),
+                                         SmoothStep(horizon, -1.f, y));
+    XMVECTOR c = XMVectorLerp(ground, sky, SmoothStep(horizon - 0.15f, horizon + 0.15f, y));
     // Ligne d'horizon brillante
-    const float line = std::exp(-std::pow((y - horizon) * 28.f, 2.f));
-    c = XMVectorAdd(c, XMVectorReplicate(0.55f * line));
+    const float line = std::exp(-std::pow((y - horizon) * 18.f, 2.f));
+    c = XMVectorAdd(c, XMVectorReplicate(0.18f * line));
     // Spéculaires (key light haut-gauche + fill bas-droite)
     const XMVECTOR n = XMVectorSet(x, y, z, 0);
     const float key = std::pow(std::max(0.f, XMVectorGetX(XMVector3Dot(n, XMVector3Normalize(XMVectorSet(-0.5f, 0.65f, 0.6f, 0))))), 70.f);
     const float fill = std::pow(std::max(0.f, XMVectorGetX(XMVector3Dot(n, XMVector3Normalize(XMVectorSet(0.6f, -0.3f, 0.75f, 0))))), 18.f);
     c = XMVectorAdd(c, XMVectorReplicate(1.3f * key + 0.25f * fill));
     // Assombrissement du bord : donne le volume "métal liquide"
-    c = XMVectorScale(c, 0.65f + 0.35f * std::pow(z, 0.35f));
+    c = XMVectorScale(c, 0.50f + 0.50f * std::pow(z, 0.6f));
     XMFLOAT3 out;
     XMStoreFloat3(&out, XMVectorSaturate(c));
     return out;
@@ -159,13 +158,19 @@ ProceduralAvatar::Mesh ProceduralAvatar::AppendEllipsoid(float a, float b, float
 
 ProceduralAvatar::Mesh ProceduralAvatar::AppendCapsule(float rTop, float rBottom, float yTop, float yBottom,
                                                         int slices, int capRings) {
+    // Cône arrondi exact : deux sphères reliées par un flanc tangent aux deux. Avec rTop > rBottom,
+    // le flanc s'incline (forme en cloche) et sa normale pointe un peu vers le haut : l'angle de
+    // raccord n'est pas l'équateur mais pi/2 - alpha, avec sin(alpha) = (rTop - rBottom) / longueur.
+    const float len = std::max(yTop - yBottom, 1e-4f);
+    const float alpha = std::asin(std::clamp((rTop - rBottom) / len, -0.99f, 0.99f));
+    const float seam = 0.5f * kPi - alpha;  // angle (depuis le pôle haut) de la normale du flanc
     std::vector<ProfilePoint> profile;
-    for (int k = 0; k <= capRings; ++k) {  // hémisphère haut : pôle -> équateur
-        const float phi = 0.5f * kPi * static_cast<float>(k) / static_cast<float>(capRings);
+    for (int k = 0; k <= capRings; ++k) {  // calotte haute : pôle -> raccord
+        const float phi = seam * static_cast<float>(k) / static_cast<float>(capRings);
         profile.push_back({rTop * std::sin(phi), yTop + rTop * std::cos(phi), std::sin(phi), std::cos(phi)});
     }
-    for (int k = 0; k <= capRings; ++k) {  // hémisphère bas : équateur -> pôle
-        const float phi = 0.5f * kPi * (1.f + static_cast<float>(k) / static_cast<float>(capRings));
+    for (int k = 0; k <= capRings; ++k) {  // calotte basse : raccord -> pôle
+        const float phi = seam + (kPi - seam) * static_cast<float>(k) / static_cast<float>(capRings);
         profile.push_back({rBottom * std::sin(phi), yBottom + rBottom * std::cos(phi), std::sin(phi), std::cos(phi)});
     }
     return Lathe(profile, slices);
@@ -174,11 +179,10 @@ ProceduralAvatar::Mesh ProceduralAvatar::AppendCapsule(float rTop, float rBottom
 void ProceduralAvatar::BuildGeometry() {
     vertices_.clear();
     indices_.clear();
-    head_ = AppendEllipsoid(kHeadRadius, kHeadRadius * 0.95f, kHeadRadius, 20, 14);
-    eye_ = AppendEllipsoid(0.065f, 0.105f, 0.03f, 10, 6);
-    torso_ = AppendCapsule(0.33f, 0.24f, 0.12f, -0.34f, 16, 4);              // torse adouci, effilé
-    upperArm_ = AppendCapsule(0.085f, 0.075f, 0.f, -kUpperArmLen, 10, 3);    // pivot = épaule
-    forearm_ = AppendCapsule(0.075f, 0.065f, 0.f, -kForearmLen, 10, 3);      // pivot = coude
+    head_ = AppendEllipsoid(kHeadRadius, kHeadRadius, kHeadRadius, 22, 16);  // sans visage
+    torso_ = AppendCapsule(0.42f, 0.28f, 0.02f, -0.45f, 18, 5);               // en cloche : épaules larges
+    upperArm_ = AppendCapsule(0.15f, 0.14f, 0.f, -kUpperArmLen, 12, 4);       // pivot = épaule
+    forearm_ = AppendCapsule(0.14f, 0.13f, 0.f, -kForearmLen, 12, 4);         // pivot = coude
     log::Info("Avatar: {} triangles, {} sommets", TriangleCount(), vertices_.size());
 }
 
@@ -306,6 +310,8 @@ void ProceduralAvatar::Update(float dt, float voiceRms) noexcept {
     tint_.y = Smooth(tint_.y, target.y, dt, 0.25f);
     tint_.z = Smooth(tint_.z, target.z, dt, 0.25f);
     opacity_ = Smooth(opacity_, state_ == AvatarState::Gaming ? 0.55f : 1.f, dt, 0.3f);
+    waveTimer_ = std::max(0.f, waveTimer_ - dt);
+    waveAmt_ = Smooth(waveAmt_, waveTimer_ > 0.f ? 1.f : 0.f, dt, 0.18f);
 }
 
 void ProceduralAvatar::DrawPart(ID3D11DeviceContext* ctx, const Mesh& mesh, FXMMATRIX world, float emissive,
@@ -326,7 +332,7 @@ void ProceduralAvatar::Render(ID3D11DeviceContext* ctx, float aspect) {
     const float floatY = 0.035f * std::sin(2.f * kPi * 0.18f * t);
 
     // Caméra
-    const XMMATRIX view = XMMatrixLookAtLH(XMVectorSet(0.f, 0.42f, -4.4f, 1.f), XMVectorSet(0.f, 0.36f, 0.f, 1.f),
+    const XMMATRIX view = XMMatrixLookAtLH(XMVectorSet(0.f, 0.36f, -4.4f, 1.f), XMVectorSet(0.f, 0.33f, 0.f, 1.f),
                                            XMVectorSet(0.f, 1.f, 0.f, 0.f));
     const XMMATRIX proj = XMMatrixPerspectiveFovLH(XMConvertToRadians(34.f), aspect, 0.1f, 20.f);
 
@@ -336,7 +342,7 @@ void ProceduralAvatar::Render(ID3D11DeviceContext* ctx, float aspect) {
         XMStoreFloat4x4(&cb->viewProj, XMMatrixTranspose(view * proj));
         XMStoreFloat4x4(&cb->view, XMMatrixTranspose(view));
         cb->tint = {tint_.x, tint_.y, tint_.z, 1.f};
-        cb->params = {t, talk_, 0.9f + 0.6f * talk_, opacity_};
+        cb->params = {t, talk_, 0.45f + 0.4f * talk_, opacity_};  // liseré d'état discret sur le chrome gris
         ctx->Unmap(frameCb_.Get(), 0);
     }
 
@@ -364,7 +370,7 @@ void ProceduralAvatar::Render(ID3D11DeviceContext* ctx, float aspect) {
 
     // Torse : respiration (gonfle en Y, s'affine légèrement en XZ)
     const XMMATRIX torso = XMMatrixScaling(1.f - 0.01f * breath, 1.f + 0.02f * breath, 1.f - 0.01f * breath) * body;
-    DrawPart(ctx, torso_, torso, 0.f, 0.35f);
+    DrawPart(ctx, torso_, torso, 0.f, 0.12f);
 
     // Tête flottante : rebond sur la voix, inclinaison conversationnelle
     const float bounce = 0.06f * talk_ * std::abs(std::sin(t * 9.f)) + 0.015f * breath;
@@ -372,29 +378,25 @@ void ProceduralAvatar::Render(ID3D11DeviceContext* ctx, float aspect) {
     const float nod = -0.04f + 0.08f * talk_ * std::sin(t * 6.1f);
     const XMMATRIX head = XMMatrixRotationRollPitchYaw(nod, 0.12f * std::sin(t * 0.7f), tilt) *
                           XMMatrixTranslation(0.f, kHeadY + bounce, 0.f) * body;
-    DrawPart(ctx, head_, head, 0.f, 0.3f);
+    DrawPart(ctx, head_, head, 0.f, 0.1f);
 
-    // Yeux : clignement toutes les ~4 s
-    const float blinkPhase = std::fmod(t, 4.2f);
-    const float blink = blinkPhase < 0.12f ? 0.15f : 1.f;
+    // Bras : épaule (roll = écartement, pitch = balancier) puis coude.
+    // Salut : le bras droit du personnage (à gauche de l'écran) se lève, l'avant-bras oscille.
     for (float side : {-1.f, 1.f}) {
-        const XMMATRIX eye = XMMatrixScaling(1.f, blink, 1.f) *
-                             XMMatrixTranslation(side * 0.15f, 0.04f, -kHeadRadius * 0.93f) * head;
-        DrawPart(ctx, eye_, eye, 1.f, 0.f);
-    }
-
-    // Bras : épaule (roll = écartement, pitch = balancier) puis coude
-    for (float side : {-1.f, 1.f}) {
+        const float w = side < 0.f ? waveAmt_ : 0.f;
+        const float rest = 1.f - w;
         const float phase = side * 1.7f;
-        const float spread = 0.20f + 0.35f * talk_ + 0.02f * breath;
-        const float swing = 0.55f * talk_ * std::sin(t * 6.f + phase) + 0.04f * std::sin(t * 0.9f + phase);
-        const float elbow = 0.25f + talk_ * (0.6f + 0.4f * std::sin(t * 7.f + phase));
+        const float spread = (0.10f + 0.30f * talk_ + 0.02f * breath) * rest + 2.6f * w;
+        const float swing = (0.45f * talk_ * std::sin(t * 6.f + phase) + 0.04f * std::sin(t * 0.9f + phase)) * rest;
+        const float elbow = (0.2f + talk_ * (0.5f + 0.4f * std::sin(t * 7.f + phase))) * rest;
+        const float waveForearm = w * (0.5f + 0.38f * std::sin(t * 9.f));  // avant-bras vertical qui bat
 
         const XMMATRIX shoulder = XMMatrixRotationX(swing) * XMMatrixRotationZ(side * spread) *
                                   XMMatrixTranslation(side * kShoulderX, kShoulderY, 0.f) * body;
-        DrawPart(ctx, upperArm_, shoulder, 0.f, 0.35f);
-        const XMMATRIX forearm = XMMatrixRotationX(elbow) * XMMatrixTranslation(0.f, -kUpperArmLen, 0.f) * shoulder;
-        DrawPart(ctx, forearm_, forearm, 0.f, 0.35f);
+        DrawPart(ctx, upperArm_, shoulder, 0.f, 0.12f);
+        const XMMATRIX forearm = XMMatrixRotationX(elbow) * XMMatrixRotationZ(side * waveForearm) *
+                                 XMMatrixTranslation(0.f, -kUpperArmLen, 0.f) * shoulder;
+        DrawPart(ctx, forearm_, forearm, 0.f, 0.12f);
     }
 }
 

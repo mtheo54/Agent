@@ -49,6 +49,12 @@ struct CompanionConfig {
     int knowledgeMaxAgeDays = 14;
     std::string userAgent = "CompanionAI/0.3 (desktop assistant)";  // au-delà, une info web en cache est re-vérifiée (patchs LoL)
 
+    // --- Auto-entraînement (rapport §4.E) ---
+    bool autoTraining = true;               // après 5 min d'inactivité, charge < 25 %
+    int autoTrainingEveryMinutes = 120;     // au plus une session automatique par période
+    int trainerMemoryLimitMb = 6144;        // plafond RAM du processus d'entraînement (Job Object)
+    std::filesystem::path loraAdapter = L"assets/models/lora.gguf";  // appliqué s'il existe
+
     // --- Studio (héritage OMNIS) ---
     std::string studioProcess = "FL64.exe";  // capture audio ciblée sur ce processus
     bool studioAlerts = true;                // niveau 0 : "ça clippe", problème de phase
