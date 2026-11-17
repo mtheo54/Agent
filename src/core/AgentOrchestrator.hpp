@@ -97,7 +97,10 @@ public:
     }
     void OnModeChanged(SystemMode mode);
     // Retour devant le PC après une absence (fin du mode veille) : bruitage + petit mot.
-    void OnComeback();  // thread-safe
+    void OnComeback();
+    // Moments émotionnels (voix + mots) -> bruitages choisis ; appelé sur le thread de l'orchestrateur.
+    void EmotionEvents(const std::string& text, const EmotionEstimate& e);
+    std::map<std::string, std::chrono::steady_clock::time_point> lastEmotionSound_;  // thread-safe
 
     [[nodiscard]] AgentActivity Activity() const noexcept { return activity_.load(); }
     [[nodiscard]] EmotionEstimate LastEmotion() const {

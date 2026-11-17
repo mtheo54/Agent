@@ -81,6 +81,26 @@ std::optional<std::pair<std::string, std::string>> ParseMyInstantsFirst(const st
     return std::make_pair(path, std::regex_search(rest, t, title) ? t[1].str() : path);
 }
 
+std::optional<std::pair<std::string, std::string>> ParseMyInstantsBest(const std::string& html, const std::string& query) {
+    static const std::regex item(R"(play\('(/media/sounds/[^']+\.mp3)'[\s\S]*?class="instant-link[^"]*"[^>]*>([^<]+)<)");
+    const std::string q = Soundboard::Key(query);
+    std::vector<std::string> words;
+    for (size_t p = 0; p < q.size();) {
+        const size_t e = std::min(q.find(' ', p), q.size());
+        if (e > p) words.push_back(q.substr(p, e - p));
+        p = e + 1;
+    }
+    std::optional<std::pair<std::string, std::string>> first;
+    int n = 0;
+    for (auto it = std::sregex_iterator(html.begin(), html.end(), item); it != std::sregex_iterator() && n < 20; ++it, ++n) {
+        std::pair<std::string, std::string> hit{(*it)[1].str(), (*it)[2].str()};
+        if (!first) first = hit;
+        const std::string t = Soundboard::Key(hit.second);
+        if (std::ranges::all_of(words, [&](const std::string& w) { return t.find(w) != std::string::npos; })) return hit;
+    }
+    return first ? first : ParseMyInstantsFirst(html);
+}
+
 std::optional<std::string> Soundboard::Fetch(const std::string& query, std::string* error) {
     const std::string key = KeyFor(query);
     if (key.empty()) return std::nullopt;
@@ -98,7 +118,8 @@ std::optional<std::string> Soundboard::Fetch(const std::string& query, std::stri
         if (error) *error = page.error.empty() ? "recherche impossible" : page.error;
         return std::nullopt;
     }
-    const auto hit = ParseMyInstantsFirst(page.body);
+    // Page d'un son précis : son 1er lecteur ; recherche : le résultat dont le titre colle aux mots cherchés.
+    const auto hit = IsUrl(query) ? ParseMyInstantsFirst(page.body) : ParseMyInstantsBest(page.body, query);
     if (!hit) {
         if (error) *error = "aucun son trouvé";
         return std::nullopt;

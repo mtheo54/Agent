@@ -52,5 +52,7 @@ private:
 
 // Parse une page de recherche myinstants : (chemin du mp3, titre) du premier résultat.
 std::optional<std::pair<std::string, std::string>> ParseMyInstantsFirst(const std::string& html);
+// Meilleur résultat pour une recherche : le 1er dont le titre contient tous les mots cherchés, sinon le 1er.
+std::optional<std::pair<std::string, std::string>> ParseMyInstantsBest(const std::string& html, const std::string& query);
 
 }  // namespace companion

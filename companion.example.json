@@ -8,11 +8,14 @@
   "pitchLife": 0.5,
   // Bruitage (soundboard myinstants, « installe les sons ») joué à des moments précis ; "" = aucun.
   "soundEvents": {
-    "greeting": "anime wow", "clipping": "fahhh", "rageBaitBite": "emotional damage",
+    "greeting": "anime wow", "clipping": "fahhh", "rageBaitBite": "https://www.myinstants.com/fr/instant/cyril-hanouna-92711/",
     "gameDeath": "oh no", "gameWin": "c'est vrai", "error": "windows error",
     "blunder": "", "trainingDone": "suspense", "studioStart": "",
     "comeback": "https://www.myinstants.com/fr/instant/salut-cest-frank-leboeuf-complet-97159/",
-    "goodbye": "windows shutdown", "gameStart": "emotional damage"
+    "goodbye": "windows shutdown", "gameStart": "emotional damage",
+    "rageInGame": "fahhh", "hype": "https://www.myinstants.com/fr/instant/hava-nagila-30752/",
+    "userLaugh": "https://www.myinstants.com/fr/instant/cyril-hanouna-92711/", "insulted": "sad violin",
+    "sad": "soft piano", "tiredNight": "yawn", "userSurprise": ""
   },
   "neuralVoiceInGame": false,
   "neuralVoiceDevice": "",

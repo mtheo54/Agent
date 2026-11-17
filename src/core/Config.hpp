@@ -40,7 +40,7 @@ struct CompanionConfig {
     std::map<std::string, std::string> soundEvents{
         {"greeting", "anime wow"},        // démarrage
         {"clipping", "fahhh"},            // le mix clippe (studio)
-        {"rageBaitBite", "emotional damage"},  // il a mordu au rage bait
+        {"rageBaitBite", "https://www.myinstants.com/fr/instant/cyril-hanouna-92711/"},  // il avoue son rage bait en rigolant
         {"gameDeath", "oh no"},           // mort / défaite en jeu
         {"gameWin", "c'est vrai"},        // kill, multi-kill, victoire
         {"error", "windows error"},       // bug, rien trouvé, réseau, crash
@@ -50,6 +50,14 @@ struct CompanionConfig {
         {"comeback", "https://www.myinstants.com/fr/instant/salut-cest-frank-leboeuf-complet-97159/"},  // retour après absence
         {"goodbye", "windows shutdown"},  // « bonne nuit », « à plus »
         {"gameStart", "emotional damage"},  // début d'une partie de LoL
+        // Émotions (voix + mots)
+        {"rageInGame", "fahhh"},          // tu rages EN JEU (jamais hors jeu)
+        {"hype", "https://www.myinstants.com/fr/instant/hava-nagila-30752/"},  // tu es hypé
+        {"userLaugh", "https://www.myinstants.com/fr/instant/cyril-hanouna-92711/"},  // tu rigoles
+        {"insulted", "sad violin"},       // tu l'insultes : il joue la victime
+        {"sad", "soft piano"},            // tu as l'air triste : son doux, puis il te console
+        {"tiredNight", "yawn"},           // fatigué après 1 h du matin
+        {"userSurprise", ""},             // tu es choqué : pas de son
     };
     float micEffect = 0.7f;         // effet « vrai micro » sur sa voix (0 … 1)
     float pitchLife = 0.5f;         // hauteur vivante : dérive et virages (0 … 1)

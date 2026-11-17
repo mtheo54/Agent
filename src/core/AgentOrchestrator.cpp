@@ -6,6 +6,7 @@
 #include <objbase.h>
 
 #include <algorithm>
+#include <ctime>
 #include <cctype>
 #include <format>
 #include <regex>
@@ -197,7 +198,68 @@ void AgentOrchestrator::OnTranscript(std::string text, EmotionEstimate emotion) 
         d_.governor.Pause();
         return;
     }
-    Post([this, text = std::move(text)](std::stop_token st) { Handle(text, st); });
+    Post([this, text = std::move(text), e](std::stop_token st) {
+        EmotionEvents(text, e);
+        Handle(text, st);
+    });
+}
+
+// Moments émotionnels. Chaque son a son délai minimum (pas de « fahhh » toutes les 10 s), et un seul son
+// par phrase : le plus parlant gagne. Tristesse : son doux et voix douce, jamais de vanne.
+void AgentOrchestrator::EmotionEvents(const std::string& text, const EmotionEstimate& e) {
+    using clock = std::chrono::steady_clock;
+    const auto now = clock::now();
+    const std::string t = Lower(text);
+    const auto fire = [&](const char* event, std::chrono::seconds cooldown) {
+        auto& last = lastEmotionSound_[event];
+        if (last != clock::time_point{} && now - last < cooldown) return false;
+        last = now;
+        PlayEventSound(event);
+        return true;
+    };
+    const bool sure = e.confidence >= 0.45f;
+    // 1) Il se fait insulter (sauf s'il vient de te rage bait : là c'est l'aveu, géré ailleurs)
+    const bool baited = baitPending_ && now - lastBait_ < std::chrono::minutes(3);
+    if (!baited && ContainsAny(t, {"t'es nul", "t'es con", "t'es débile", "t'es naze", "ta gueule", "ferme ta gueule",
+                                   "ferme-la", "t'es une merde", "connard", "t'es bête", "t'es inutile", "sale robot"})) {
+        fire("insulted", std::chrono::seconds(60));
+        return;
+    }
+    // 2) Tu rigoles (whisper écrit le rire : « haha », « (rires) »…)
+    if (ContainsAny(t, {"haha", "ahah", "hihi", "mdr", "ptdr", "(rire", "[rire", "rires)", "lol "})) {
+        fire("userLaugh", std::chrono::seconds(90));
+        return;
+    }
+    // 3) Rage : seulement en jeu
+    if (mode_.load() == SystemMode::Gaming && ((e.label == VoiceEmotion::Angry && sure) ||
+                                               (e.arousal > 0.6f && TextSentiment(text) < -0.4f))) {
+        fire("rageInGame", std::chrono::seconds(60));
+        return;
+    }
+    // 4) Hype
+    if ((e.label == VoiceEmotion::Joyful && e.arousal > 0.5f && sure) ||
+        ContainsAny(t, {"let's go", "lets go", "trop bien", "c'est incroyable", "on a gagné", "j'ai gagné", "je suis trop content"})) {
+        fire("hype", std::chrono::seconds(120));
+        return;
+    }
+    // 5) Tristesse : son doux (au plus toutes les 10 min)
+    if (e.label == VoiceEmotion::Sad && sure) {
+        fire("sad", std::chrono::minutes(10));
+        return;
+    }
+    // 6) Fatigue tard la nuit (1 h - 6 h)
+    if (e.label == VoiceEmotion::Tired || ContainsAny(t, {"je suis crevé", "je suis fatigué", "chui crevé", "je suis mort de fatigue"})) {
+        const std::time_t tt = std::time(nullptr);
+        std::tm local{};
+        localtime_s(&local, &tt);
+        if (local.tm_hour >= 1 && local.tm_hour < 6) {
+            fire("tiredNight", std::chrono::minutes(30));
+            return;
+        }
+    }
+    // 7) Surprise
+    if (ContainsAny(t, {"quoi ?!", "quoi !", "non mais sérieux", "c'est pas possible", "j'y crois pas"}))
+        fire("userSurprise", std::chrono::seconds(60));
 }
 
 void AgentOrchestrator::WorkerMain(std::stop_token st) {
