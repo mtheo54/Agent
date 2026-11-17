@@ -106,7 +106,10 @@ class EmotionShaper {
 public:
     // intensity 0 … 1.5 (réglage EXPRESSIVITÉ) ; 0 = voix brute.
     void Set(SpeakingStyle style, float intensity) noexcept;
-    void Reset() noexcept { pos_ = 0.0; prev_ = 0.f; havePrev_ = false; }
+    // Vie dans la hauteur, par phrase : dérive lente et aléatoire (± depth cents) et, de temps en temps, un
+    // virage (« boing » qui monte et redescend, plongée, attaque par en dessous). depth 0 = désactivé.
+    void PlanPitch(SpeakingStyle style, float depthCents, float bendChance, std::uint32_t& rng) noexcept;
+    void Reset() noexcept { pos_ = 0.0; prev_ = 0.f; havePrev_ = false; t_ = 0; }
     void Process(std::vector<float>& chunk);  // peut changer la longueur du morceau
 
 private:
@@ -114,6 +117,15 @@ private:
     float gain_ = 1.f;
     std::vector<float> out_;  // tampon réutilisé (échangé avec le morceau : aucune allocation en régime établi)
     double pos_ = 0.0;    // position fractionnaire dans le flux d'entrée (relative au morceau courant)
+    // Hauteur vivante
+    float depth_ = 0.f, driftNow_ = 0.f, driftTarget_ = 0.f, driftSlew_ = 0.f;
+    std::size_t t_ = 0, nextDrift_ = 0;
+    std::uint32_t prng_ = 1;
+    struct Bend { std::size_t at = 0; float cents = 0.f, upSec = 0.1f, downSec = 0.2f; };
+    std::array<Bend, 2> bends_{};
+    int nBends_ = 0;
+    int rate_ = 24000;
+    [[nodiscard]] float CentsAt(std::size_t t) noexcept;
     float prev_ = 0.f;
     bool havePrev_ = false;
 };

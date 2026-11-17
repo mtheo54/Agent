@@ -4,6 +4,8 @@
   "tone": 2,
   "neuralVoice": true,
   "voiceQuirks": 0.5,
+  "micEffect": 0.7,
+  "pitchLife": 0.5,
   "neuralVoiceInGame": false,
   "neuralVoiceDevice": "",
 

@@ -1,6 +1,7 @@
 #include "audio/VoiceEngine.hpp"
 
 #include "audio/Expressivity.hpp"
+#include "audio/VoiceColor.hpp"
 #include "audio/TextNormalizerFr.hpp"
 #include "core/Log.hpp"
 
@@ -384,6 +385,10 @@ struct VoiceEngine::Impl {
     VocalBank vocals;
     RobotGlitcher glitcher;
     EmotionShaper shaper;
+    VoiceColor color;                  // micro + bizarreries (thread de synthèse)
+    std::atomic<float> micEffect{0.7f};
+    std::atomic<float> pitchLife{0.5f};
+    float appliedMic = -1.f;
     std::atomic<float> emotionIntensity{1.f};
     std::atomic<float> systemLoad{0.f};  // charge CPU (ResourceGovernor) : un PC qui rame fait bugger le robot
     std::vector<float> chunkBuf;         // morceau de voix en cours de traitement (capacité conservée)
@@ -714,6 +719,10 @@ struct VoiceEngine::Impl {
         bool done = false;
         shaper.Set(style, emotionIntensity.load());
         shaper.Reset();
+        const float life = pitchLife.load();
+        shaper.PlanPitch(style, 40.f * life, 0.55f * life, vrng);  // défaut : ±20 cents, virage 1 phrase sur 4
+        SyncMic();
+        color.PlanWeird(style, quirks.load(), vrng);
         if (UseNeural()) {
             const float jitter = (NextRandom(vrng) - 0.5f) * 0.12f;  // jamais deux fois la même intonation
             done = neural.Speak(text, style, [&](std::span<const float> pcm) {
@@ -721,6 +730,7 @@ struct VoiceEngine::Impl {
                 chunkBuf.assign(pcm.begin(), pcm.end());  // tampon réutilisé : aucune allocation en régime établi
                 shaper.Process(chunkBuf);
                 glitcher.Process(chunkBuf);
+                color.Process(chunkBuf.data(), chunkBuf.size());
                 PushAudio(chunkBuf, generation);
                 return true;
             }, jitter);
@@ -733,6 +743,7 @@ struct VoiceEngine::Impl {
                 if (!tts->Synthesize(sentence, pcm, lengthMul * baseLength.load(), noiseMul)) continue;
                 auto out = Resample(pcm, tts->SampleRate(), static_cast<int>(outputRate));
                 glitcher.Process(out);
+                color.Process(out.data(), out.size());
                 PushAudio(out, generation);
             }
         }
@@ -740,10 +751,21 @@ struct VoiceEngine::Impl {
         if (glitcher.UsedBig()) lastGlitch = clock::now();
     }
 
+    void SyncMic() {
+        const float m = micEffect.load();
+        if (m != appliedMic) {
+            color.SetMic(m);
+            appliedMic = m;
+        }
+    }
+
     void PlayVocal(Vocal v, uint32_t generation) {
         if (v == Vocal::Glitch) return;  // traité comme un bug sur le texte suivant
         if (const auto* clip = vocals.Pick(v, vrng)) {
-            PushAudio(*clip, generation);
+            SyncMic();
+            chunkBuf.assign(clip->begin(), clip->end());
+            color.Process(chunkBuf.data(), chunkBuf.size(), /*weird=*/false);  // même micro que sa voix
+            PushAudio(chunkBuf, generation);
             // Une toux de robot finit parfois en grésillement.
             if (v == Vocal::Cough && NextRandom(vrng) < 0.5f) PushAudio(RobotGlitcher::Burst(*clip, static_cast<int>(outputRate), vrng), generation);
         }
@@ -814,7 +836,13 @@ struct VoiceEngine::Impl {
                 if (pcm.empty() && tts && tts->Synthesize(NormalizeForSpeechFr(phrase), pcm, lengthMul * baseLength.load(), noiseMul))
                     pcm = Resample(pcm, tts->SampleRate(), static_cast<int>(outputRate));
 #endif
-                if (!pcm.empty()) ready[category].push_back(std::move(pcm));
+                if (!pcm.empty()) {
+                    VoiceColor mic;  // même micro, appliqué une fois pour toutes
+                    mic.Prepare(static_cast<int>(outputRate));
+                    mic.SetMic(micEffect.load());
+                    mic.Process(pcm.data(), pcm.size(), false);
+                    ready[category].push_back(std::move(pcm));
+                }
             }
         }
         std::scoped_lock lock(backchannelMutex);
@@ -858,6 +886,7 @@ bool VoiceEngine::Initialize(const VoiceEngineConfig& cfg) {
     // de suite (Piper répond en attendant), les relances préparées ensuite profitent de la nouvelle voix.
     if (cfg.neuralEnabled) d.Post([&d] { d.neural.Load(d.cfg.neural); });
     d.glitcher.Prepare(static_cast<int>(d.outputRate));
+    d.color.Prepare(static_cast<int>(d.outputRate));
     d.chunkBuf.reserve(static_cast<size_t>(d.outputRate) * 2);
     d.vrng ^= static_cast<std::uint32_t>(GetTickCount64());
     d.Post([&d] {
@@ -1013,6 +1042,8 @@ void VoiceEngine::SetNeuralVoice(bool enabled, bool inGame) noexcept {
 }
 bool VoiceEngine::HasNeuralVoice() const noexcept { return impl_->neural.Ready(); }
 void VoiceEngine::SetQuirks(float quirks01) noexcept { impl_->quirks = std::clamp(quirks01, 0.f, 1.f); }
+void VoiceEngine::SetMicEffect(float amount01) noexcept { impl_->micEffect = std::clamp(amount01, 0.f, 1.f); }
+void VoiceEngine::SetPitchLife(float amount01) noexcept { impl_->pitchLife = std::clamp(amount01, 0.f, 1.f); }
 void VoiceEngine::SetSystemLoad(float load01) noexcept { impl_->systemLoad.store(std::clamp(load01, 0.f, 1.f), std::memory_order_relaxed); }
 void VoiceEngine::SetEmotionIntensity(float intensity) noexcept { impl_->emotionIntensity = std::clamp(intensity, 0.f, 1.5f); }
 

@@ -143,6 +143,7 @@ add_executable(CompanionAI WIN32
     src/audio/VoiceEngine.cpp
     src/audio/NeuralVoice.cpp
     src/audio/Expressivity.cpp
+    src/audio/VoiceColor.cpp
     src/audio/TextNormalizerFr.cpp
     src/render/OverlayWindow.cpp
     src/render/CartoonAvatar.cpp

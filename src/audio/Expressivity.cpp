@@ -389,9 +389,47 @@ void EmotionShaper::Set(SpeakingStyle style, float intensity) noexcept {
     gain_ = std::pow(10.f, db * intensity / 20.f);
 }
 
+void EmotionShaper::PlanPitch(SpeakingStyle style, float depthCents, float bendChance, std::uint32_t& rng) noexcept {
+    depth_ = std::max(0.f, depthCents);
+    prng_ = rng | 1u;
+    driftNow_ = driftTarget_ = 0.f;
+    nextDrift_ = 0;
+    nBends_ = 0;
+    if (style == SpeakingStyle::Soft || style == SpeakingStyle::Calm) bendChance *= 0.3f;  // posé : presque pas
+    // Attaque « par en dessous » en début de phrase (les humains attaquent rarement pile sur la note).
+    if (NextRandom(rng) < bendChance) bends_[static_cast<size_t>(nBends_++)] = {static_cast<std::size_t>(0.02f * rate_), -120.f - 80.f * NextRandom(rng), 0.001f, 0.18f};
+    // Virage au milieu : « boing » (monte puis redescend) ou plongée.
+    if (NextRandom(rng) < bendChance) {
+        const bool up = NextRandom(rng) < 0.6f;
+        bends_[static_cast<size_t>(nBends_++)] = {static_cast<std::size_t>((0.6f + 1.8f * NextRandom(rng)) * rate_),
+                                                  up ? 180.f + 140.f * NextRandom(rng) : -(220.f + 160.f * NextRandom(rng)),
+                                                  up ? 0.12f : 0.2f, up ? 0.22f : 0.3f};
+    }
+}
+
+float EmotionShaper::CentsAt(std::size_t t) noexcept {
+    // Dérive : nouvelle cible toutes les 0,25-0,6 s, rejointe en douceur (pas d'escalier audible).
+    if (depth_ > 0.f && t >= nextDrift_) {
+        driftTarget_ = (NextRandom(prng_) * 2.f - 1.f) * depth_;
+        const std::size_t span = static_cast<std::size_t>((0.25f + 0.35f * NextRandom(prng_)) * rate_);
+        driftSlew_ = (driftTarget_ - driftNow_) / static_cast<float>(span / 64 + 1);
+        nextDrift_ = t + span;
+    }
+    if (std::abs(driftTarget_ - driftNow_) > std::abs(driftSlew_)) driftNow_ += driftSlew_;
+    float c = driftNow_;
+    for (int i = 0; i < nBends_; ++i) {  // virages : montée en upSec, retour en downSec (forme lisse)
+        const auto& b = bends_[static_cast<size_t>(i)];
+        if (t < b.at) continue;
+        const float s = static_cast<float>(t - b.at) / static_cast<float>(rate_);
+        if (s < b.upSec) c += b.cents * (0.5f - 0.5f * std::cos(std::numbers::pi_v<float> * s / b.upSec));
+        else if (s < b.upSec + b.downSec) c += b.cents * (0.5f + 0.5f * std::cos(std::numbers::pi_v<float> * (s - b.upSec) / b.downSec));
+    }
+    return c;
+}
+
 void EmotionShaper::Process(std::vector<float>& chunk) {
     if (chunk.empty()) return;
-    if (std::abs(ratio_ - 1.0) < 1e-4) {
+    if (std::abs(ratio_ - 1.0) < 1e-4 && depth_ <= 0.f && nBends_ == 0) {
         for (auto& s : chunk) s = std::clamp(s * gain_, -1.f, 1.f);
         return;
     }
@@ -403,11 +441,15 @@ void EmotionShaper::Process(std::vector<float>& chunk) {
     // réallocation plus loin, même quand un bug allonge le morceau).
     out.reserve(std::max(chunk.capacity(), static_cast<size_t>(static_cast<double>(chunk.size()) / ratio_) + 2));
     const auto at = [&](long i) { return i < 0 ? (havePrev_ ? prev_ : chunk[0]) : chunk[static_cast<size_t>(i)]; };
+    double step = ratio_;
     while (pos_ < static_cast<double>(chunk.size()) - 1.0) {
+        if ((t_ & 63u) == 0)  // hauteur mise à jour tous les 64 échantillons (2,7 ms) : exp2 rare
+            step = ratio_ * std::exp2(static_cast<double>(CentsAt(t_)) / 1200.0);
         const long k = static_cast<long>(std::floor(pos_));
         const float f = static_cast<float>(pos_ - static_cast<double>(k));
         out.push_back(std::clamp((at(k) * (1.f - f) + at(k + 1) * f) * gain_, -1.f, 1.f));
-        pos_ += ratio_;
+        pos_ += step;
+        ++t_;
     }
     pos_ -= static_cast<double>(chunk.size());
     prev_ = chunk.back();
