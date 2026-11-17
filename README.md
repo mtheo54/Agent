@@ -62,7 +62,17 @@ Il a ses animations selon ce qu'il fait :
   énergie et débit, comparés à **ta voix habituelle** (apprise au fil des conversations, mémorisée).
   La voix donne l'agitation, les mots tranchent entre joie et colère. Il adapte alors sa réponse, sa
   diction (plus vive, plus douce ou plus posée) et sa posture.
-- **Tu peux lui couper la parole** en écoute continue : il se tait et t'écoute.
+- **Tu peux lui couper la parole** en écoute continue : il se tait et t'écoute (le décodeur s'arrête net).
+- **Voix neuronale** : Qwen3-TTS 0.6B (Apache 2.0) via qwentts.cpp, sur le GPU (Vulkan), en streaming.
+  Sa voix est **originale** : conçue par description (« jeune homme, accent parisien, timbre chaud et un peu
+  éraillé, ton complice de pote de studio ») avec Qwen3-TTS VoiceDesign, une prise par émotion dans
+  `assets/voice/omnis/` (`normal`, `bright`, `soft`, `calm` + transcription). L'empreinte vocale vient toujours
+  de `normal` (identité stable), l'intonation de la prise qui correspond à l'humeur. Les nombres et unités
+  sont écrits en toutes lettres avant lecture (« -4.1 LUFS » → « moins quatre virgule un LUFS »).
+  Pour lui donner une autre voix : remplace ces 4 fichiers (WAV 24 kHz mono + texte exact).
+- **En jeu**, la voix passe sur Piper (CPU) pour ne pas prendre de GPU au jeu ; les relances (« hmm… ») et
+  répliques courtes restent celles de la voix neuronale, pré-calculées. `neuralVoiceInGame: true` pour la garder.
+  Le grain 8-bit est discret par défaut (`fxIntensity` 0,15).
 - **Trois tons** (réglage `TON`, clé `tone`) : *poli*, *pote*, *sans filtre* (par défaut : argot, verlan,
   jargon de studio, un gros mot pour l'emphase, vannes ; jamais d'insulte envers toi, et pas de vannes si tu
   as l'air triste ou fatigué). Toutes ses répliques toutes faites (alertes, confirmations, relances)
@@ -145,11 +155,16 @@ Ce qui a été appris sur le web ou auprès de Claude est stocké : la même que
 | `whisper.cpp/` | `git clone https://github.com/ggml-org/whisper.cpp` | `COMPANION_WITH_WHISPER` |
 | `onnxruntime/` | release `onnxruntime-win-x64-<version>.zip`, décompressée | `COMPANION_WITH_ONNX` |
 | `espeak-ng/` | install espeak-ng (`include/`, `lib/`, `bin/espeak-ng.dll`) | `COMPANION_WITH_ESPEAK` |
+| `qwentts.cpp/` | `git clone --recurse-submodules https://github.com/ServeurpersoCom/qwentts.cpp` (MIT) | `COMPANION_WITH_QWENTTS` |
 
 espeak-ng n'apparaît pas dans la liste `external/` du rapport, mais Piper en a besoin pour
 convertir le texte en phonèmes. llama.cpp et whisper.cpp partagent une seule copie de ggml : clone-les à des dates proches.
 GPU : `COMPANION_LLM_VULKAN=ON` (défaut) demande le [Vulkan SDK](https://vulkan.lunarg.com/) ; sans lui,
 passe `-DCOMPANION_LLM_VULKAN=OFF` (cerveau sur CPU uniquement).
+
+qwentts.cpp a **son propre** ggml (fork incompatible avec celui de llama.cpp) : il est construit à part en
+`qwen.dll` (seules les fonctions `qt_*` sont exportées) et chargé au démarrage. Sans la DLL ou ses modèles,
+Omnis parle avec Piper, sans erreur.
 
 nlohmann_json et SQLite sont récupérés automatiquement (FetchContent). Chaque brique peut être désactivée
 (`-DCOMPANION_WITH_ONNX=OFF`…) : l'overlay et le governor fonctionnent sans aucun modèle.
@@ -161,7 +176,9 @@ nlohmann_json et SQLite sont récupérés automatiquement (FetchContent). Chaque
   + `mmproj-Qwen2.5-VL-3B-Instruct-f16.gguf` (dépôt `ggml-org/Qwen2.5-VL-3B-Instruct-GGUF`). Il remplace alors le
   modèle texte (`llmModel` + `llmMmproj`) : un seul modèle pour parler et voir.
 - `ggml-base-q5_1.bin` : Whisper base quantifié (~60 Mo)
-- `fr_FR-siwis-medium.onnx` + `fr_FR-siwis-medium.onnx.json` : voix Piper française
+- **Voix neuronale** (dépôt Hugging Face `Serveurperso/Qwen3-TTS-GGUF`) : `qwen-talker-0.6b-base-Q8_0.gguf`
+  (~1 Go) + `qwen-tokenizer-12hz-Q8_0.gguf` (~0,3 Go). Environ 1,5 Go de VRAM.
+- `fr_FR-siwis-medium.onnx` + `fr_FR-siwis-medium.onnx.json` : voix Piper française (repli, et voix en jeu)
 - `espeak-ng-data/` à côté de l'exécutable
 - `assets/avatar/rig.json` : le personnage 2D (fourni).
 

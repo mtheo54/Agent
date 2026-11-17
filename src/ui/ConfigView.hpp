@@ -25,6 +25,7 @@ struct ConfigStatus {
     bool brainReady = false;
     bool sttReady = false;
     bool ttsReady = false;
+    bool neuralVoice = false;      // voix neuronale chargée
     bool claudeKey = false;
     int voiceSamples = 0;          // phrases apprises pour la voix habituelle
     std::string emotion = "neutre";
@@ -58,7 +59,7 @@ public:
 
 private:
     enum class Field { None, Name, Scale, Opacity, Corner, Expressiveness, Fx, Rate, Backchannels, BargeIn,
-                       Emotion, Listen, Tone, AutoTraining, Cloud, CloudAsk, Save, Cancel, Close, Expression };
+                       Emotion, Listen, Tone, Engine, AutoTraining, Cloud, CloudAsk, Save, Cancel, Close, Expression };
     struct Hit {
         D2D1_RECT_F r;
         Field field;

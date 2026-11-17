@@ -17,6 +17,9 @@
 #include <functional>
 #include <map>
 #include <vector>
+#include "audio/NeuralVoice.hpp"
+#include "audio/SpeakingStyle.hpp"
+
 #include <memory>
 #include <string>
 
@@ -30,6 +33,10 @@ struct VoiceEngineConfig {
     int sttThreads = 4;        // hors jeu
     int sttThreadsGaming = 2;  // en jeu : on laisse 4 cœurs au jeu
     int ttsThreads = 2;
+    // Voix neuronale (Qwen3-TTS, GPU) ; Piper = repli (modèles absents, ou en jeu pour ne pas toucher au GPU).
+    NeuralVoiceConfig neural{};
+    bool neuralEnabled = true;
+    bool neuralInGame = false;  // la voix neuronale utilise le GPU : désactivée en jeu par défaut (0 % de FPS)
     VoiceFXConfig fx{};
 };
 
@@ -37,14 +44,6 @@ struct VoiceEngineConfig {
 enum class ListenMode : std::uint8_t {
     PushToTalk,     // BeginListening()/EndListening()
     VoiceActivity,  // micro ouvert en continu, segments de parole détectés automatiquement
-};
-
-// Style de diction appliqué à la synthèse : vitesse et expressivité de Piper, grain 8-bit.
-enum class SpeakingStyle : std::uint8_t {
-    Normal,
-    Bright,  // enthousiaste : un peu plus vif et plus expressif
-    Soft,    // doux : plus lent, plus posé, moins de grain
-    Calm,    // apaisant : posé, régulier
 };
 
 class VoiceEngine {
@@ -90,7 +89,9 @@ public:
     // --- Expression ---
     void SetMood(float mood01) noexcept;           // grain 8-bit de base (les styles le modulent)
     [[nodiscard]] float VoiceRms() const noexcept;  // pour CartoonAvatar (thread-safe)
-    void SetGamingMode(bool gaming) noexcept;       // réduit les threads STT
+    void SetGamingMode(bool gaming) noexcept;       // réduit les threads STT, voix Piper (sauf neuralInGame)
+    void SetNeuralVoice(bool enabled, bool inGame) noexcept;
+    [[nodiscard]] bool HasNeuralVoice() const noexcept;  // voix neuronale chargée
 
     [[nodiscard]] bool HasStt() const noexcept;
     [[nodiscard]] bool HasTts() const noexcept;

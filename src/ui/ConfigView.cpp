@@ -358,11 +358,13 @@ void ConfigView::Render(ID2D1DeviceContext* ctx, float scale) {
         Slider(L + 22, y, LW - 44, L"GRAIN 8-BIT", SliderValue(Field::Fx), std::format(L"{:.0f} %", cfg_.fxIntensity * 100), Field::Fx);
         y += 30;
         Slider(L + 22, y, LW - 44, L"DÉBIT", SliderValue(Field::Rate), std::format(L"x{:.2f}", 1.f / cfg_.speechRate), Field::Rate);
-        y += 30;
+        y += 28;
+        Segmented(L + 22, y, L"MOTEUR", {L"neuronale", L"piper"}, cfg_.neuralVoice ? 0 : 1, Field::Engine);
+        y += 28;
         Segmented(L + 22, y, L"ÉCOUTE", {L"push-to-talk", L"continue"}, cfg_.voiceActivity ? 1 : 0, Field::Listen);
-        y += 30;
+        y += 28;
         Segmented(L + 22, y, L"TON", {L"poli", L"pote", L"sans filtre"}, cfg_.tone, Field::Tone);
-        y += 34;
+        y += 32;
         Leader(L + 22, y, LW - 44, L"relances orales (« hmm… »)", cfg_.backchannels ? L"activé" : L"désactivé",
                cfg_.backchannels ? "green" : "muted", Field::Backchannels);
         y += 22;
@@ -424,7 +426,8 @@ void ConfigView::Render(ID2D1DeviceContext* ctx, float scale) {
         Leader(R + 4, y, RW - 8, L"cerveau local", status_.brainReady ? L"prêt" : L"modèle absent",
                status_.brainReady ? "green" : "amber", Field::None);
         y += 22;
-        Leader(R + 4, y, RW - 8, L"voix", status_.ttsReady && status_.sttReady ? L"prête" : L"incomplète",
+        Leader(R + 4, y, RW - 8, L"voix",
+               !(status_.ttsReady && status_.sttReady) ? L"incomplète" : status_.neuralVoice ? L"neuronale" : L"piper",
                status_.ttsReady && status_.sttReady ? "green" : "amber", Field::None);
         y += 22;
         Leader(R + 4, y, RW - 8, L"ta voix habituelle", status_.voiceSamples >= 10 ? L"apprise" : std::format(L"{}/10 phrases", status_.voiceSamples),
@@ -490,6 +493,7 @@ ConfigView::Action ConfigView::MouseDown(float x, float y) {
             case Field::Corner: cfg_.avatarCorner = h.value; return Action::None;
             case Field::Listen: cfg_.voiceActivity = h.value == 1; return Action::None;
             case Field::Tone: cfg_.tone = h.value; return Action::None;
+            case Field::Engine: cfg_.neuralVoice = h.value == 0; return Action::None;
             case Field::Backchannels: cfg_.backchannels = !cfg_.backchannels; return Action::None;
             case Field::BargeIn: cfg_.bargeIn = !cfg_.bargeIn; return Action::None;
             case Field::Emotion: cfg_.emotionDetection = !cfg_.emotionDetection; return Action::None;

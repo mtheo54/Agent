@@ -1,5 +1,6 @@
 #include "audio/VoiceEngine.hpp"
 
+#include "audio/TextNormalizerFr.hpp"
 #include "core/Log.hpp"
 
 #include <windows.h>
@@ -372,6 +373,14 @@ struct VoiceEngine::Impl {
     std::atomic<size_t> flushMark{kNoFlush};
     std::atomic<bool> rendering{false};
     std::atomic<bool> gaming{false};
+
+    // Voix neuronale (chargée sur le thread de synthèse, en premier travail)
+    NeuralVoice neural;
+    std::atomic<bool> neuralEnabled{true};
+    std::atomic<bool> neuralInGame{false};
+    bool UseNeural() const noexcept {
+        return neuralEnabled.load() && neural.Ready() && (!gaming.load() || neuralInGame.load());
+    }
     std::atomic<uint32_t> speechGeneration{0};
     std::atomic<int> pendingSpeech{0};
 
@@ -654,29 +663,54 @@ struct VoiceEngine::Impl {
 #endif
     }
 
+    // Piper sort en 22,05 kHz ; le rendu est à 24 kHz (débit de la voix neuronale).
+    static std::vector<float> Resample(const std::vector<float>& in, int from, int to) {
+        if (from == to || in.empty()) return in;
+        const double step = static_cast<double>(from) / to;
+        std::vector<float> out(static_cast<size_t>(in.size() / step));
+        for (size_t i = 0; i < out.size(); ++i) {
+            const double x = i * step;
+            const size_t k = static_cast<size_t>(x);
+            const float f = static_cast<float>(x - k);
+            out[i] = in[k] * (1.f - f) + (k + 1 < in.size() ? in[k + 1] : in[k]) * f;
+        }
+        return out;
+    }
+
+    bool SpeakNeural(const std::string& text, uint32_t generation, SpeakingStyle style, std::vector<float>* capture) {
+        return neural.Speak(text, style, [&](std::span<const float> pcm) {
+            if (speechGeneration.load() != generation) return false;  // interrompu : on arrête le décodeur
+            if (capture) capture->insert(capture->end(), pcm.begin(), pcm.end());
+            else PushAudio(pcm, generation);
+            return true;
+        });
+    }
+
     void Synthesize(const std::string& text, uint32_t generation, SpeakingStyle style) {
+        float lengthMul, noiseMul, moodDelta;
+        StyleParams(style, lengthMul, noiseMul, moodDelta);
+        fx.SetMood(std::clamp(baseMood.load() + moodDelta, 0.f, 1.f));
+        // Voix neuronale : le texte entier d'un coup (meilleure intonation), sortie en streaming.
+        if (UseNeural() && SpeakNeural(text, generation, style, nullptr)) {
+            --pendingSpeech;
+            return;
+        }
 #if COMPANION_WITH_ONNX && COMPANION_WITH_ESPEAK
         if (tts) {
-            float lengthMul, noiseMul, moodDelta;
-            StyleParams(style, lengthMul, noiseMul, moodDelta);
-            fx.SetMood(std::clamp(baseMood.load() + moodDelta, 0.f, 1.f));
             std::vector<float> pcm;
-            for (const auto& sentence : SplitSentences(text)) {
+            for (const auto& sentence : SplitSentences(NormalizeForSpeechFr(text))) {
                 if (speechGeneration.load() != generation) break;
-                if (tts->Synthesize(sentence, pcm, lengthMul * baseLength.load(), noiseMul)) PushAudio(pcm, generation);
+                if (tts->Synthesize(sentence, pcm, lengthMul * baseLength.load(), noiseMul))
+                    PushAudio(Resample(pcm, tts->SampleRate(), static_cast<int>(outputRate)), generation);
             }
         }
-#else
-        (void)text;
-        (void)generation;
-        (void)style;
 #endif
         --pendingSpeech;
     }
 
     void SynthesizeBackchannels(const std::map<std::string, std::vector<std::string>>& phrases) {
-#if COMPANION_WITH_ONNX && COMPANION_WITH_ESPEAK
-        if (!tts) return;
+        // Voix neuronale si elle est chargée (même en jeu : ces relances sont pré-calculées ici, hors jeu).
+        std::map<std::string, std::vector<std::vector<float>>> ready;
         for (const auto& [category, list] : phrases) {
             SpeakingStyle st = category == "empathy" ? SpeakingStyle::Soft
                                : category == "excited" ? SpeakingStyle::Bright : SpeakingStyle::Normal;
@@ -684,15 +718,20 @@ struct VoiceEngine::Impl {
             StyleParams(st, lengthMul, noiseMul, moodDelta);
             for (const auto& phrase : list) {
                 std::vector<float> pcm;
-                if (!tts->Synthesize(phrase, pcm, lengthMul * baseLength.load(), noiseMul)) continue;
-                std::scoped_lock lock(backchannelMutex);
-                backchannels[category].push_back(std::move(pcm));
+                if (neuralEnabled.load() && neural.Ready()) {
+                    const uint32_t gen = speechGeneration.load();
+                    if (!SpeakNeural(phrase, gen, st, &pcm) || pcm.empty()) pcm.clear();
+                }
+#if COMPANION_WITH_ONNX && COMPANION_WITH_ESPEAK
+                if (pcm.empty() && tts && tts->Synthesize(NormalizeForSpeechFr(phrase), pcm, lengthMul * baseLength.load(), noiseMul))
+                    pcm = Resample(pcm, tts->SampleRate(), static_cast<int>(outputRate));
+#endif
+                if (!pcm.empty()) ready[category].push_back(std::move(pcm));
             }
         }
+        std::scoped_lock lock(backchannelMutex);
+        backchannels = std::move(ready);  // remplace l'ancien jeu (changement de ton)
         log::Info("VoiceEngine: relances prêtes");
-#else
-        (void)phrases;
-#endif
     }
 };
 
@@ -715,16 +754,21 @@ bool VoiceEngine::Initialize(const VoiceEngineConfig& cfg) {
 #if COMPANION_WITH_ONNX && COMPANION_WITH_ESPEAK
     if (std::filesystem::exists(cfg.piperModel)) {
         d.tts = std::make_unique<PiperTts>();
-        if (d.tts->Load(cfg.piperModel, cfg.espeakDataDir, cfg.ttsThreads)) d.outputRate = static_cast<UINT32>(d.tts->SampleRate());
-        else d.tts.reset();
+        if (!d.tts->Load(cfg.piperModel, cfg.espeakDataDir, cfg.ttsThreads)) d.tts.reset();
     }
     log::Info("VoiceEngine: TTS {}", d.tts ? "prêt" : "désactivé");
 #endif
 
+    d.outputRate = NeuralVoice::kSampleRate;  // rendu unique à 24 kHz ; Piper est rééchantillonné
+    d.neuralEnabled = cfg.neuralEnabled;
+    d.neuralInGame = cfg.neuralInGame;
     d.fx.Prepare(static_cast<float>(d.outputRate), cfg.fx);
     d.renderWake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     d.renderThread = std::jthread([&d](std::stop_token st) { d.RenderMain(st); });
     d.worker = std::jthread([&d](std::stop_token st) { d.WorkerMain(st); });
+    // Chargement de la voix neuronale en premier travail du thread de synthèse : l'appli démarre tout
+    // de suite (Piper répond en attendant), les relances préparées ensuite profitent de la nouvelle voix.
+    if (cfg.neuralEnabled) d.Post([&d] { d.neural.Load(d.cfg.neural); });
     return true;
 }
 
@@ -859,6 +903,13 @@ void VoiceEngine::SetMood(float mood01) noexcept {
 }
 float VoiceEngine::VoiceRms() const noexcept { return impl_->rms.load(std::memory_order_relaxed); }
 void VoiceEngine::SetGamingMode(bool gaming) noexcept { impl_->gaming = gaming; }
+void VoiceEngine::SetNeuralVoice(bool enabled, bool inGame) noexcept {
+    auto& d = *impl_;
+    d.neuralInGame = inGame;
+    if (enabled && !d.neuralEnabled.exchange(true) && !d.neural.Ready()) d.Post([&d] { d.neural.Load(d.cfg.neural); });
+    d.neuralEnabled = enabled;
+}
+bool VoiceEngine::HasNeuralVoice() const noexcept { return impl_->neural.Ready(); }
 
 bool VoiceEngine::HasStt() const noexcept {
 #if COMPANION_WITH_WHISPER
@@ -869,6 +920,7 @@ bool VoiceEngine::HasStt() const noexcept {
 }
 
 bool VoiceEngine::HasTts() const noexcept {
+    if (impl_->neural.Ready()) return true;
 #if COMPANION_WITH_ONNX && COMPANION_WITH_ESPEAK
     return impl_->tts != nullptr;
 #else

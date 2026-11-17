@@ -135,6 +135,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     vcfg.whisperModel = root / L"assets" / L"models" / L"ggml-base-q5_1.bin";
     vcfg.piperModel = root / L"assets" / L"models" / L"fr_FR-siwis-medium.onnx";
     vcfg.espeakDataDir = root / L"espeak-ng-data";
+    vcfg.neural.library = root / L"qwen.dll";
+    vcfg.neural.talker = root / L"assets" / L"models" / L"qwen-talker-0.6b-base-Q8_0.gguf";
+    vcfg.neural.codec = root / L"assets" / L"models" / L"qwen-tokenizer-12hz-Q8_0.gguf";
+    vcfg.neural.voiceDir = root / L"assets" / L"voice" / L"omnis";
+    vcfg.neural.device = cfg.neuralVoiceDevice;
+    vcfg.neuralEnabled = cfg.neuralVoice;
+    vcfg.neuralInGame = cfg.neuralVoiceInGame;
     voice.Initialize(vcfg);
     voice.SetMood(cfg.fxIntensity);  // 0,5 = 9 bits, 35 % wet (rapport §4.B)
     voice.SetBaseSpeechRate(cfg.speechRate);
@@ -209,6 +216,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
         const bool toneChanged = cfg.tone != edited.tone;
         cfg.tone = edited.tone;
         cfg.backchannels = edited.backchannels;
+        cfg.neuralVoice = edited.neuralVoice;
         cfg.bargeIn = edited.bargeIn;
         cfg.emotionDetection = edited.emotionDetection;
         cfg.voiceActivity = edited.voiceActivity;
@@ -219,6 +227,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
         voice.SetMood(cfg.fxIntensity);
         voice.SetBaseSpeechRate(cfg.speechRate);
         voice.SetEmotionDetection(cfg.emotionDetection);
+        voice.SetNeuralVoice(cfg.neuralVoice, cfg.neuralVoiceInGame);
         if (toneChanged) {
             phrases.SetTone(static_cast<Tone>(cfg.tone));
             voice.PrepareBackchannels(backchannels());
@@ -234,6 +243,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
         st.brainReady = std::filesystem::exists(cfg.llmModel);
         st.sttReady = voice.HasStt();
         st.ttsReady = voice.HasTts();
+        st.neuralVoice = voice.HasNeuralVoice();
         st.claudeKey = claude.HasCredentials();
         const std::string baseline = voice.VoiceBaseline();
         st.voiceSamples = std::atoi(baseline.substr(0, baseline.find(';')).c_str());

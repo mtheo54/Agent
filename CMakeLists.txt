@@ -13,6 +13,7 @@ option(COMPANION_LLM_VULKAN   "llama.cpp sur GPU AMD via Vulkan (nécessite le V
 option(COMPANION_WITH_WHISPER "STT via whisper.cpp (external/whisper.cpp)"          ON)
 option(COMPANION_WITH_ONNX    "TTS Piper via ONNX Runtime (prebuilt, ONNXRUNTIME_ROOT)" ON)
 option(COMPANION_WITH_ESPEAK  "Phonemisation espeak-ng pour Piper (ESPEAK_NG_ROOT)"  ON)
+option(COMPANION_WITH_QWENTTS "Voix neuronale Qwen3-TTS via qwentts.cpp (external/qwentts.cpp)" ON)
 set(ONNXRUNTIME_ROOT "${CMAKE_SOURCE_DIR}/external/onnxruntime" CACHE PATH "Package onnxruntime-win-x64-*")
 set(ESPEAK_NG_ROOT   "${CMAKE_SOURCE_DIR}/external/espeak-ng"   CACHE PATH "Install espeak-ng (include/, lib/, espeak-ng-data/)")
 
@@ -51,7 +52,7 @@ set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(GGML_NATIVE ON  CACHE BOOL "" FORCE)   # Zen 4 : AVX-512
 set(GGML_CUDA   OFF CACHE BOOL "" FORCE)
 set(GGML_HIP    OFF CACHE BOOL "" FORCE)
-set(GGML_VULKAN ${COMPANION_LLM_VULKAN} CACHE BOOL "" FORCE)  # RX 9060 XT ; la voix reste sur CPU
+set(GGML_VULKAN ${COMPANION_LLM_VULKAN} CACHE BOOL "" FORCE)  # RX 9060 XT ; whisper reste sur CPU
 
 if(COMPANION_WITH_LLAMA)
     if(NOT EXISTS "${CMAKE_SOURCE_DIR}/external/llama.cpp/CMakeLists.txt")
@@ -97,6 +98,24 @@ if(COMPANION_WITH_ONNX AND COMPANION_WITH_ESPEAK)
     endif()
 endif()
 
+# Voix neuronale : qwentts.cpp embarque son propre ggml (fork, GGML_MAX_NAME=128), incompatible
+# avec celui de llama.cpp dans un même binaire. Construite à part en qwen.dll (seuls les qt_* exportés),
+# chargée à l'exécution : DLL absente = repli Piper, sans erreur.
+if(COMPANION_WITH_QWENTTS)
+    if(NOT EXISTS "${CMAKE_SOURCE_DIR}/external/qwentts.cpp/src/qwen.h")
+        message(FATAL_ERROR "external/qwentts.cpp absent (git clone --recurse-submodules, ou -DCOMPANION_WITH_QWENTTS=OFF)")
+    endif()
+    include(ExternalProject)
+    ExternalProject_Add(qwentts
+        SOURCE_DIR "${CMAKE_SOURCE_DIR}/external/qwentts.cpp"
+        BINARY_DIR "${CMAKE_BINARY_DIR}/qwentts"
+        CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release -DQWEN_SHARED=ON -DBUILD_SHARED_LIBS=OFF
+                   -DGGML_VULKAN=${COMPANION_LLM_VULKAN}
+        BUILD_COMMAND ${CMAKE_COMMAND} --build . --config Release --target qwen
+        INSTALL_COMMAND ""
+        BUILD_ALWAYS OFF)
+endif()
+
 # ----------------------------------------------------------------------------
 # Exécutable
 # ----------------------------------------------------------------------------
@@ -120,6 +139,8 @@ add_executable(CompanionAI WIN32
     src/network/HttpClient.cpp
     src/network/WebResearcher.cpp
     src/audio/VoiceEngine.cpp
+    src/audio/NeuralVoice.cpp
+    src/audio/TextNormalizerFr.cpp
     src/render/OverlayWindow.cpp
     src/render/CartoonAvatar.cpp
     src/ui/ConfigView.cpp
@@ -136,7 +157,12 @@ target_compile_definitions(CompanionAI PRIVATE
     $<$<BOOL:${COMPANION_WITH_WHISPER}>:COMPANION_WITH_WHISPER=1>
     $<$<BOOL:${COMPANION_WITH_ONNX}>:COMPANION_WITH_ONNX=1>
     $<$<AND:$<BOOL:${COMPANION_WITH_ONNX}>,$<BOOL:${COMPANION_WITH_ESPEAK}>>:COMPANION_WITH_ESPEAK=1>
+    $<$<BOOL:${COMPANION_WITH_QWENTTS}>:COMPANION_WITH_QWENTTS=1>
 )
+if(COMPANION_WITH_QWENTTS)
+    target_include_directories(CompanionAI PRIVATE "${CMAKE_SOURCE_DIR}/external/qwentts.cpp/src")  # types seulement
+    add_dependencies(CompanionAI qwentts)
+endif()
 
 if(MSVC)
     target_compile_options(CompanionAI PRIVATE /W4 /permissive- /utf-8 /Zc:__cplusplus /MP)
@@ -178,4 +204,10 @@ if(COMPANION_WITH_ONNX AND COMPANION_WITH_ESPEAK AND EXISTS "${ESPEAK_NG_ROOT}/b
     add_custom_command(TARGET CompanionAI POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${ESPEAK_NG_ROOT}/bin/espeak-ng.dll" "$<TARGET_FILE_DIR:CompanionAI>")
+endif()
+if(COMPANION_WITH_QWENTTS)
+    add_custom_command(TARGET CompanionAI POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_BINARY_DIR}/qwentts/$<IF:$<BOOL:${MSVC}>,Release/,>$<IF:$<BOOL:${WIN32}>,qwen.dll,libqwen.so>"
+                "$<TARGET_FILE_DIR:CompanionAI>")
 endif()
