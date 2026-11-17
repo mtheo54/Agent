@@ -98,6 +98,16 @@ Il a ses animations selon ce qu'il fait :
   une mauvaise foi parfaitement sérieuse (« FL Studio c'est un logiciel pour enfants », « la jungle c'est
   le rôle des gens qui savent pas laner », « la pizza ananas c'est la meilleure »). Si tu mords, il avoue en
   se marrant et te chambre de t'être fait avoir. Jamais si tu vas mal, jamais pendant un avis de mixage.
+- **Voix « dans un vrai micro »** (`micEffect`, 0,7 par défaut) : coupe-bas, effet de proximité, présence vers
+  5 kHz, compresseur, préampli qui chauffe un peu, petite pièce, souffle seulement pendant qu'il parle.
+  **Hauteur vivante** (`pitchLife`) : sa voix dérive doucement (± 20 cents), attaque parfois par en dessous,
+  fait des « boing » et des plongées. **Bizarreries** ponctuelles (TICS & BUGS) : voix dédoublée, flanger,
+  résonance métallique, talkie-walkie. Le tout : 0,14 % d'un cœur, aucune allocation dans la boucle audio.
+- **Soundboard (myinstants.com)** : « installe les sons » (pack de départ : vine boom, bruh, c'est vrai,
+  fahhh…), « ajoute le son X », « joue le son X », « quels sons t'as ». Téléchargés **à ta demande** et
+  gardés **sur ton PC** (`%LOCALAPPDATA%\CompanionAI\soundboard`), jamais livrés avec le programme (beaucoup
+  sont des extraits protégés). Il en place parfois un dans ses répliques avec `(son: vine boom)`. Décodage
+  MP3 : dr_mp3 (domaine public), niveau ramené à celui de sa voix.
 - **Memes TikTok du moment** (`assets/persona/memes.json`, français surtout, anglais aussi, quelques-uns
   sombres) : de temps en temps, 2-3 lui sont proposés et il en place un si ça colle. Mis à jour en
   novembre 2026 ; les memes meurent vite, édite le fichier pour en ajouter ou en retirer. Toutes ses répliques toutes faites (alertes, confirmations, relances)

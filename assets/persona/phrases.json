@@ -386,5 +386,60 @@
       "Rien à redire, c'est carré. T'es sûr que c'est toi qui l'as mixé ?",
       "(petit rire) Je cherche la petite bête, je trouve rien. Envoie au mastering."
     ]
+  },
+  "askSounds": {
+    "poli": [
+      "Je télécharge des sons sur myinstants ? Ils restent sur ton PC."
+    ],
+    "pote": [
+      "Je chope des sons sur myinstants ? Ça reste chez toi."
+    ],
+    "sansFiltre": [
+      "Je vais piller myinstants, ça te va ? Ça reste sur ton PC, promis."
+    ]
+  },
+  "soundsNone": {
+    "poli": [
+      "Je n'ai aucun son pour l'instant. Dis « installe les sons »."
+    ],
+    "pote": [
+      "J'ai aucun son. Dis « installe les sons »."
+    ],
+    "sansFiltre": [
+      "J'ai que dalle comme sons. Dis « installe les sons », bouffon."
+    ]
+  },
+  "soundsList": {
+    "poli": [
+      "J'ai : {list}."
+    ],
+    "pote": [
+      "J'ai : {list}."
+    ],
+    "sansFiltre": [
+      "J'ai : {list}. Fais-toi plaisir."
+    ]
+  },
+  "soundsInstalled": {
+    "poli": [
+      "C'est fait, j'ai {n} sons."
+    ],
+    "pote": [
+      "C'est bon, j'ai {n} sons."
+    ],
+    "sansFiltre": [
+      "C'est installé, {n} sons. Prépare-toi à souffrir."
+    ]
+  },
+  "soundMissing": {
+    "poli": [
+      "Je ne trouve pas « {name} » sur myinstants."
+    ],
+    "pote": [
+      "Je trouve pas « {name} »."
+    ],
+    "sansFiltre": [
+      "« {name} » ? Ça existe pas, ton truc. Même myinstants te connaît pas."
+    ]
   }
 }

@@ -22,6 +22,7 @@
 #include "core/MemeBank.hpp"
 #include "core/MixLexicon.hpp"
 #include "core/Phrases.hpp"
+#include "modules/Soundboard.hpp"
 #include "core/LocalBrain.hpp"
 #include "core/MemoryDB.hpp"
 #include "core/PermissionGate.hpp"
@@ -66,6 +67,7 @@ struct OrchestratorDeps {
     OmnisAnalyzer& analyzer;
     SelfTrainer& trainer;
     Phrases& phrases;
+    Soundboard& soundboard;
     std::filesystem::path dataDir;  // %LOCALAPPDATA%\CompanionAI (cache Data Dragon…)
     std::filesystem::path assetsDir;  // assets/ (lexique OMNIS…)
 };
@@ -157,6 +159,8 @@ private:
     MixLexicon lexicon_;  // jargon de beatmaker (lexique d'OMNIS)
     MemeBank memes_;      // memes TikTok FR / EN du moment (assets/persona/memes.json)
     [[nodiscard]] std::string MemeHint();
+    [[nodiscard]] std::string SoundHint();
+    bool HandleSoundboard(const std::string& text, const std::string& lower, std::stop_token stop);
     [[nodiscard]] std::string RageBaitHint(const std::string& userText);
     std::chrono::steady_clock::time_point lastBait_{};
     bool baitPending_ = false;

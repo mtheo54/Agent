@@ -53,7 +53,7 @@ Vocal Classify(const std::string& raw) {
 std::vector<SpeechPart> ParseExpressiveText(const std::string& text) {
     // (rire) [rire] *rire* — courtes didascalies seulement (≤ 30 caractères), pour ne pas manger une
     // vraie parenthèse de la réponse.
-    static const std::regex tag(R"(\(([^()\n]{1,30})\)|\[([^\[\]\n]{1,30})\]|\*([^*\n]{1,30})\*)");
+    static const std::regex tag(R"(\(([^()\n]{1,40})\)|\[([^\[\]\n]{1,40})\]|\*([^*\n]{1,40})\*)");
     std::vector<SpeechPart> parts;
     const auto pushText = [&](std::string s) {
         const auto a = s.find_first_not_of(" \t\n,");
@@ -61,13 +61,23 @@ std::vector<SpeechPart> ParseExpressiveText(const std::string& text) {
         s = s.substr(a);
         while (!s.empty() && (s.back() == ' ' || s.back() == '\n')) s.pop_back();
         if (s.find_first_not_of(".!?… ") == std::string::npos) return;  // ponctuation seule
-        if (!parts.empty() && !parts.back().isVocal) parts.back().text += " " + s;
+        if (!parts.empty() && !parts.back().isVocal && !parts.back().isSound) parts.back().text += " " + s;
         else parts.push_back({false, Vocal::Laugh, s});
     };
     size_t last = 0;
     for (auto it = std::sregex_iterator(text.begin(), text.end(), tag); it != std::sregex_iterator(); ++it) {
         const auto& m = *it;
         const std::string inner = m[1].matched ? m[1].str() : m[2].matched ? m[2].str() : m[3].str();
+        // (son: vine boom) / [son vine boom] : bruitage du soundboard
+        if (const std::string low = Lower(inner); low.rfind("son:", 0) == 0 || low.rfind("son :", 0) == 0 || low.rfind("son ", 0) == 0 ||
+                                                  low.rfind("bruitage:", 0) == 0) {
+            std::string name = inner.substr(inner.find_first_of(": ") + 1);
+            name.erase(0, name.find_first_not_of(": "));
+            pushText(text.substr(last, static_cast<size_t>(m.position(0)) - last));
+            if (!name.empty()) parts.push_back({false, Vocal::Laugh, name, true});
+            last = static_cast<size_t>(m.position(0) + m.length(0));
+            continue;
+        }
         const Vocal v = Classify(inner);
         // Parenthèse ordinaire (pas une didascalie connue) : on la garde telle quelle. *action* ou [action]
         // inconnues sont retirées (le modèle invente parfois des didascalies).

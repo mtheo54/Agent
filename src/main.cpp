@@ -27,6 +27,7 @@
 #include "core/ResourceGovernor.hpp"
 #include "modules/GameCoach.hpp"
 #include "modules/SelfTrainer.hpp"
+#include "modules/Soundboard.hpp"
 #include "modules/SystemControl.hpp"
 #include "network/ClaudeClient.hpp"
 #include "network/HttpClient.hpp"
@@ -240,6 +241,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     brain.SetStateCacheDir(dataDir / L"brain-cache");  // photos d'état : réponses instantanées dès la 1re question
     PermissionGate gate(db, [&voice](const std::string& question) { voice.Speak(question); });
     WebResearcher web(http, cfg.wikis);
+    // Soundboard : sons téléchargés à la demande, gardés sur ce PC seulement (jamais livrés avec le programme).
+    Soundboard soundboard(http, dataDir / L"soundboard", NeuralVoice::kSampleRate);
+    voice.SetSoundResolver([&soundboard](const std::string& name) { return soundboard.Get(name); });
     ClaudeClient claude(http, cfg.claudeModel, cfg.claudeEffort);
     GameCoach coach(http);
     ResourceGovernor governor;
@@ -248,7 +252,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     OmnisAnalyzer analyzer;
     SelfTrainer trainer(cfg, dataDir);
     AgentOrchestrator orchestrator(
-        {cfg, governor, voice, db, brain, gate, web, claude, coach, system, loopback, analyzer, trainer, phrases, dataDir, root / L"assets"});
+        {cfg, governor, voice, db, brain, gate, web, claude, coach, system, loopback, analyzer, trainer, phrases, soundboard, dataDir, root / L"assets"});
 
     std::atomic<SystemMode> mode{SystemMode::Interactive};
     governor.SetModeListener([&](SystemMode, SystemMode current) {

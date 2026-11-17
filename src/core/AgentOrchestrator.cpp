@@ -352,6 +352,80 @@ std::string AgentOrchestrator::DropRepeatedOpener(const std::string& chunk) cons
     return chunk;
 }
 
+// Soundboard (myinstants.com), à la voix :
+//   « installe les sons » -> pack de départ ; « ajoute / télécharge le son X » -> X ;
+//   « joue / mets / balance le son X » -> X (téléchargé d'abord s'il manque) ; « quels sons t'as ».
+// Téléchargement seulement avec ta permission (hôte www.myinstants.com), rangé sur ton PC uniquement.
+bool AgentOrchestrator::HandleSoundboard(const std::string& text, const std::string& lower, std::stop_token stop) {
+    const bool mentions = ContainsAny(lower, {" son ", " sons", "bruitage", "soundboard", "le son"});
+    if (!mentions || ContainsAny(lower, {"volume", "plus fort", "moins fort", "coupe le son", "monte le son", "baisse le son",
+                                         "remets le son", "mon son", "ma prod"}))
+        return false;
+    const auto askNet = [&]() {
+        return d_.gate.Request(PermissionScope::Web, "www.myinstants.com",
+                               Line("askSounds", {}, "Je télécharge des sons sur myinstants ? Ils restent sur ton PC."),
+                               std::chrono::seconds(20), stop);
+    };
+    // Liste
+    if (ContainsAny(lower, {"quels sons", "quel son", "liste des sons", "sons t'as", "sons tu as"})) {
+        const auto names = d_.soundboard.Names();
+        if (names.empty()) { Say(Line("soundsNone", {}, "J'ai aucun son. Dis « installe les sons ».")); return true; }
+        std::string list;
+        for (size_t i = 0; i < names.size() && i < 12; ++i) list += (i ? ", " : "") + names[i];
+        Say(Line("soundsList", {{"list", list}}, "J'ai : " + list + "."));
+        return true;
+    }
+    // Pack de départ
+    if (ContainsAny(lower, {"installe les sons", "installe le soundboard", "télécharge les sons", "telecharge les sons",
+                            "installe des sons", "installe les bruitages"})) {
+        if (!askNet()) { if (!stop.stop_requested()) Say(Line("webDenied", {}, "Ok, pas de web.")); return true; }
+        Say(Line("lookUp", {}, "Je regarde."));
+        int ok = 0;
+        for (const auto& q : Soundboard::StarterPack()) {
+            if (stop.stop_requested()) return true;
+            if (d_.soundboard.Fetch(q)) ++ok;
+        }
+        Say(Line("soundsInstalled", {{"n", std::to_string(ok)}}, "C'est bon, j'ai " + std::to_string(ok) + " sons."));
+        if (ok > 0) d_.voice.PlaySound("vine boom");
+        return true;
+    }
+    // Un son précis
+    std::string name;
+    for (const char* key : {"le son ", "le bruitage ", "un son ", "son de ", "son du "}) {
+        if (const auto p = lower.find(key); p != std::string::npos) {
+            name = Trim(text.substr(p + std::string_view(key).size()));
+            break;
+        }
+    }
+    while (!name.empty() && std::string_view(" ?!.,").find(name.back()) != std::string_view::npos) name.pop_back();
+    if (name.empty()) return false;
+    const bool play = ContainsAny(lower, {"joue", "mets", "met ", "balance", "fais", "envoie", "lance"});
+    const bool add = ContainsAny(lower, {"ajoute", "télécharge", "telecharge", "installe", "trouve", "cherche"});
+    if (!play && !add) return false;
+    if (!d_.soundboard.Has(name) && !d_.soundboard.Get(name)) {
+        if (!askNet()) { if (!stop.stop_requested()) Say(Line("webDenied", {}, "Ok, pas de web.")); return true; }
+        std::string err;
+        const auto key = d_.soundboard.Fetch(name, &err);
+        if (!key) { Say(Line("soundMissing", {{"name", name}}, "Je trouve pas « " + name + " » sur myinstants.")); return true; }
+        name = *key;
+    }
+    d_.voice.PlaySound(name);
+    return true;
+}
+
+// Bruitages « de temps en temps » dans ses réponses (ton pote / sans filtre), parmi ceux déjà sur le PC.
+std::string AgentOrchestrator::SoundHint() {
+    if (cfg_.tone == 0 || studioFocus_) return {};
+    const auto names = d_.soundboard.Names();
+    if (names.empty()) return {};
+    baitRng_ = baitRng_ * 1664525u + 1013904223u;
+    if (static_cast<float>(baitRng_ >> 8) / 16777216.f >= 0.25f) return {};
+    std::string s = "[Bruitages dispo : tu peux en placer UN, rarement, seulement si ça fait vraiment marrer, en écrivant";
+    const size_t start = (baitRng_ >> 4) % names.size();
+    for (size_t i = 0; i < names.size() && i < 8; ++i) s += (i ? ", " : " ") + std::string("(son: ") + names[(start + i) % names.size()] + ")";
+    return s + "]\n";
+}
+
 // Rage bait « de temps en temps » (ton sans filtre) : une provocation de mauvaise foi pour le faire rager.
 // S'il mord (il répond énervé dans les 3 minutes), Omnis avoue en rigolant. Jamais s'il va mal, jamais
 // pendant un avis de mixage, au plus un toutes les 10 minutes.
@@ -603,7 +677,8 @@ bool AgentOrchestrator::HandleLevel0(const std::string& text, std::stop_token st
         return true;
     }
 
-    if (HandleSystemCommand(text, lower, stop)) return true;
+    if (HandleSystemCommand(text, lower, stop)) return true;  // volume d'abord : « monte le son » n'est pas un bruitage
+    if (HandleSoundboard(text, lower, stop)) return true;
 
     // Partie LoL en cours + question de build : conseiller local (données live + données officielles Riot).
     if (auto lol = d_.coach.Latest();
@@ -623,7 +698,7 @@ void AgentOrchestrator::HandleLevel1(const std::string& text, const std::vector<
     }
     std::vector<ChatTurn> messages{{"system", PersonaPrompt()}};
     messages.insert(messages.end(), history.begin(), history.end());
-    const std::string ctx = LiveContext(text) + extraContext + OpenerHint() + MemeHint() + RageBaitHint(text);
+    const std::string ctx = LiveContext(text) + extraContext + OpenerHint() + MemeHint() + SoundHint() + RageBaitHint(text);
     messages.push_back({"user", ctx.empty() ? text : "[Contexte]\n" + ctx + "\n[Message]\n" + text});
 
     bool escalation = false;

@@ -386,6 +386,7 @@ struct VoiceEngine::Impl {
     RobotGlitcher glitcher;
     EmotionShaper shaper;
     VoiceColor color;                  // micro + bizarreries (thread de synthèse)
+    std::function<std::shared_ptr<const std::vector<float>>(const std::string&)> soundResolver;
     std::atomic<float> micEffect{0.7f};
     std::atomic<float> pitchLife{0.5f};
     float appliedMic = -1.f;
@@ -801,6 +802,11 @@ struct VoiceEngine::Impl {
         for (size_t i = 0; i < parts.size(); ++i) {
             if (speechGeneration.load() != generation) break;
             const auto& p = parts[i];
+            if (p.isSound) {  // bruitage : joué tel quel (pas de micro, il vient « du PC »)
+                if (soundResolver)
+                    if (const auto pcm = soundResolver(p.text)) PushAudio(*pcm, generation);
+                continue;
+            }
             if (!p.isVocal) {
                 SpeakText(p.text, generation, style, forceGlitch);
                 forceGlitch = false;
@@ -1042,6 +1048,20 @@ void VoiceEngine::SetNeuralVoice(bool enabled, bool inGame) noexcept {
 }
 bool VoiceEngine::HasNeuralVoice() const noexcept { return impl_->neural.Ready(); }
 void VoiceEngine::SetQuirks(float quirks01) noexcept { impl_->quirks = std::clamp(quirks01, 0.f, 1.f); }
+void VoiceEngine::SetSoundResolver(SoundResolver resolver) {
+    auto& d = *impl_;
+    d.Post([&d, r = std::move(resolver)]() mutable { d.soundResolver = std::move(r); });
+}
+void VoiceEngine::PlaySound(const std::string& name) {
+    auto& d = *impl_;
+    const uint32_t gen = d.speechGeneration.load();
+    ++d.pendingSpeech;
+    d.Post([&d, name, gen] {
+        if (d.soundResolver)
+            if (const auto pcm = d.soundResolver(name)) d.PushAudio(*pcm, gen);
+        --d.pendingSpeech;
+    });
+}
 void VoiceEngine::SetMicEffect(float amount01) noexcept { impl_->micEffect = std::clamp(amount01, 0.f, 1.f); }
 void VoiceEngine::SetPitchLife(float amount01) noexcept { impl_->pitchLife = std::clamp(amount01, 0.f, 1.f); }
 void VoiceEngine::SetSystemLoad(float load01) noexcept { impl_->systemLoad.store(std::clamp(load01, 0.f, 1.f), std::memory_order_relaxed); }

@@ -28,7 +28,8 @@ const char* ToFileStem(Vocal v) noexcept;  // "laugh", "chuckle"…
 struct SpeechPart {
     bool isVocal = false;
     Vocal vocal = Vocal::Laugh;
-    std::string text;
+    std::string text;      // texte à dire, ou nom du bruitage si isSound
+    bool isSound = false;  // (son: vine boom) : bruitage du soundboard
 };
 
 // Découpe « (rire) Non mais t'es sérieux ? (tousse) Pardon. » en morceaux texte / son.

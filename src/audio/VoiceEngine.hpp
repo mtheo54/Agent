@@ -96,6 +96,10 @@ public:
     // Exagération des émotions dans la voix (vitesse, hauteur, volume) : 0 … 1,5.
     void SetEmotionIntensity(float intensity) noexcept;
     void SetSystemLoad(float load01) noexcept;
+    // Soundboard : la balise (son: nom) et PlaySound() demandent le son au résolveur (PCM 24 kHz mono).
+    using SoundResolver = std::function<std::shared_ptr<const std::vector<float>>(const std::string&)>;
+    void SetSoundResolver(SoundResolver resolver);
+    void PlaySound(const std::string& name);
     void SetMicEffect(float amount01) noexcept;  // « vrai micro » : proximité, présence, compresseur, pièce
     void SetPitchLife(float amount01) noexcept;  // hauteur qui dérive et vire un peu (0 = voix droite)  // charge CPU 0 … 1 (plus de bugs quand le PC rame)
     [[nodiscard]] bool HasNeuralVoice() const noexcept;  // voix neuronale chargée

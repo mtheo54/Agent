@@ -137,6 +137,7 @@ add_executable(CompanionAI WIN32
     src/modules/ScreenCapture.cpp
     src/modules/SelfTrainer.cpp
     src/modules/SystemControl.cpp
+    src/modules/Soundboard.cpp
     src/network/ClaudeClient.cpp
     src/network/HttpClient.cpp
     src/network/WebResearcher.cpp
