@@ -6,6 +6,12 @@
   "voiceQuirks": 0.5,
   "micEffect": 0.7,
   "pitchLife": 0.5,
+  // Bruitage (soundboard myinstants, « installe les sons ») joué à des moments précis ; "" = aucun.
+  "soundEvents": {
+    "greeting": "anime wow", "clipping": "fahhh", "rageBaitBite": "emotional damage",
+    "gameDeath": "oh no", "gameWin": "c'est vrai", "error": "windows error",
+    "blunder": "", "trainingDone": "suspense"
+  },
   "neuralVoiceInGame": false,
   "neuralVoiceDevice": "",
 

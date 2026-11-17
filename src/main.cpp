@@ -359,6 +359,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     RegisterHotKey(nullptr, kHotkeyVad, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'V');
     RegisterHotKey(nullptr, kHotkeySettings, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'O');
 
+    if (const auto it = cfg.soundEvents.find("greeting"); it != cfg.soundEvents.end() && soundboard.Has(it->second))
+        voice.PlaySound(it->second);
     voice.Speak(phrases.Pick("greeting", {}, "Salut. Je suis en ligne."));
 
     // --- Boucle principale : messages + rendu cadencé -------------------------

@@ -52,6 +52,7 @@ struct LolSnapshot {
     double gold = 0;
     LolPlayer me;
     std::vector<LolPlayer> allies, enemies;
+    std::string result;  // "Win" / "Lose" quand l'événement de fin de partie est arrivé
 
     // Résumé compact (< ~100 tokens) injecté dans le contexte du modèle local.
     [[nodiscard]] std::string ToPromptSummary() const;

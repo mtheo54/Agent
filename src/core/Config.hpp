@@ -3,6 +3,7 @@
 // companion.json à côté de l'exécutable (voir LoadConfig).
 
 #include <filesystem>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -35,6 +36,17 @@ struct CompanionConfig {
 
     // --- Voix ---
     float fxIntensity = 0.15f;      // grain 8-bit de base (0 … 1) ; discret par défaut, la voix reste naturelle
+    // Bruitage (soundboard) joué à des moments précis ; "" = aucun. Choisis par l'utilisateur.
+    std::map<std::string, std::string> soundEvents{
+        {"greeting", "anime wow"},        // démarrage
+        {"clipping", "fahhh"},            // le mix clippe (studio)
+        {"rageBaitBite", "emotional damage"},  // il a mordu au rage bait
+        {"gameDeath", "oh no"},           // mort / défaite en jeu
+        {"gameWin", "c'est vrai"},        // kill, multi-kill, victoire
+        {"error", "windows error"},       // bug, rien trouvé, réseau, crash
+        {"blunder", ""},                  // grosse bêtise : pas de son
+        {"trainingDone", "suspense"},     // fin d'entraînement
+    };
     float micEffect = 0.7f;         // effet « vrai micro » sur sa voix (0 … 1)
     float pitchLife = 0.5f;         // hauteur vivante : dérive et virages (0 … 1)
     float voiceQuirks = 0.5f;       // tics humains et bugs de robot (rire spontané, toux, syllabe qui accroche)

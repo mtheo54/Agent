@@ -208,6 +208,7 @@ void AgentOrchestrator::WorkerMain(std::stop_token st) {
             }
         }
         UpdateStudioCapture();
+        CheckGameEvents();  // au plus toutes les 5 s, comme le sondage de l'API LoL
         if (deviceDirty_.exchange(false)) {
             const bool gaming = mode_.load() == SystemMode::Gaming;
             d_.brain.Configure(!gaming, gaming ? cfg_.llmThreadsGaming : cfg_.llmThreads);
@@ -273,9 +274,10 @@ void AgentOrchestrator::UpdateStudioCapture() {
 void AgentOrchestrator::OnMixAlert(MixAlert alert, const MixMetrics& m) {
     // Thread d'analyse. Niveau 0 : pas de modèle, phrase fixe, limitée dans le temps par l'analyseur.
     if (!cfg_.studioAlerts || mode_.load() != SystemMode::Studio || d_.voice.IsSpeaking()) return;
-    if (alert == MixAlert::Clipping)
+    if (alert == MixAlert::Clipping) {
+        PlayEventSound("clipping");
         d_.voice.Speak(Line("clipping", {{"peak", std::format("{:.1f}", m.peakDb)}}, std::format("Attention, ça clippe : crête à {:.1f} dB.", m.peakDb)));
-    else
+    } else
         d_.voice.Speak(Line("phase", {}, "Problème de phase : ton mix s'annule en mono, vérifie tes élargisseurs."));
 }
 
@@ -285,6 +287,9 @@ std::string AgentOrchestrator::PersonaPrompt() const { return companion::Persona
 std::string AgentOrchestrator::Line(const std::string& key, const std::map<std::string, std::string>& vars,
                                     const std::string& fallback) {
     d_.phrases.SetTone(static_cast<Tone>(cfg_.tone));
+    static const char* const errors[] = {"stuck", "cloudError", "riotFailed", "launchFailed", "trainingFailed", "captureFailed",
+                                         "soundMissing"};
+    if (std::ranges::any_of(errors, [&](const char* e) { return key == e; })) PlayEventSound("error");
     return d_.phrases.Pick(key, vars, fallback);
 }
 
@@ -381,7 +386,10 @@ bool AgentOrchestrator::HandleSoundboard(const std::string& text, const std::str
         if (!askNet()) { if (!stop.stop_requested()) Say(Line("webDenied", {}, "Ok, pas de web.")); return true; }
         Say(Line("lookUp", {}, "Je regarde."));
         int ok = 0;
-        for (const auto& q : Soundboard::StarterPack()) {
+        std::vector<std::string> wanted = Soundboard::StarterPack();
+        for (const auto& [event, name] : cfg_.soundEvents)
+            if (!name.empty() && std::ranges::find(wanted, name) == wanted.end()) wanted.push_back(name);
+        for (const auto& q : wanted) {
             if (stop.stop_requested()) return true;
             if (d_.soundboard.Fetch(q)) ++ok;
         }
@@ -411,6 +419,42 @@ bool AgentOrchestrator::HandleSoundboard(const std::string& text, const std::str
     }
     d_.voice.PlaySound(name);
     return true;
+}
+
+void AgentOrchestrator::PlayEventSound(const std::string& event) {
+    const auto it = cfg_.soundEvents.find(event);
+    if (it == cfg_.soundEvents.end() || it->second.empty()) return;
+    if (d_.soundboard.Has(it->second) || d_.soundboard.Get(it->second)) d_.voice.PlaySound(it->second);
+}
+
+// Partie de LoL en cours : tu meurs -> « oh no » ; kill (au plus un son / 45 s, toujours pour un
+// multi-kill) -> « c'est vrai » ; fin de partie -> victoire ou défaite. Sons seulement, pas de parole :
+// on ne te parle pas en plein combat.
+void AgentOrchestrator::CheckGameEvents() {
+    const auto lol = d_.coach.Latest();
+    if (!lol) {
+        lastKills_ = lastDeaths_ = -1;
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (!lol->result.empty() && lol->result != lastResult_) {
+        PlayEventSound(lol->result == "Win" ? "gameWin" : "gameDeath");
+        lastResult_ = lol->result;
+    }
+    if (lastKills_ >= 0) {
+        const int newKills = lol->me.kills - lastKills_, newDeaths = lol->me.deaths - lastDeaths_;
+        if (newDeaths > 0) {
+            PlayEventSound("gameDeath");
+            lastGameSound_ = now;
+        } else if (newKills >= 2 || (newKills == 1 && now - lastGameSound_ > std::chrono::seconds(45))) {
+            PlayEventSound("gameWin");
+            lastGameSound_ = now;
+        }
+    } else {
+        lastResult_.clear();
+    }
+    lastKills_ = lol->me.kills;
+    lastDeaths_ = lol->me.deaths;
 }
 
 // Bruitages « de temps en temps » dans ses réponses (ton pote / sans filtre), parmi ceux déjà sur le PC.
@@ -449,6 +493,7 @@ std::string AgentOrchestrator::RageBaitHint(const std::string& userText) {
                                                   "abuse", "n'importe nawak", "tu racontes"});
         if (bit && !down) {
             forcedReplyStyle_ = SpeakingStyle::Amused;  // il se marre (petit rire automatique)
+            PlayEventSound("rageBaitBite");
             return "[Il a mordu à ton rage bait] Avoue en rigolant que tu disais ça exprès pour le faire rager "
                    "(une phrase, commence par (rire)), chambre-le un peu de s'être fait avoir, puis reviens au sujet.\n";
         }
@@ -851,6 +896,7 @@ void AgentOrchestrator::StartTraining(bool manual) {
         if (!o.completed || report.empty()) return;
         // Manuel : tu attends la réponse. Automatique : tu étais absent, on te le dira à ton retour.
         if (manual) {
+            PlayEventSound("trainingDone");
             d_.voice.Speak(report);
             d_.db.AddMessage("assistant", report);
         } else {

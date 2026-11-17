@@ -27,6 +27,9 @@ CompanionConfig LoadConfig(const std::filesystem::path& jsonFile) {
         cfg.neuralVoice = j.value("neuralVoice", cfg.neuralVoice);
         cfg.voiceQuirks = std::clamp(j.value("voiceQuirks", cfg.voiceQuirks), 0.f, 1.f);
         cfg.micEffect = std::clamp(j.value("micEffect", cfg.micEffect), 0.f, 1.f);
+        if (j.contains("soundEvents") && j["soundEvents"].is_object())
+            for (const auto& [k, v] : j["soundEvents"].items())
+                if (v.is_string()) cfg.soundEvents[k] = v.get<std::string>();
         cfg.pitchLife = std::clamp(j.value("pitchLife", cfg.pitchLife), 0.f, 1.f);
         cfg.neuralVoiceInGame = j.value("neuralVoiceInGame", cfg.neuralVoiceInGame);
         cfg.neuralVoiceDevice = j.value("neuralVoiceDevice", cfg.neuralVoiceDevice);
@@ -104,6 +107,7 @@ bool SaveConfig(const CompanionConfig& cfg, const std::filesystem::path& jsonFil
     j["neuralVoice"] = cfg.neuralVoice;
     j["voiceQuirks"] = cfg.voiceQuirks;
     j["micEffect"] = cfg.micEffect;
+    j["soundEvents"] = cfg.soundEvents;
     j["pitchLife"] = cfg.pitchLife;
     j["neuralVoiceInGame"] = cfg.neuralVoiceInGame;
     j["speechRate"] = cfg.speechRate;

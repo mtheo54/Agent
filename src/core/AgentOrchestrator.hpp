@@ -160,6 +160,12 @@ private:
     MemeBank memes_;      // memes TikTok FR / EN du moment (assets/persona/memes.json)
     [[nodiscard]] std::string MemeHint();
     [[nodiscard]] std::string SoundHint();
+    // Bruitage choisi pour un moment (cfg.soundEvents) ; rien s'il n'est pas encore téléchargé.
+    void PlayEventSound(const std::string& event);
+    void CheckGameEvents();  // morts, kills, victoire / défaite (LoL, données live)
+    int lastKills_ = -1, lastDeaths_ = -1;
+    std::string lastResult_;
+    std::chrono::steady_clock::time_point lastGameSound_{};
     bool HandleSoundboard(const std::string& text, const std::string& lower, std::stop_token stop);
     [[nodiscard]] std::string RageBaitHint(const std::string& userText);
     std::chrono::steady_clock::time_point lastBait_{};

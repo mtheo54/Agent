@@ -63,6 +63,8 @@ std::optional<LolSnapshot> GameCoach::Parse(const std::string& body) {
             players.push_back(std::move(lp));
         }
         if (meIndex < 0) return std::nullopt;
+        for (const auto& e : j.value("events", nlohmann::json::object()).value("Events", nlohmann::json::array()))
+            if (e.value("EventName", std::string{}) == "GameEnd") s.result = e.value("Result", std::string{});
         s.me = players[static_cast<size_t>(meIndex)];
         for (size_t i = 0; i < players.size(); ++i) {
             if (static_cast<int>(i) == meIndex) continue;
