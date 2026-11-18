@@ -356,14 +356,18 @@ void AgentOrchestrator::WorkerMain(std::stop_token st) {
 // Studio : capture active en mode Studio (FL Studio lancé) ou 90 s après "écoute mon mix".
 void AgentOrchestrator::UpdateStudioCapture() {
     const bool studio = mode_.load() == SystemMode::Studio;
-    const bool wanted = studio || NowMs() < listenUntilMs_.load();
+    if (studio) lastStudioMs_ = NowMs();
+    // Le mode Studio clignote quand FL perd le focus (vu : Studio -> Interactive -> Studio en 2 s) : on garde
+    // l'écoute 60 s, sinon l'analyse repartait de zéro au milieu de la prod.
+    const bool wanted = studio || NowMs() < listenUntilMs_.load() || NowMs() - lastStudioMs_.load() < 60'000;
     if (wanted && !d_.loopback.Running()) {
         d_.analyzer.Reset();
         d_.analyzer.Start();
         auto sink = [this](const float* data, std::size_t frames) { d_.analyzer.Push(data, frames); };
         const std::wstring proc(cfg_.studioProcess.begin(), cfg_.studioProcess.end());
-        // FL Studio seul si possible (la voix du compagnon n'est pas captée), sinon le mix système.
-        if (!(studio && d_.loopback.Start(proc, sink))) d_.loopback.Start(L"", sink);
+        // FL Studio seul dès qu'il tourne (sa voix à lui n'est pas captée), sinon le mix système. Avant, hors mode
+        // Studio, c'était toujours le mix système : il s'entendait lui-même au lieu de la prod.
+        if (!d_.loopback.Start(proc, sink)) d_.loopback.Start(L"", sink);
     } else if (!wanted && d_.loopback.Running()) {
         d_.loopback.Stop();
         d_.analyzer.Stop();
@@ -1426,6 +1430,7 @@ bool AgentOrchestrator::HandleVoiceClone(const std::string& lower, std::stop_tok
         fs::remove(dir / L"active", ec);
         if (forget) fs::remove_all(dir, ec);
         d_.voice.SetNeuralVoiceDir(d_.assetsDir / L"voice" / L"omnis");
+        d_.voice.SetQuirks(cfg_.voiceQuirks);
         Say(forget ? "C'est effacé, j'ai plus ta voix nulle part." : "Je reprends ma voix à moi.");
         return true;
     }
@@ -1445,55 +1450,80 @@ bool AgentOrchestrator::HandleVoiceClone(const std::string& lower, std::stop_tok
         const char* ask;
         float minSeconds;
     };
+    // Toutes les phrases dites pendant une prise arrivent ici (le micro reste « en prise » jusqu'à la fin).
+    struct Inbox {
+        std::mutex m;
+        std::condition_variable cv;
+        std::deque<std::pair<std::vector<float>, std::string>> q;
+    };
+    auto inbox = std::make_shared<Inbox>();
+    struct Disarm {
+        VoiceEngine& v;
+        ~Disarm() { v.CaptureNextUtterance(nullptr); }
+    } disarm{d_.voice};
     int got = 0;
-    for (const Take t : {Take{"normal", "Ok, je copie ta voix, ça reste sur ton PC. Parle-moi normalement pendant 8 secondes, raconte ta journée, vas-y.", 4.f},
-                         Take{"bright", "Parfait. Maintenant une phrase à fond, comme si t'avais gagné une game.", 2.f}}) {
-        bool ok = false;
-        for (int attempt = 0; attempt < 2 && !ok && !stop.stop_requested(); ++attempt) {
-            Say(attempt ? "C'était trop court ou j'ai rien compris. Encore une fois, un peu plus long." : t.ask);
-            waitSilence();
-            auto promise = std::make_shared<std::promise<std::pair<std::vector<float>, std::string>>>();
-            auto future = promise->get_future();
-            d_.voice.CaptureNextUtterance([promise](std::vector<float> pcm, std::string text) {
-                promise->set_value({std::move(pcm), std::move(text)});
-            });
-            bool ready = false;
-            for (int i = 0; i < 300 && !stop.stop_requested(); ++i)  // 30 s pour parler
-                if (future.wait_for(std::chrono::milliseconds(100)) == std::future_status::ready) {
-                    ready = true;
-                    break;
-                }
-            if (!ready) {
-                d_.voice.CaptureNextUtterance(nullptr);
-                continue;
-            }
-            auto [pcm16, text] = future.get();
-            if (text.empty() || static_cast<float>(pcm16.size()) < t.minSeconds * 16000.f) continue;
-            // 16 -> 24 kHz (le format des prises), volume ramené à -3 dBFS en crête.
-            std::vector<float> pcm24(pcm16.size() * 3 / 2);
-            float peak = 1e-6f;
-            for (std::size_t i = 0; i < pcm24.size(); ++i) {
-                const double x = static_cast<double>(i) * 2.0 / 3.0;
-                const auto i0 = static_cast<std::size_t>(x);
-                const auto i1 = std::min(pcm16.size() - 1, i0 + 1);
-                pcm24[i] = static_cast<float>(pcm16[i0] + (pcm16[i1] - pcm16[i0]) * (x - static_cast<double>(i0)));
-                peak = std::max(peak, std::abs(pcm24[i]));
-            }
-            for (auto& x : pcm24) x *= 0.7f / peak;
-            const fs::path wav = dir / (std::string(t.style) + ".wav");
-            if (!WriteWavMono(wav, pcm24, 24000)) continue;
-            std::ofstream(dir / (std::string(t.style) + ".txt"), std::ios::binary | std::ios::trunc) << Trim(text);
-            ok = true;
-            ++got;
+    // Plus la prise est longue, plus le clone ressemble (débit, accent, manière de parler) : 15 s de voix normale.
+    for (const Take t : {Take{"normal", "Ok, je copie ta voix, ça reste sur ton PC. Parle-moi normalement pendant une quinzaine de "
+                                        "secondes, raconte ta journée, ta dernière game, ce que tu veux. Je te dis quand c'est bon.", 12.f},
+                         Take{"bright", "Nickel. Maintenant une ou deux phrases à fond, comme si t'avais gagné une game.", 2.5f},
+                         Take{"calm", "Et pour finir, une phrase tranquille, posée, comme si tu m'expliquais un truc.", 2.5f}}) {
+        Say(t.ask);
+        waitSilence();
+        {
+            std::scoped_lock lock(inbox->m);
+            inbox->q.clear();
         }
-        if (!ok && std::string_view(t.style) == "normal") {
-            Say("Laisse tomber, je garde ma voix pour l'instant. Redemande-moi quand tu veux.");
-            return true;
+        d_.voice.CaptureNextUtterance([inbox](std::vector<float> pcm, std::string text) {
+            {
+                std::scoped_lock lock(inbox->m);
+                inbox->q.emplace_back(std::move(pcm), std::move(text));
+            }
+            inbox->cv.notify_one();
+        });
+        std::vector<float> pcm16;
+        std::string said;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(45);
+        while (static_cast<float>(pcm16.size()) < t.minSeconds * 16000.f && !stop.stop_requested() &&
+               std::chrono::steady_clock::now() < deadline) {
+            std::unique_lock lock(inbox->m);
+            if (!inbox->cv.wait_for(lock, std::chrono::milliseconds(200), [&] { return !inbox->q.empty(); })) continue;
+            auto [pcm, text] = std::move(inbox->q.front());
+            inbox->q.pop_front();
+            lock.unlock();
+            if (text.empty()) continue;  // bruit, musique
+            if (!pcm16.empty()) pcm16.insert(pcm16.end(), 4000, 0.f);  // 0,25 s entre deux phrases
+            pcm16.insert(pcm16.end(), pcm.begin(), pcm.end());
+            said += (said.empty() ? "" : " ") + Trim(text);
         }
+        d_.voice.CaptureNextUtterance(nullptr);
+        if (stop.stop_requested()) return true;
+        if (static_cast<float>(pcm16.size()) < t.minSeconds * 16000.f * 0.6f) {  // vraiment trop peu
+            if (std::string_view(t.style) == "normal") {
+                Say("J'ai pas eu assez de ta voix. Redemande-moi quand t'es posé, dans un coin calme.");
+                return true;
+            }
+            continue;  // prise facultative : on fait sans
+        }
+        // 16 -> 24 kHz (le format des prises), volume ramené à -3 dBFS en crête.
+        std::vector<float> pcm24(pcm16.size() * 3 / 2);
+        float peak = 1e-6f;
+        for (std::size_t i = 0; i < pcm24.size(); ++i) {
+            const double x = static_cast<double>(i) * 2.0 / 3.0;
+            const auto i0 = static_cast<std::size_t>(x);
+            const auto i1 = std::min(pcm16.size() - 1, i0 + 1);
+            pcm24[i] = static_cast<float>(pcm16[i0] + (pcm16[i1] - pcm16[i0]) * (x - static_cast<double>(i0)));
+            peak = std::max(peak, std::abs(pcm24[i]));
+        }
+        for (auto& x : pcm24) x *= 0.7f / peak;
+        if (!WriteWavMono(dir / (std::string(t.style) + ".wav"), pcm24, 24000)) continue;
+        std::ofstream(dir / (std::string(t.style) + ".txt"), std::ios::binary | std::ios::trunc) << said;
+        log::Info("Voix : prise « {} » de {:.1f} s", t.style, static_cast<double>(pcm16.size()) / 16000.0);
+        ++got;
     }
     if (stop.stop_requested() || !got) return true;
     std::ofstream(dir / L"active") << "1";
     d_.voice.SetNeuralVoiceDir(dir);
+    d_.voice.SetQuirks(cfg_.voiceQuirks * 0.3f);  // avec ta voix, les « bugs de robot » sonnaient comme de vrais bugs
     waitSilence();
     std::this_thread::sleep_for(std::chrono::seconds(2));  // le temps de recharger la voix
     Say("Voilà. Je parle avec ta voix maintenant. Dis « reprends ta voix » pour revenir, ou « oublie ma voix » pour tout effacer.");
@@ -1504,6 +1534,7 @@ void AgentOrchestrator::JoinedCall() {
     // Avec la voix de l'utilisateur : on le dit, et l'effet robot reste (personne ne croit que c'est lui qui parle).
     if (UsesUserVoice()) {
         d_.voice.SetMood(std::max(cfg_.fxIntensity, 0.5f));
+        d_.voice.SetQuirks(cfg_.voiceQuirks);  // dans le call, le côté robot reste entier
         Say("Petite info : c'est Omnis, l'IA, avec la voix de mon pote. Quand ça sonne robot, c'est moi.");
     }
     // Formes de vannes : écrites à la main + celles apprises en regardant des vidéos depuis le dernier call.
@@ -1515,6 +1546,7 @@ void AgentOrchestrator::JoinedCall() {
 void AgentOrchestrator::LeftCall() {
     seeing_.Stop();
     d_.voice.SetMood(cfg_.fxIntensity);
+    if (UsesUserVoice()) d_.voice.SetQuirks(cfg_.voiceQuirks * 0.3f);
     listenOnly_ = false;
     if (peopleLoaded_) {
         people_.MergeDuplicates();  // un renommage reconnu en retard : deux fiches, une seule voix
@@ -1812,6 +1844,36 @@ std::string AgentOrchestrator::DropRepeatedOpener(const std::string& chunk) cons
 //   « installe les sons » -> pack de départ ; « ajoute / télécharge le son X » -> X ;
 //   « joue / mets / balance le son X » -> X (téléchargé d'abord s'il manque) ; « quels sons t'as ».
 // Téléchargement seulement avec ta permission (hôte www.myinstants.com), rangé sur ton PC uniquement.
+int AgentOrchestrator::InstallStarterSounds(std::stop_token stop) {
+    int ok = 0;
+    std::vector<std::string> wanted = Soundboard::StarterPack();
+    for (const auto& [event, name] : cfg_.soundEvents)
+        if (!name.empty() && std::ranges::find(wanted, name) == wanted.end()) wanted.push_back(name);
+    for (const auto& q : wanted) {
+        if (stop.stop_requested()) return ok;
+        if (d_.soundboard.Fetch(q)) ++ok;
+    }
+    log::Info("Bruitages : {} installés", ok);
+    Say(Line("soundsInstalled", {{"n", std::to_string(ok)}}, "C'est bon, j'ai " + std::to_string(ok) + " sons."));
+    if (ok > 0) d_.voice.PlaySound("vine boom");
+    return ok;
+}
+
+// Les bruitages ne sont pas livrés (téléchargés sur myinstants avec ta permission). Vu sur le terrain : personne ne
+// savait qu'il fallait dire « installe les sons », donc aucun ne sortait. Proposé une fois, après une réponse.
+void AgentOrchestrator::OfferSounds(std::stop_token stop) {
+    if (soundsOffered_ || stop.stop_requested() || !d_.soundboard.Names().empty()) return;
+    soundsOffered_ = true;
+    if (const auto p = d_.db.GetProfile("sounds.offer"); p && *p == "non") return;
+    for (int i = 0; i < 80 && d_.voice.IsSpeaking(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    if (d_.gate.Request(PermissionScope::Web, "www.myinstants.com",
+                        "Au fait, j'ai pas encore mes bruitages. Je les télécharge sur myinstants ? Ils restent sur ton PC.",
+                        std::chrono::seconds(20), stop))
+        InstallStarterSounds(stop);
+    else if (!stop.stop_requested())
+        d_.db.SetProfile("sounds.offer", "non");  // plus jamais proposé ; « installe les sons » reste possible
+}
+
 bool AgentOrchestrator::HandleSoundboard(const std::string& text, const std::string& lower, std::stop_token stop) {
     const bool mentions = ContainsAny(lower, {" son ", " sons", "bruitage", "soundboard", "le son"});
     if (!mentions || ContainsAny(lower, {"volume", "plus fort", "moins fort", "coupe le son", "monte le son", "baisse le son",
@@ -1836,16 +1898,7 @@ bool AgentOrchestrator::HandleSoundboard(const std::string& text, const std::str
                             "installe des sons", "installe les bruitages"})) {
         if (!askNet()) { if (!stop.stop_requested()) Say(Line("webDenied", {}, "Ok, pas de web.")); return true; }
         Say(Line("lookUp", {}, "Je regarde."));
-        int ok = 0;
-        std::vector<std::string> wanted = Soundboard::StarterPack();
-        for (const auto& [event, name] : cfg_.soundEvents)
-            if (!name.empty() && std::ranges::find(wanted, name) == wanted.end()) wanted.push_back(name);
-        for (const auto& q : wanted) {
-            if (stop.stop_requested()) return true;
-            if (d_.soundboard.Fetch(q)) ++ok;
-        }
-        Say(Line("soundsInstalled", {{"n", std::to_string(ok)}}, "C'est bon, j'ai " + std::to_string(ok) + " sons."));
-        if (ok > 0) d_.voice.PlaySound("vine boom");
+        InstallStarterSounds(stop);
         return true;
     }
     // Un son précis
@@ -2145,15 +2198,21 @@ void AgentOrchestrator::Handle(const std::string& text, std::stop_token stop) {
                                                 "mon morceau", "le master", "mon master", "mon beat", "ce beat",
                                                 "ce que j'ai fait", "ce que je fais", "ce que je suis en train de faire", "ma musique",
                                                 "le piano", "mon piano", "la mélodie", "ma mélodie", "mon instru", "l'instru",
-                                                "fl studio", "mon daw", "ma mao", "ce que je joue", "ce que j'ai joué"});
+                                                "fl studio", "mon daw", "ma mao", "ce que je joue", "ce que j'ai joué",
+                                                " prod", "ce que je vais", "ce que je lance", "ce que je te lance", "ce son-là"});
     const bool mixAsk = ContainsAny(lower, {"écoute", "ecoute", "avis", "pense", "comment", "sonne", "analyse", "trouve",
-                                            "entends", "aimé", "aime", "kiff", "t'en dis", "tu dis"});
+                                            "entends", "aimé", "aime", "kiff", "t'en dis", "tu dis", "prêt", "pret"});
+    // Juste après une écoute (« alors, qu'est-ce qu'on pense ? ») : c'est encore de la prod qu'on parle.
+    const bool afterListen = NowMs() < listenUntilMs_.load() + 120'000 && d_.analyzer.Snapshot().seconds >= 3.f &&
+                             ContainsAny(lower, {"t'en penses", "qu'est-ce qu'on pense", "qu'est ce qu'on pense", "alors ?", "ça donne quoi",
+                                                 "ca donne quoi", "c'est comment", "t'as aimé", "t'as kiffé", "verdict", "ton avis"});
     // Jargon de beatmaker (lexique d'OMNIS) : « la basse elle bave », « mon kick tape pas »…
-    if ((mixSubject && mixAsk) || MixLexicon::IsMixRequest(lexicon_.Match(text), text)) {
+    if ((mixSubject && mixAsk) || afterListen || MixLexicon::IsMixRequest(lexicon_.Match(text), text)) {
         HandleStudioQuestion(text, history, stop);
         return;
     }
     HandleLevel1(text, history, "", stop);
+    OfferSounds(stop);
 }
 
 bool AgentOrchestrator::HandleLevel0(const std::string& text, std::stop_token stop) {
@@ -2285,7 +2344,9 @@ void AgentOrchestrator::HandleLevel1(const std::string& text, const std::vector<
     messages.push_back({"user", ctx.empty() ? text : "[Contexte]\n" + ctx + "\n[Message]\n" + text});
 
     // Procédure, réglage, code d'erreur : le modèle n'écrit que les mots-clés, la réponse viendra de la source.
-    if (chatMode_ == ChatMode::Technical && d_.http && NeedsSource(Lower(text))) {
+    // (Pas quand le contexte est déjà fourni : vu sur le terrain, « tu peux écouter ce que je fais sur FL Studio ? » partait
+    // chercher « FL Studio LUFS -22.4 » sur le web au lieu de donner l'avis sur la prod.)
+    if (chatMode_ == ChatMode::Technical && d_.http && extraContext.empty() && NeedsSource(Lower(text))) {
         GenerateOptions so;
         so.grammar = kSearchOnlyGrammar;
         so.maxTokens = 32;

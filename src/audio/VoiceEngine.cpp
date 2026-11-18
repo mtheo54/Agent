@@ -438,7 +438,7 @@ struct VoiceEngine::Impl {
 
     std::mutex cbMutex;
     TranscriptCallback onTranscript;
-    VoiceEngine::RawUtterance rawCapture;  // une fois (cbMutex)
+    VoiceEngine::RawUtterance rawCapture;  // tant qu'armé (cbMutex)
 
     // Émotion dans la voix
     std::mutex emotionMutex;
@@ -726,7 +726,7 @@ struct VoiceEngine::Impl {
         VoiceEngine::RawUtterance raw;
         {
             std::scoped_lock lock(cbMutex);
-            raw.swap(rawCapture);
+            raw = rawCapture;  // reste armé : plusieurs phrases d'affilée (pauses de l'utilisateur)
         }
         if (raw) {  // prise de voix : l'audio brut et ce qui a été dit, rien d'autre
             std::vector<float> keep = pcm;

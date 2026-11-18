@@ -525,7 +525,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     voice.SetBaseSpeechRate(cfg.speechRate);
     voice.SetVoiceTempo(cfg.voiceTempo);
     voice.SetEmotionDetection(cfg.emotionDetection);
-    voice.SetQuirks(cfg.voiceQuirks);
+    voice.SetQuirks(vcfg.neural.voiceDir.filename() == L"toi" ? cfg.voiceQuirks * 0.3f : cfg.voiceQuirks);  // ta voix : moins de « bugs »
     voice.SetEmotionIntensity(0.4f + cfg.expressiveness);  // EXPRESSIVITÉ : gestes ET émotion dans la voix
     voice.SetMicEffect(cfg.micEffect);
     voice.SetPitchLife(cfg.pitchLife);
