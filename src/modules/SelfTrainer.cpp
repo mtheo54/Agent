@@ -6,6 +6,7 @@
 #include "core/Persona.hpp"
 #include "modules/GameCoach.hpp"
 #include "modules/VideoStudy.hpp"
+#include "network/WebSurf.hpp"
 #include "core/BaitBank.hpp"
 #include "network/HttpClient.hpp"
 #include "network/WebResearcher.hpp"
@@ -72,10 +73,15 @@ int RunTrainerSession(const CompanionConfig& cfg, const std::filesystem::path& d
     if (!brain.Load(bc)) return 3;
 
     // 1b) Vidéos : il regarde des vannes / du rage bait (YouTube, tes liens TikTok) et en tire des formes réutilisables.
+    // Autorisation « surfe cette nuit » : pages web libres (lecture seule) et deux fois plus de vidéos.
+    const bool freeWeb = WebSurf::Allowed(db);
+    WebSurf surf(http);
+    int pagesLeft = 12;
+    if (freeWeb) log::Info("SelfTrainer: surf libre autorisé pour cette séance");
     std::string videoReport;
     if (cfg.videoStudy) {
         VideoStudyConfig vc;
-        vc.perSession = cfg.videoStudyPerSession;
+        vc.perSession = cfg.videoStudyPerSession * (freeWeb ? 2 : 1);
         if (!cfg.videoStudyQueries.empty()) vc.queries = cfg.videoStudyQueries;
         for (const wchar_t* w : {L"ggml-base-q5_1.bin", L"ggml-tiny-q5_1.bin"})
             if (!assetsDir.empty() && std::filesystem::exists(assetsDir / L"models" / w)) {
@@ -104,6 +110,13 @@ int RunTrainerSession(const CompanionConfig& cfg, const std::filesystem::path& d
             sources += "### " + hit.title + "\n" + WebResearcher::BestPassages(hit.content, t.subject + " " + t.question, 1500) + "\n";
         }
         // … sinon collecte web ciblée, uniquement sur un domaine que tu as autorisé avec « toujours ».
+        if (sources.size() < 300 && freeWeb) {  // surf libre autorisé : moteur de recherche + 3 pages
+            const std::string found = surf.Research(t.subject + " " + t.question, 3, pagesLeft);
+            if (!found.empty()) {
+                db.AddKnowledge("web-libre", t.subject, found);
+                sources += found;
+            }
+        }
         if (sources.size() < 300) {
             const WikiSource* src = web.PickSource(t.subject + " " + t.question);
             if (!src || !db.GetPermission("web", src->host).value_or(false)) {

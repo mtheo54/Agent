@@ -412,7 +412,9 @@ les oreilles au casque. `earrape: false` pour couper.
 ### Comment il écrit une vanne
 
 D'après ce qui fait rire (surprise, vérité hyper précise sur la cible, rappel d'un fail, règle de trois, plusieurs
-chutes pour une même situation), chaque vanne est le résultat d'un petit concours :
+chutes pour une même situation), chaque vanne est le résultat d'un petit concours. Côté bruitages, une vanne
+spontanée est remplacée par un son 45 % du temps (`callBaitSoundChance`), et une vanne dite est ponctuée d'un son
+juste après une fois sur deux (`callPunchSoundChance`) : environ 7 rage baits sur 10 ont leur bruitage.
 
 1. **Deux vannes à partir de formes qui marchent** (`assets/persona/baits.json`, 59 formes écrites à la main, et
    celles apprises en vidéo). Il ne change que les [crochets] par SES mots ; s'il ne respecte pas la forme, elle est
@@ -441,6 +443,21 @@ Pendant ses séances d'auto-entraînement (PC inactif, tué dès que tu touches 
 - **Outils** : [yt-dlp](https://github.com/yt-dlp/yt-dlp) et [deno](https://github.com/denoland/deno) (exigé par
   yt-dlp pour YouTube), téléchargés une fois depuis leurs pages officielles. Ils ne sont lancés que si leur empreinte
   **SHA-256 correspond à celle publiée**. yt-dlp est repris tous les 30 jours (YouTube change souvent).
+
+### Surfer pour s'entraîner (« tu peux surfer cette nuit »)
+
+« **Omnis, tu peux surfer cette nuit** » : jusqu'à 10 h le lendemain (14 h au plus). « **Arrête de surfer** » coupe.
+Pendant ce temps, tant que le PC est inactif :
+
+- une séance d'entraînement toutes les 30 min au lieu de 2 h, avec deux fois plus de vidéos ;
+- ses sujets sont cherchés sur le web libre (DuckDuckGo, sinon Bing), avec 3 pages lues par sujet et 12 au plus
+  par séance ;
+- la lecture est seule autorisée : pas de formulaire, pas de connexion, pas de téléchargement, uniquement des
+  pages texte ;
+- jamais : réseaux sociaux, messageries, mails, banques, paiement, sites adultes.
+
+Il faut un message explicite (« surfer », « naviguer », ou « internet » + « cette nuit ») : « cherche sur internet
+le build de Jinx » n'ouvre pas le surf pour la nuit.
 
 ### « Prends ma place » (toilettes, repas…)
 

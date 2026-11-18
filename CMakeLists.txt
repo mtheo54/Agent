@@ -144,6 +144,7 @@ add_executable(CompanionAI WIN32
     src/network/ClaudeClient.cpp
     src/network/HttpClient.cpp
     src/network/WebResearcher.cpp
+    src/network/WebSurf.cpp
     src/audio/VoiceEngine.cpp
     src/audio/NeuralVoice.cpp
     src/audio/Expressivity.cpp

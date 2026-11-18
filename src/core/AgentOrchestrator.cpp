@@ -325,8 +325,10 @@ void AgentOrchestrator::WorkerMain(std::stop_token st) {
         }
 
         // Auto-entraînement : PC inactif (> 5 min, charge < 25 %), des sujets à apprendre, pas trop souvent.
+        // Surf autorisé (« cette nuit ») : une séance toutes les 30 min tant que le PC reste inactif.
+        const int everyMin = WebSurf::Allowed(d_.db) ? std::min(30, cfg_.autoTrainingEveryMinutes) : cfg_.autoTrainingEveryMinutes;
         if (cfg_.autoTraining && !d_.trainer.Running() &&
-            std::chrono::steady_clock::now() - lastAutoTraining_ > std::chrono::minutes(cfg_.autoTrainingEveryMinutes) &&
+            std::chrono::steady_clock::now() - lastAutoTraining_ > std::chrono::minutes(everyMin) &&
             d_.governor.CanStartAutoTraining() &&
             (cfg_.videoStudy || !d_.db.PendingTrainingTopics(1, cfg_.knowledgeMaxAgeDays * 86400LL, 86400).empty()))
             StartTraining(/*manual=*/false);
@@ -1091,11 +1093,14 @@ void AgentOrchestrator::HandleCallLine(const std::string& text, const std::vecto
     const bool reply = named || prank || (mock && !quiet) || (subActive_ && question && !quiet);
     if ((!reply && !bait) || d_.voice.IsSpeaking()) return;
     if (bait || mock) lastCallBait_ = now;
-    // Bruitage au lieu d'une phrase (1 fois sur 3), parfois en earrape (au plus toutes les 10 min).
-    if (bait) {
+    // Bruitage AU LIEU d'une phrase (callBaitSoundChance, 45 % par défaut), parfois en earrape (au plus toutes les 10 min).
+    const auto chance = [this](float p) {
         const unsigned r = rng_.fetch_add(0x9E3779B9u) * 2654435761u;
-        const bool ear = cfg_.earrape && now - lastEarrape_ > std::chrono::minutes(10) && ((r >> 4) % 5 == 0);
-        if ((r >> 12) % 3 == 0 && PlayBaitSound(ear)) {
+        return static_cast<float>(r >> 8) / 16777216.f < p;
+    };
+    if (bait) {
+        const bool ear = cfg_.earrape && now - lastEarrape_ > std::chrono::minutes(10) && chance(0.25f);
+        if (chance(cfg_.callBaitSoundChance) && PlayBaitSound(ear)) {
             if (ear) lastEarrape_ = now;
             return;
         }
@@ -1168,6 +1173,8 @@ void AgentOrchestrator::HandleCallLine(const std::string& text, const std::vecto
     if (out.empty() || stop.stop_requested()) return;
     if (mock) style_ = SpeakingStyle::Annoyed;
     Say(out);
+    // Vanne dite : un bruitage pour ponctuer (vine boom, emotional damage…) — joué juste APRÈS la phrase (même file).
+    if (kind != CallAsk::Reply && chance(cfg_.callPunchSoundChance)) PlayBaitSound(false);
     RememberOpener(out);
     lastCallReply_ = out;
     lastSpokeInCall_ = std::chrono::steady_clock::now();
@@ -1869,6 +1876,36 @@ bool AgentOrchestrator::HandleLevel0(const std::string& text, std::stop_token st
         return true;
     }
     if (HandleCallCommand(lower, stop)) return true;  // « rejoins le call », « quitte le call »
+    // « Tu peux surfer cette nuit » : surf libre pour s'entraîner jusqu'à 10 h le lendemain (14 h au plus).
+    if (ContainsAny(lower, {"arrête de surfer", "arrete de surfer", "plus d'internet", "plus le droit de surfer", "coupe internet"})) {
+        d_.db.SetProfile("web.freeUntil", "0");
+        Say("Ok, j'arrête de surfer. Je reste sur mes sources habituelles.");
+        return true;
+    }
+    // Mot explicite (surfer, naviguer) ou « internet » + « cette nuit » : « tu peux chercher sur internet le build de
+    // Jinx » n'ouvre PAS le surf libre pour la nuit.
+    if ((ContainsAny(lower, {"surfer", "surfe ", "naviguer", "navigue"}) ||
+         (lower.find("internet") != std::string::npos && ContainsAny(lower, {"cette nuit", "ce soir", "la nuit", "toute la nuit"}))) &&
+        ContainsAny(lower, {"tu peux", "je te laisse", "t'as le droit", "tu as le droit", "autorise", "vas-y", "vas y"})) {
+        const std::time_t now = std::time(nullptr);
+        std::tm tm{};
+        localtime_s(&tm, &now);
+        tm.tm_hour = 10;
+        tm.tm_min = 0;
+        tm.tm_sec = 0;
+        std::time_t until = std::mktime(&tm);
+        if (until <= now + 3600) until += 24 * 3600;
+        until = std::min<std::time_t>(until, now + 14 * 3600);
+        d_.db.SetProfile("web.freeUntil", std::to_string(static_cast<long long>(until)));
+        SeedRageBaitTraining();
+        std::tm end{};
+        localtime_s(&end, &until);
+        Say(std::format("Ok, je surfe jusqu'à {} heures pour m'entraîner : vidéos de vannes, rage bait et tes sujets. Lecture seule, "
+                        "jamais tes réseaux, tes messages ni tes mails. Dis arrête de surfer pour couper.",
+                        end.tm_hour));
+        lastAutoTraining_ = {};  // première séance dès que le PC est inactif
+        return true;
+    }
     // « Étudie le lien que j'ai copié » / « regarde ce TikTok » : le lien du presse-papiers va dans sa file de vidéos.
     if (ContainsAny(lower, {"étudie", "etudie", "regarde ce tiktok", "regarde cette vidéo", "regarde cette video", "apprends de"}) &&
         ContainsAny(lower, {"lien", "tiktok", "vidéo", "video", "copié", "copie"})) {

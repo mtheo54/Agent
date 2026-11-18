@@ -38,6 +38,7 @@
 #include "modules/DesktopPilot.hpp"
 #include "modules/DiscordSpeaking.hpp"
 #include "modules/VideoStudy.hpp"
+#include "network/WebSurf.hpp"
 #include "modules/GameCoach.hpp"
 #include "modules/SelfTrainer.hpp"
 #include "modules/SystemControl.hpp"

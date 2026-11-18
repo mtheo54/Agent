@@ -107,6 +107,8 @@ struct CompanionConfig {
     // Bruitages de rage bait lâchés au hasard dans le call (soundboard myinstants, téléchargés à l'arrivée).
     std::vector<std::string> callBaitSounds{"fahhh", "pizza nizar", "emotional damage", "bruh", "vine boom"};
     std::string discordMyName;     // ton pseudo Discord : ton propre cercle vert n'est pas pris pour un pote
+    float callBaitSoundChance = 0.45f;   // vanne spontanée : un bruitage À LA PLACE de la phrase
+    float callPunchSoundChance = 0.5f;   // vanne dite (rage bait, riposte…) : un bruitage juste après, pour ponctuer
     bool earrape = true;           // de temps en temps, un bruitage saturé (1,5 s max, volume plafonné)
     int substituteMaxMinutes = 60;
     // Entraînement vidéo (YouTube, TikTok) : il étudie des vidéos de vannes / rage bait pendant ses séances.

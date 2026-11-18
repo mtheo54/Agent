@@ -58,6 +58,9 @@
   "callBaitSounds": ["fahhh", "pizza nizar", "emotional damage", "bruh", "vine boom"],
   // Ton pseudo Discord : ton propre cercle vert n'est pas pris pour celui d'un pote.
   "discordMyName": "",
+  // Bruitages de rage bait : à la place d'une vanne (0,45) et juste après une vanne dite, pour ponctuer (0,5).
+  "callBaitSoundChance": 0.45,
+  "callPunchSoundChance": 0.5,
   // Earrape occasionnel sur un bruitage : 1,5 s max, au plus toutes les 10 min, volume plafonné.
   "earrape": true,
   // Entraînement vidéo : pendant ses séances, il regarde des vannes / du rage bait (YouTube, tes liens TikTok).
