@@ -54,6 +54,8 @@
   "callBaitChance": 0.25,
   // Bruitages de rage bait lâchés au hasard (téléchargés depuis myinstants à l'arrivée dans le call).
   "callBaitSounds": ["fahhh", "pizza nizar", "emotional damage", "bruh", "vine boom"],
+  // Ton pseudo Discord : ton propre cercle vert n'est pas pris pour celui d'un pote.
+  "discordMyName": "",
   // Earrape occasionnel sur un bruitage : 1,5 s max, au plus toutes les 10 min, volume plafonné.
   "earrape": true,
   // « Prends ma place » : 60 min au plus (10 à 60).

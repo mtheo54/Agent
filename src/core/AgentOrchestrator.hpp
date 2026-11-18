@@ -33,6 +33,7 @@
 #include "core/PermissionGate.hpp"
 #include "core/ResourceGovernor.hpp"
 #include "modules/DesktopPilot.hpp"
+#include "modules/DiscordSpeaking.hpp"
 #include "modules/GameCoach.hpp"
 #include "modules/SelfTrainer.hpp"
 #include "modules/SystemControl.hpp"
@@ -95,7 +96,7 @@ public:
     void OnTranscript(std::string text, EmotionEstimate emotion = {});  // thread-safe
     void OnBargeIn();  // l'utilisateur lui coupe la parole : il s'arrête et écoute
     // Ce qu'un pote vient de dire dans le call Discord, avec sa phrase audio (16 kHz) pour savoir qui c'est.
-    void OnCallSpeech(std::string text, std::vector<float> pcm16k);  // thread-safe
+    void OnCallSpeech(std::string text, std::vector<float> pcm16k, std::chrono::steady_clock::time_point end);  // thread-safe
     void UpdateConfig(const CompanionConfig& cfg);  // appliquée sur le thread de l'orchestrateur
     void SetOpenSettingsCallback(std::function<void()> cb) { onOpenSettings_ = std::move(cb); }
 
@@ -234,13 +235,18 @@ private:
     bool HandlePilot(const std::string& text, const std::string& lower, std::stop_token stop);
     // Call Discord (par ton micro) : rejoindre / quitter, réagir à ce que disent les autres
     bool HandleCallCommand(const std::string& lower, std::stop_token stop);
-    void HandleCallLine(const std::string& text, const std::vector<float>& pcm, std::stop_token stop);
+    void HandleCallLine(const std::string& text, const std::vector<float>& pcm, std::chrono::steady_clock::time_point end,
+                        std::stop_token stop);
     [[nodiscard]] std::string CallHint() const;
     [[nodiscard]] bool InCall() const { return d_.discord && d_.discord->InCall(); }
     std::deque<std::string> callLines_;  // derniers échanges du call (thread de l'orchestrateur)
     std::chrono::steady_clock::time_point lastCallBait_{}, callMutedUntil_{};
     // Qui parle (empreintes de voix) et fiches par personne
     SpeakerId speaker_;
+    DiscordSpeaking seeing_;  // qui parle, lu sur l'écran (cercle vert + pseudo)
+    bool listenOnly_ = false;  // mode écoute : il apprend les voix, ne parle que si on l'appelle
+    void JoinedCall();
+    void LeftCall();
     CallPeople people_;
     bool peopleLoaded_ = false;
     std::jthread modelDownload_;

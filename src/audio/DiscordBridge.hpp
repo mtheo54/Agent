@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <functional>
 #include <mutex>
@@ -38,7 +39,8 @@ struct DiscordBridgeConfig {
 
 class DiscordBridge final : public VoiceTap {
 public:
-    using CallSpeech = std::function<void(std::vector<float> pcm16k)>;
+    // Phrase des autres (16 kHz) + l'instant où elle s'est terminée (pour savoir qui Discord montrait en train de parler).
+    using CallSpeech = std::function<void(std::vector<float> pcm16k, std::chrono::steady_clock::time_point end)>;
 
     DiscordBridge() = default;
     ~DiscordBridge() override { Stop(); }

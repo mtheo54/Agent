@@ -22,8 +22,13 @@ public:
         "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/"
         "3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx";
     static constexpr unsigned long long kModelBytes = 29596978ull;
-    static constexpr float kSame = 0.55f;    // au-dessus : c'est elle (0 % de fausses reconnaissances mesurées)
-    static constexpr float kOther = 0.45f;   // en dessous : quelqu'un d'autre (entre les deux : pas sûr)
+    // Seuils mesurés avec des micros pourris (350-3200 Hz, 10 bits, Opus 12 kb/s, bruit à 12 dB) et des voix proches,
+    // empreintes apprises dans le call : ~80-90 % de phrases attribuées, < 0,5 % de mauvaises, le reste « pas sûr ».
+    static constexpr float kSame = 0.50f;          // c'est elle…
+    static constexpr float kMargin = 0.08f;        // …et nettement plus qu'un autre (voix qui se ressemblent)
+    static constexpr float kStrong = 0.55f;        // pour lui reprocher une moquerie : plus strict
+    static constexpr float kStrongMargin = 0.10f;
+    static constexpr float kOther = 0.40f;         // en dessous : une nouvelle voix
 
     SpeakerId();
     ~SpeakerId();

@@ -297,7 +297,7 @@ void DiscordBridge::OnDiscordAudio(const float* x, std::size_t frames) {
     const bool ready = vad_.Feed(down_.data(), down_.size(), segment_);
     othersTalking_.store(vad_.InSpeech(), std::memory_order_relaxed);
     if (ready && onSpeech_) {
-        onSpeech_(std::move(segment_));
+        onSpeech_(std::move(segment_), std::chrono::steady_clock::now());
         segment_ = {};
     }
 }

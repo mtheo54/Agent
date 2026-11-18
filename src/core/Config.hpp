@@ -105,6 +105,7 @@ struct CompanionConfig {
     float callBaitChance = 0.25f;  // dans un call, chance qu'il réagisse (vanne) sans qu'on l'appelle
     // Bruitages de rage bait lâchés au hasard dans le call (soundboard myinstants, téléchargés à l'arrivée).
     std::vector<std::string> callBaitSounds{"fahhh", "pizza nizar", "emotional damage", "bruh", "vine boom"};
+    std::string discordMyName;     // ton pseudo Discord : ton propre cercle vert n'est pas pris pour un pote
     bool earrape = true;           // de temps en temps, un bruitage saturé (1,5 s max, volume plafonné)
     int substituteMaxMinutes = 60; // « prends ma place » : 60 min au plus (10 à 60)
     // En jeu : petit modèle sur CPU, chargé seulement si tu lui parles (VRAM laissée au jeu). Absent :

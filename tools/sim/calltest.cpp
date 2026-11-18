@@ -17,7 +17,7 @@ int main(int, char** argv) {
     for (auto& e : std::filesystem::directory_iterator(argv[2])) {
         std::string b = e.path().filename().string(); if (b.rfind("r_", 0) == 0) b = b.substr(2);
         const std::string spk = b.substr(0, b.find('_'));
-        if (!seen[spk] && std::filesystem::file_size(e.path()) > 16000 * 4 * 6) { seen[spk] = true; files.push_back(e.path()); }
+        if (!seen[spk] && std::filesystem::file_size(e.path()) > 480000) { seen[spk] = true; files.push_back(e.path()); }
     }
     std::sort(files.begin(), files.end());
     files.resize(5);
@@ -25,21 +25,36 @@ int main(int, char** argv) {
     std::filesystem::remove(argv[3]);
     CallPeople people; people.Load(argv[3]);
     std::mt19937 rng(7);
-    std::map<int, std::string> truthToId; int ok = 0, total = 0, unsure = 0;
     const char* names[] = {"Karim", "Léa", "Yanis", "Inès", "Tom"};
-    for (int turn = 0; turn < 60; ++turn) {
-        const int who = turn < 5 ? turn : static_cast<int>(rng() % 5);
+    // Bruit de fond (micro bas de gamme) ajouté par-dessus le fichier déjà dégradé.
+    std::normal_distribution<float> noise(0.f, 1.f);
+    const auto phrase = [&](int who, double len, bool firstHalf) {
         const auto& v = voices[who];
-        const double len = turn < 5 ? 3.0 : 1.6 + (rng() % 30) / 10.0;  // présentations de 3 s, puis phrases de 1,6 à 4,5 s
-        const size_t n = static_cast<size_t>(len * 16000), st = rng() % (v.size() - n);
-        auto e = id.Embed(std::vector<float>(v.begin() + st, v.begin() + st + n));
+        const size_t n = static_cast<size_t>(len * 16000), half = v.size() / 2;
+        const size_t st = firstHalf ? rng() % (half - n) : half + rng() % (v.size() - half - n);
+        std::vector<float> x(v.begin() + st, v.begin() + st + n);
+        double p = 0; for (float y : x) p += y * y; const float sd = static_cast<float>(std::sqrt(p / n / 15.85));  // SNR 12 dB
+        for (auto& y : x) y += sd * noise(rng);
+        return x;
+    };
+    // Phase 1 : Discord visible, 6 phrases par personne étiquetées par le pseudo (cercle vert).
+    for (int round = 0; round < 6; ++round)
+        for (int who = 0; who < 5; ++who)
+            if (auto e = id.Embed(phrase(who, 1.6 + (rng() % 18) / 10.0, true))) people.Enroll(*e, names[who], round);
+    // Phase 2 : Discord caché (en jeu) : la voix seule, sur d'autres phrases.
+    int ok = 0, wrong = 0, unsure = 0, strongWrong = 0;
+    for (int turn = 0; turn < 150; ++turn) {
+        const int who = static_cast<int>(rng() % 5);
+        auto e = id.Embed(phrase(who, 1.6 + (rng() % 18) / 10.0, false));
         if (!e) continue;
-        auto m = people.Identify(*e, len >= 2.0, turn);
-        if (!m.person || !m.sure) { ++unsure; continue; }
-        if (turn < 5) { truthToId[who] = m.person->id; people.Rename(*m.person, names[who]); continue; }
-        ++total; ok += truthToId[who] == m.person->id;
+        auto m = people.Identify(*e, false, 100 + turn);
+        if (!m.sure) { ++unsure; continue; }
+        const bool right = m.person->name == names[who];
+        right ? ++ok : ++wrong;
+        if (!right && m.strong) ++strongWrong;
     }
-    std::printf("fiches créées : %zu (5 voix) ; bonne personne %d/%d ; pas sûr (rien attribué) %d\n", people.Size(), ok, total, unsure);
+    std::printf("micros dégradés : fiches %zu ; à la voix seule : juste %d, FAUX %d (dont %d « sûr pour une moquerie »), pas sûr %d\n",
+                people.Size(), ok, wrong, strongWrong, unsure);
     CallPerson* k = people.ByName("karim");
     CallPeople::Mocked(*k, "Omnis il est éclaté au sol mdr");
     CallPeople::Remember(*k, "J'ai raté mon flash sous tour");

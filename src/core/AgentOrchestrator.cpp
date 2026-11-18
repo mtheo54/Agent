@@ -88,6 +88,7 @@ void AgentOrchestrator::Stop() {
     d_.loopback.Stop();
     d_.analyzer.Stop();
     perf_.Stop();  // résumé de la partie en cours, s'il y en a une
+    seeing_.Stop();
 }
 
 void AgentOrchestrator::Post(Job job) {
@@ -785,12 +786,12 @@ std::string UrlEncode(const std::string& s) {
 }
 }  // namespace
 
-void AgentOrchestrator::OnCallSpeech(std::string text, std::vector<float> pcm16k) {
+void AgentOrchestrator::OnCallSpeech(std::string text, std::vector<float> pcm16k, std::chrono::steady_clock::time_point end) {
     text = Trim(std::move(text));
     const std::string lower = Lower(text);
     // Hallucinations classiques de Whisper sur du bruit (la musique, elle, est un signal : on la garde).
     if (text.size() < 3 || HasAny(lower, {"sous-titr", "amara.org", "merci d'avoir regardé"})) return;
-    Post([this, text = std::move(text), pcm = std::move(pcm16k)](std::stop_token stop) { HandleCallLine(text, pcm, stop); });
+    Post([this, text = std::move(text), pcm = std::move(pcm16k), end](std::stop_token stop) { HandleCallLine(text, pcm, end, stop); });
 }
 
 bool AgentOrchestrator::EnsureSpeakerModel() {
@@ -881,6 +882,7 @@ bool AgentOrchestrator::HandleCallCommand(const std::string& lower, std::stop_to
             Say("J'arrive pas à relayer ton micro" + (why.empty() ? std::string(".") : ", " + why + "."));
         } else {
             d_.discord->Join();
+            JoinedCall();
             callLines_.clear();
             callMutedUntil_ = quietUntil_ = {};
             protected_.clear();
@@ -925,6 +927,19 @@ bool AgentOrchestrator::HandleCallCommand(const std::string& lower, std::stop_to
         }
         return true;
     }
+    // Mode écoute : il est là, apprend les voix et les pseudos, ne parle que si on l'appelle.
+    if (HasAny(lower, {"écoute le call", "ecoute le call", "apprends les voix", "apprends leurs voix", "mode écoute", "mode ecoute"})) {
+        const bool already = InCall();
+        if (!already && !join()) return true;
+        listenOnly_ = true;
+        if (already) Say("Ok, je me fais discret et j'écoute tout le monde.");
+        return true;
+    }
+    if (listenOnly_ && HasAny(lower, {"parle normalement", "mode normal", "tu peux parler", "lâche-toi", "lache-toi"})) {
+        listenOnly_ = false;
+        Say("Ah enfin. Je reprends du service.");
+        return true;
+    }
     if (!HasAny(lower, {"call", "vocal", "discord"})) return false;
     if (HasAny(lower, {"rejoins", "rejoint", "viens dans", "viens en", "connecte-toi", "connecte toi", "rentre dans", "va dans"})) {
         if (InCall()) Say("J'y suis déjà, frérot.");
@@ -939,6 +954,7 @@ bool AgentOrchestrator::HandleCallCommand(const std::string& lower, std::stop_to
         if (subActive_) EndSubstitute(false);
         Say("Allez, je vous laisse. Bisous.");
         waitSilence();
+        LeftCall();
         d_.discord->Leave();
         callLines_.clear();
         return true;
@@ -946,21 +962,38 @@ bool AgentOrchestrator::HandleCallCommand(const std::string& lower, std::stop_to
     return false;
 }
 
-void AgentOrchestrator::HandleCallLine(const std::string& text, const std::vector<float>& pcm, std::stop_token stop) {
+void AgentOrchestrator::HandleCallLine(const std::string& text, const std::vector<float>& pcm,
+                                       std::chrono::steady_clock::time_point end, std::stop_token stop) {
     if (!InCall()) return;
     const auto now = std::chrono::steady_clock::now();
     lastCallLineAt_ = now;
     const std::string lower = Lower(text);
     const bool named = HasAny(lower, {"omnis", "omni ", "l'ia", "le bot", "le robot"});
 
-    // 1) Qui parle ? (rien n'est attribué si ce n'est pas sûr)
+    // 1) Qui parle ? D'abord Discord (cercle vert + pseudo pendant la phrase) : c'est sûr, et ça APPREND sa voix.
+    //    Sinon (Discord caché, en jeu) : l'empreinte de voix, avec marge sur le 2e. Rien n'est attribué au hasard.
+    const auto dur = std::chrono::milliseconds(pcm.size() * 1000 / 16000);
+    std::string shown = seeing_.SpeakerBetween(end - dur, end - std::chrono::milliseconds(600));
+    if (!cfg_.discordMyName.empty() && Lower(shown) == Lower(cfg_.discordMyName)) shown.clear();
     CallPerson* who = nullptr;
-    if (EnsureSpeakerModel())
-        if (const auto e = speaker_.Embed(pcm)) {
-            const auto m = people_.Identify(*e, pcm.size() >= 16000 * 5 / 2, UnixNow());
-            if (m.sure) who = m.person;
-        }
-    const std::string label = who ? who->Label() : "Un pote";
+    bool strong = false;
+    const bool model = EnsureSpeakerModel();
+    const auto emb = model ? speaker_.Embed(pcm) : std::nullopt;
+    if (!shown.empty() && emb) {
+        who = people_.Enroll(*emb, shown, UnixNow()).person;
+        strong = true;
+        people_.Save();
+    } else if (!shown.empty()) {
+        who = people_.ByName(shown);
+        strong = who != nullptr;
+    } else if (emb) {
+        // Discord visible mais ambigu : on ne crée pas de fiche « Voix N » en double.
+        const auto m = people_.Identify(*emb, pcm.size() >= 16000 * 5 / 2 && !seeing_.Seeing(), UnixNow());
+        if (m.sure) who = m.person;
+        strong = m.strong;
+    }
+    const std::string label = who ? who->Label() : !shown.empty() ? shown : "Un pote";
+    if (!shown.empty() || who) log::Info("Call: {} ({})", label, !shown.empty() ? "vu sur Discord" : strong ? "voix, sûr" : "voix");
     if (who) lastSpeakerId_ = who->id;
 
     // 2) Quelqu'un fait du son : discret pendant 10 min (une ligne « [Musique] » seule n'est pas une phrase).
@@ -1010,6 +1043,7 @@ void AgentOrchestrator::HandleCallLine(const std::string& text, const std::vecto
         d_.voice.StopSpeaking();
         Say("Bon, je vous laisse. Bisous.");
         for (int i = 0; i < 80 && d_.voice.IsSpeaking(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        LeftCall();
         d_.discord->Leave();
         callLines_.clear();
         if (subActive_) {  // viré pendant ton absence : il va s'entraîner au lieu de rien faire
@@ -1047,11 +1081,11 @@ void AgentOrchestrator::HandleCallLine(const std::string& text, const std::vecto
     }
     // 8) Il répond ? Quand on le nomme, quand on se moque de lui, pendant ton absence aux questions ; sinon parfois une vanne.
     const bool mock = MocksOmnis(lower);
-    if (mock && who) {
+    if (mock && who && strong) {  // on ne reproche une moquerie qu'à quelqu'un d'identifié sans ambiguïté
         CallPeople::Mocked(*who, text);
         people_.Save();
     }
-    const bool quiet = now < quietUntil_ || mode_.load() == SystemMode::Studio;
+    const bool quiet = now < quietUntil_ || mode_.load() == SystemMode::Studio || listenOnly_;
     const bool question = text.find('?') != std::string::npos;
     bool bait = false;
     if (!named && !mock && !quiet && now >= callMutedUntil_ && now - lastCallBait_ > std::chrono::seconds(60) &&
@@ -1077,7 +1111,8 @@ void AgentOrchestrator::HandleCallLine(const std::string& text, const std::vecto
     if (bait || mock) ctx += std::string(kRageBaitPlaybook) + "\n";
     ctx += MemeHint();
     std::string ask;
-    if (mock) ask = label + " vient de se moquer de toi : « " + text + " ». Riposte précise et cinglante, appuyée sur ce que tu sais de lui. Une phrase.";
+    if (mock && !strong) ask = "Quelqu'un (tu ne sais pas qui) vient de se moquer de toi : « " + text + " ». Riposte en demandant qui a osé, une phrase.";
+    else if (mock) ask = label + " vient de se moquer de toi : « " + text + " ». Riposte précise et cinglante, appuyée sur ce que tu sais de lui. Une phrase.";
     else if (bait) ask = label + " vient de dire : « " + text + " ». Rage bait précis sur CE qu'il vient de dire. Une phrase.";
     else ask = label + " te parle : « " + text + " ». Réponds-lui ; s'il a besoin d'aide, aide-le avec ce que tu sais.";
     const std::vector<ChatTurn> messages{{"system", PersonaPrompt()}, {"user", "[Contexte]\n" + ctx + "\n[Message]\n" + ask}};
@@ -1100,6 +1135,15 @@ void AgentOrchestrator::HandleCallLine(const std::string& text, const std::vecto
 // ---------------------------------------------------------------------------
 // « Prends ma place » : 60 min au plus. Il se présente comme Omnis (jamais comme toi), répond, note ce qu'on te
 // demande, met des vidéos ou montre ses recherches sur l'écran 1, et te fait le résumé — en privé — à ton retour.
+
+void AgentOrchestrator::JoinedCall() {
+    seeing_.Start([this] { return d_.discord && d_.discord->OthersTalking() && mode_.load() != SystemMode::Gaming; });
+}
+
+void AgentOrchestrator::LeftCall() {
+    seeing_.Stop();
+    listenOnly_ = false;
+}
 
 void AgentOrchestrator::StartSubstitute(const std::string& reason) {
     const auto now = std::chrono::steady_clock::now();

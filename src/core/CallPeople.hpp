@@ -22,8 +22,11 @@ namespace companion {
 struct CallPerson {
     std::string id;    // « p3 »
     std::string name;  // vide = inconnu
-    std::vector<float> voice;  // empreinte moyenne
+    // Jusqu'à 5 empreintes (micro qui change, voix fatiguée, cri…), apprises dans les calls eux-mêmes.
+    std::vector<std::vector<float>> voices;
+    std::vector<int> counts;
     int samples = 0;
+    [[nodiscard]] float Score(const std::vector<float>& emb) const;
     std::deque<std::string> said;    // dernières phrases (non sensibles)
     std::deque<std::string> mocks;   // ses moqueries envers Omnis
     std::vector<std::string> avoid;  // catégories sensibles : ne pas en parler
@@ -36,7 +39,9 @@ public:
     struct Match {
         CallPerson* person = nullptr;
         float score = 0.f;
-        bool sure = false;  // assez proche pour lui attribuer une moquerie
+        bool sure = false;    // c'est lui (seuil + marge sur le 2e)
+        bool strong = false;  // assez sûr pour lui attribuer une moquerie
+        bool fromDiscord = false;  // nom lu sur Discord (cercle vert), pas deviné à la voix
     };
 
     bool Load(const std::filesystem::path& file);
@@ -45,6 +50,8 @@ public:
     // Qui parle ? Met à jour l'empreinte si c'est sûr ; crée une fiche si c'est clairement une nouvelle voix
     // et que la phrase est assez longue (allowCreate).
     Match Identify(const std::vector<float>& emb, bool allowCreate, std::int64_t now);
+    // Discord a montré QUI parlait pendant la phrase (cercle vert + pseudo) : on apprend sa voix, sans deviner.
+    Match Enroll(const std::vector<float>& emb, const std::string& name, std::int64_t now);
     CallPerson* ById(const std::string& id);
     CallPerson* ByName(const std::string& name);
     bool Forget(const std::string& id);
@@ -60,6 +67,8 @@ private:
     std::filesystem::path file_;
     std::deque<CallPerson> people_;  // deque : les pointeurs restent valides quand on ajoute
     int nextId_ = 1;
+    static void Learn(CallPerson& p, const std::vector<float>& emb);
+    CallPerson& Create(const std::vector<float>& emb, std::int64_t now);
 };
 
 // --- Ce qu'on entend dans le call (logique pure) ---

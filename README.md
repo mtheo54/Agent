@@ -354,9 +354,28 @@ religion, la sexualité, le physique ou un handicap, et il lâche si quelqu'un e
 **N'importe qui dans le call** peut dire « Omnis, tais-toi » (il se calme 10 minutes) ou « Omnis, dégage »
 (il quitte le call). Toi : « quitte le call ».
 
-**Il sait qui parle.** Une empreinte de voix (CAM++, ~30 Mo téléchargés au premier call) le dit à chaque phrase :
-mesuré sur 37 voix françaises passées par le codec de Discord, la bonne personne est retrouvée 99 % du temps dans un
-call de 5, et quand il n'est pas sûr, il n'attribue rien. Chaque pote a sa **fiche** (sur ton PC seulement,
+**Il sait qui parle, d'abord en regardant Discord.** Quand quelqu'un parle, Discord entoure son avatar d'un
+cercle vert (ou encadre sa tuile). Omnis capture la fenêtre Discord, 4 fois par seconde et seulement pendant que
+quelqu'un parle (jamais en jeu), repère le vert et lit le pseudo à côté grâce à l'accessibilité de Windows. Il ne
+clique rien et n'envoie rien à Discord : il regarde, comme toi. Il faut que le pseudo soit visible à l'écran, par
+exemple Discord sur ton 2e écran. Mets ton pseudo dans `discordMyName` : ton propre cercle sera ignoré.
+
+**Chaque phrase étiquetée par Discord lui apprend la voix de cette personne**, à travers SON micro, aussi pourri
+soit-il : jusqu'à 5 empreintes par personne (CAM++, ~30 Mo téléchargés au premier call). Quand Discord n'est pas
+visible (toi en plein jeu), la voix prend le relais. Il exige alors une marge nette sur la 2e voix la plus proche,
+pour ne pas confondre deux voix qui se ressemblent.
+
+Ce que donnent les mesures :
+
+| Conditions | Résultat |
+|---|---|
+| Micro bas de gamme (350-3200 Hz, 10 bits), Opus 12 kb/s, bruit, 6 phrases apprises par personne | 72 % des phrases attribuées à la voix seule, **0 erreur** ; le reste est « pas sûr », et rien n'est attribué |
+| Micros corrects | 99 % de bonnes attributions |
+| Moquerie | Reprochée seulement à quelqu'un identifié sans ambiguïté. Sinon il demande « qui a osé ? » |
+
+**« Omnis, écoute le call »** (mode écoute) : il est là, écoute tout le monde et apprend les pseudos et les voix,
+mais ne parle que si on l'appelle. « Parle normalement » pour le relâcher. Le meilleur moyen de démarrer : une
+soirée en mode écoute avec Discord visible, et il connaît tout le monde. Chaque pote a sa **fiche** (sur ton PC seulement,
 `call_people.json`) : prénom (« moi c'est Karim », ou toi : « le dernier qui a parlé c'est Karim »), ses dernières
 phrases, ses moqueries envers Omnis, et les **sujets à éviter**. Il prévient en arrivant, et **« Omnis, oublie-moi »**
 efface la fiche de celui qui le dit. Aucun son n'est enregistré, juste des nombres.

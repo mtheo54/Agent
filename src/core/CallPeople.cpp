@@ -44,13 +44,16 @@ bool CallPeople::Load(const std::filesystem::path& file) {
             CallPerson c;
             c.id = p.value("id", std::string{});
             c.name = p.value("name", std::string{});
-            c.voice = p.value("voice", std::vector<float>{});
+            c.voices = p.value("voices", std::vector<std::vector<float>>{});
+            if (c.voices.empty() && p.contains("voice")) c.voices.push_back(p["voice"].get<std::vector<float>>());  // ancien format
+            c.counts = p.value("counts", std::vector<int>(c.voices.size(), 1));
+            c.counts.resize(c.voices.size(), 1);
             c.samples = p.value("samples", 0);
             for (const auto& s : p.value("said", std::vector<std::string>{})) c.said.push_back(s);
             for (const auto& s : p.value("mocks", std::vector<std::string>{})) c.mocks.push_back(s);
             c.avoid = p.value("avoid", std::vector<std::string>{});
             c.lastSeen = p.value("lastSeen", std::int64_t{0});
-            if (!c.id.empty() && !c.voice.empty()) people_.push_back(std::move(c));
+            if (!c.id.empty() && !c.voices.empty()) people_.push_back(std::move(c));
         }
     } catch (const std::exception&) {
         people_.clear();
@@ -67,7 +70,8 @@ bool CallPeople::Save() const {
     for (const auto& p : people_)
         j["people"].push_back({{"id", p.id},
                                {"name", p.name},
-                               {"voice", p.voice},
+                               {"voices", p.voices},
+                               {"counts", p.counts},
                                {"samples", p.samples},
                                {"said", std::vector<std::string>(p.said.begin(), p.said.end())},
                                {"mocks", std::vector<std::string>(p.mocks.begin(), p.mocks.end())},
@@ -86,44 +90,109 @@ bool CallPeople::Save() const {
     return !ec;
 }
 
-CallPeople::Match CallPeople::Identify(const std::vector<float>& emb, bool allowCreate, std::int64_t now) {
-    Match m;
-    for (auto& p : people_) {
-        const float s = Cosine(emb, p.voice);
-        if (s > m.score) {
-            m.score = s;
-            m.person = &p;
+float CallPerson::Score(const std::vector<float>& emb) const {
+    float best = 0.f;
+    for (const auto& v : voices) best = std::max(best, Cosine(emb, v));
+    return best;
+}
+
+// Ajoute la phrase à l'empreinte la plus proche (moyenne glissante), ou en crée une nouvelle si elle est différente
+// (autre micro, voix qui crie) ; 5 au plus, la moins utilisée est remplacée.
+void CallPeople::Learn(CallPerson& p, const std::vector<float>& emb) {
+    int nearest = -1;
+    float sim = -1.f;
+    for (std::size_t i = 0; i < p.voices.size(); ++i)
+        if (const float s = Cosine(emb, p.voices[i]); s > sim) {
+            sim = s;
+            nearest = static_cast<int>(i);
         }
-    }
-    if (m.person && m.score >= SpeakerId::kSame) {
-        m.sure = true;
-        CallPerson& p = *m.person;
-        // Empreinte moyenne glissante (au plus 20 phrases : elle suit un micro qui change).
-        const float w = 1.f / static_cast<float>(std::min(p.samples, 19) + 1);
+    ++p.samples;
+    if (nearest >= 0 && sim >= 0.7f) {
+        auto& v = p.voices[static_cast<std::size_t>(nearest)];
+        int& n = p.counts[static_cast<std::size_t>(nearest)];
+        const float w = 1.f / static_cast<float>(std::min(n, 19) + 1);
         double norm = 0;
-        for (std::size_t i = 0; i < p.voice.size(); ++i) {
-            p.voice[i] = (1.f - w) * p.voice[i] + w * emb[i];
-            norm += static_cast<double>(p.voice[i]) * p.voice[i];
+        for (std::size_t i = 0; i < v.size(); ++i) {
+            v[i] = (1.f - w) * v[i] + w * emb[i];
+            norm += static_cast<double>(v[i]) * v[i];
         }
         const float inv = norm > 0 ? static_cast<float>(1.0 / std::sqrt(norm)) : 1.f;
-        for (auto& v : p.voice) v *= inv;
-        ++p.samples;
-        p.lastSeen = now;
+        for (auto& x : v) x *= inv;
+        ++n;
+        return;
+    }
+    if (p.voices.size() < 5) {
+        p.voices.push_back(emb);
+        p.counts.push_back(1);
+        return;
+    }
+    const auto least = std::ranges::min_element(p.counts) - p.counts.begin();
+    p.voices[static_cast<std::size_t>(least)] = emb;
+    p.counts[static_cast<std::size_t>(least)] = 1;
+}
+
+CallPerson& CallPeople::Create(const std::vector<float>& emb, std::int64_t now) {
+    CallPerson p;
+    p.id = "p" + std::to_string(nextId_++);
+    p.voices.push_back(emb);
+    p.counts.push_back(1);
+    p.samples = 1;
+    p.lastSeen = now;
+    people_.push_back(std::move(p));
+    return people_.back();
+}
+
+CallPeople::Match CallPeople::Identify(const std::vector<float>& emb, bool allowCreate, std::int64_t now) {
+    Match m;
+    float second = 0.f;
+    for (auto& p : people_) {
+        const float s = p.Score(emb);
+        if (s > m.score) {
+            second = m.score;
+            m.score = s;
+            m.person = &p;
+        } else if (s > second) {
+            second = s;
+        }
+    }
+    const float margin = m.score - second;
+    if (m.person && m.score >= SpeakerId::kSame && margin >= SpeakerId::kMargin) {
+        m.sure = true;
+        m.strong = m.score >= SpeakerId::kStrong && margin >= SpeakerId::kStrongMargin;
+        if (m.strong) Learn(*m.person, emb);  // n'apprend que de ce qui est sans ambiguïté
+        m.person->lastSeen = now;
         return m;
     }
     if ((!m.person || m.score < SpeakerId::kOther) && allowCreate && people_.size() < 40) {
-        CallPerson p;
-        p.id = "p" + std::to_string(nextId_++);
-        p.voice = emb;
-        p.samples = 1;
-        p.lastSeen = now;
-        people_.push_back(std::move(p));
-        m.person = &people_.back();
+        m.person = &Create(emb, now);
         m.score = 1.f;
-        m.sure = true;
+        m.sure = m.strong = true;
         return m;
     }
-    m.sure = false;  // entre deux seuils : on ne sait pas, on n'attribue rien
+    m.sure = m.strong = false;  // entre deux : on ne sait pas, on n'attribue rien
+    return m;
+}
+
+CallPeople::Match CallPeople::Enroll(const std::vector<float>& emb, const std::string& name, std::int64_t now) {
+    Match m;
+    m.fromDiscord = m.sure = m.strong = true;
+    m.score = 1.f;
+    m.person = ByName(name);
+    if (!m.person) {
+        // Une voix déjà connue sans prénom, qui ressemble nettement à celle-ci : c'était elle, on la nomme.
+        CallPerson* unnamed = nullptr;
+        float best = 0.f;
+        for (auto& p : people_)
+            if (p.name.empty())
+                if (const float s = p.Score(emb); s > best) {
+                    best = s;
+                    unnamed = &p;
+                }
+        m.person = unnamed && best >= SpeakerId::kStrong ? unnamed : &Create(emb, now);
+        Rename(*m.person, name);
+    }
+    Learn(*m.person, emb);
+    m.person->lastSeen = now;
     return m;
 }
 

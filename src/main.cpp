@@ -444,10 +444,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
         dc.micDevice = log::Widen(cfg.discordMicDevice);
         // Phrases des autres -> Whisper (file du moteur de voix) -> orchestrateur.
         // La phrase audio sert aussi à savoir QUI parle (empreinte de voix) : une copie suit la transcription.
-        discord.Start(dc, [&voice, &orchestrator](std::vector<float> pcm) {
+        discord.Start(dc, [&voice, &orchestrator](std::vector<float> pcm, std::chrono::steady_clock::time_point end) {
             std::vector<float> copy = pcm;
-            voice.TranscribeExternal(std::move(pcm), [&orchestrator, copy = std::move(copy)](std::string text) mutable {
-                orchestrator.OnCallSpeech(std::move(text), std::move(copy));
+            voice.TranscribeExternal(std::move(pcm), [&orchestrator, copy = std::move(copy), end](std::string text) mutable {
+                orchestrator.OnCallSpeech(std::move(text), std::move(copy), end);
             });
         });
         voice.SetVoiceTap(&discord);  // sa voix (et ses bruitages) part dans le call quand il l'a rejoint

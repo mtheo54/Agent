@@ -152,6 +152,7 @@ add_executable(CompanionAI WIN32
     src/audio/SpeakerId.cpp
     src/core/CallPeople.cpp
     src/modules/DesktopPilot.cpp
+    src/modules/DiscordSpeaking.cpp
     src/audio/TextNormalizerFr.cpp
     src/render/OverlayWindow.cpp
     src/render/CartoonAvatar.cpp
