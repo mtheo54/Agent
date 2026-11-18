@@ -794,7 +794,7 @@ struct VoiceEngine::Impl {
         if (style == SpeakingStyle::Bright) phrase *= 1.05f;
         if (style == SpeakingStyle::Soft || style == SpeakingStyle::Calm) phrase *= 0.93f;
         const float wavePeriod = 2.0f + 1.5f * NextRandom(vrng), wavePhase = 6.2832f * NextRandom(vrng);
-        const float waveDepth = 0.07f + 0.05f * NextRandom(vrng);
+        const float waveDepth = 0.10f + 0.06f * NextRandom(vrng);  // contrastes plus marqués (demande utilisateur)
         const float estSeconds = std::max(1.0f, static_cast<float>(text.size()) / 15.f);  // ~15 caractères/s au débit brut
         std::size_t heard = 0;  // échantillons bruts déjà passés (horloge du contour)
         // « … » : il reste sur la fin du mot avant la pause (débit ralenti ~0,3 s avant), puis repart normalement.
@@ -803,24 +803,61 @@ struct VoiceEngine::Impl {
             holds.push_back(static_cast<float>(p) / 15.f);
         for (std::size_t p = text.find("..."); p != std::string::npos; p = text.find("...", p + 3))
             holds.push_back(static_cast<float>(p) / 15.f);
+        // Un moment où il ralentit « à mort » au milieu d'une phrase sur deux (réflexion), puis il réaccélère un peu.
+        const float dragAt = NextRandom(vrng) < 0.5f && estSeconds > 2.5f ? (0.25f + 0.5f * NextRandom(vrng)) * estSeconds : -10.f;
         const auto paceAt = [&](std::size_t samples) {
             const float t = static_cast<float>(samples) / static_cast<float>(outputRate);
             float k = phrase * (1.f + waveDepth * std::sin(6.2832f * t / wavePeriod + wavePhase));
-            for (const float h : holds)
-                if (t > h - 0.35f && t < h + 0.05f) k *= 0.72f;
+            for (const float h : holds) {
+                if (t > h - 0.4f && t < h + 0.05f) k *= 0.55f;       // il traîne sur la fin du mot
+                else if (t >= h + 0.05f && t < h + 0.8f) k *= 1.1f;  // puis repart un peu plus vite
+            }
+            if (t > dragAt && t < dragAt + 0.5f) k *= 0.62f;
+            else if (t >= dragAt + 0.5f && t < dragAt + 1.2f) k *= 1.1f;
             if (t < 0.35f) k *= 0.95f;                    // attaque posée
             if (t > 0.82f * estSeconds) k *= 0.88f;       // fin de phrase : on ralentit
             tempo.SetTempo(baseTempo * k);
         };
         tempo.Reset();
+        tempo.SetMaxPause(0.3f);
         paceAt(0);
+        // Pauses : rallongées SEULEMENT là où la voix se tait déjà (jamais au milieu d'un mot) et près d'une ponctuation
+        // du texte : « … » longue (0,4 à 0,8 s), fin de phrase parfois (0,2 à 0,5 s), virgule de temps en temps.
+        struct PauseAt { float t, sec; bool used = false; };
+        std::vector<PauseAt> pauses;
+        for (const float h : holds) pauses.push_back({h, 0.4f + 0.4f * NextRandom(vrng)});
+        for (std::size_t p = 0; p < text.size(); ++p) {
+            const char c = text[p];
+            if ((c == '.' || c == '!' || c == '?') && p + 1 < text.size() && NextRandom(vrng) < 0.5f)
+                pauses.push_back({static_cast<float>(p) / 15.f, 0.2f + 0.3f * NextRandom(vrng)});
+            else if (c == ',' && NextRandom(vrng) < 0.3f)
+                pauses.push_back({static_cast<float>(p) / 15.f, 0.12f + 0.2f * NextRandom(vrng)});
+        }
+        const auto stretchPause = [&](const std::vector<float>& out) -> std::size_t {
+            if (out.size() < 480) return 0;
+            double e = 0;
+            for (std::size_t i = out.size() - 480; i < out.size(); ++i) e += static_cast<double>(out[i]) * out[i];
+            if (std::sqrt(e / 480.0) > 0.004) return 0;  // pas dans un silence
+            const float t = static_cast<float>(heard) / static_cast<float>(outputRate);
+            for (auto& p : pauses)
+                if (!p.used && std::abs(t - p.t) < 0.7f) {
+                    p.used = true;
+                    return static_cast<std::size_t>(p.sec * static_cast<float>(outputRate));
+                }
+            return 0;
+        };
         // Chaîne d'une phrase : débit -> émotion -> bugs -> micro -> sortie.
         const auto emit = [&](std::vector<float>& buf) {
             if (buf.empty()) return;
             shaper.Process(buf);
-            glitcher.Process(buf);
-            color.Process(buf.data(), buf.size());
+            // Plus de « glitches » (syllabe qui accroche, voix bizarre) : remplacés par un grain bitcrush + saturation
+            // permanents dans VoiceFX (demande utilisateur).
+            color.Process(buf.data(), buf.size(), /*weird=*/false);
             PushAudio(buf, generation);
+            if (const std::size_t extra = stretchPause(buf)) {
+                std::vector<float> silence(extra, 0.f);
+                PushAudio(silence, generation);
+            }
         };
         shaper.Set(style, emotionIntensity.load());
         shaper.Reset();
@@ -859,14 +896,12 @@ struct VoiceEngine::Impl {
                     paceAt(heard);
                     heard += out.size();
                     tempo.Process(out);
-                    glitcher.Process(out);
-                    color.Process(out.data(), out.size());
+                    color.Process(out.data(), out.size(), false);
                     PushAudio(out, generation);
                 }
             }
             tempo.Flush(chunkBuf);
-            glitcher.Process(chunkBuf);
-            color.Process(chunkBuf.data(), chunkBuf.size());
+            color.Process(chunkBuf.data(), chunkBuf.size(), false);
             if (!chunkBuf.empty()) PushAudio(chunkBuf, generation);
         }
 #endif

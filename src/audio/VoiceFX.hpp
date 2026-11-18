@@ -33,6 +33,9 @@ struct VoiceFXConfig {
     float rateCalmHz = 16000.0f, rateIntenseHz = 12000.0f;
     float wetCalm = 0.25f, wetIntense = 0.45f;
     float bandLowHz = 300.0f, bandHighHz = 4500.0f;
+    // Saturation douce (tanh, gain unité à bas niveau : seules les crêtes s'arrondissent et chauffent), mélangée au son.
+    float satDriveCalm = 1.8f, satDriveIntense = 3.2f;
+    float satMixCalm = 0.3f, satMixIntense = 0.5f;
     float smoothingMs = 40.0f;
 };
 
@@ -97,6 +100,9 @@ public:
         const float tBits = Lerp(cfg_.bitDepthCalm, cfg_.bitDepthIntense, mood);
         const float tRate = std::min(Lerp(cfg_.rateCalmHz, cfg_.rateIntenseHz, mood), sampleRate_);
         const float tWet = bypass ? 0.f : Lerp(cfg_.wetCalm, cfg_.wetIntense, mood);
+        drive_ = Lerp(cfg_.satDriveCalm, cfg_.satDriveIntense, mood);
+        tanhBias_ = std::tanh(drive_ * 0.04f);
+        satMix_ = bypass ? 0.f : Lerp(cfg_.satMixCalm, cfg_.satMixIntense, mood);
 
         double sumSq = 0.0;
         for (float& s : mono) {
@@ -113,7 +119,10 @@ public:
             }
             const float crushedBand = lpf_.Process(hpf_.Process(held_));
             const float dryBand = lpfDry_.Process(hpfDry_.Process(dry));
-            const float out = std::clamp(dry + wet_ * (crushedBand - dryBand), -1.f, 1.f);
+            const float crushed = dry + wet_ * (crushedBand - dryBand);
+            // Saturation : légère asymétrie (harmoniques paires, son « chaud »), sans décalage continu.
+            const float sat = (std::tanh(drive_ * (crushed + 0.04f)) - tanhBias_) / drive_;
+            const float out = std::clamp(crushed + satMix_ * (sat - crushed), -1.f, 1.f);
             s = out;
             sumSq += static_cast<double>(out) * out;
         }
@@ -127,6 +136,7 @@ private:
     float sampleRate_ = 48000.f, invSampleRate_ = 1.f / 48000.f, smoothCoef_ = 0.001f;
     float bits_ = 9.f, rate_ = 16000.f, wet_ = 0.35f;
     float phase_ = 1.f, held_ = 0.f;
+    float drive_ = 2.5f, tanhBias_ = 0.1f, satMix_ = 0.4f;
     Biquad hpf_, lpf_, hpfDry_, lpfDry_;
     std::atomic<float> mood_{0.5f};  // neutre = nominal du rapport
     std::atomic<bool> bypass_{false};
