@@ -135,6 +135,14 @@ inline std::string StudyPrompt(const std::string& title, const std::string& tran
            "genre, le physique, un handicap, la famille, la santé ou l'argent.";
 }
 
+// Images d'une vidéo regardée ensemble : début à gauche, plus tard à droite.
+inline constexpr const char* kWatchVisionPrompt =
+    "Deux captures d'une même vidéo courte (Reel, TikTok ou YouTube) : à gauche le début, à droite un peu plus tard. "
+    "Réponds exactement sur ce modèle, rien d'autre :\n"
+    "Texte à l'écran : <TOUT le texte écrit sur les images, recopié mot pour mot, de haut en bas ; « aucun » s'il n'y en a pas>\n"
+    "Scène : <une phrase : ce qu'on voit, sans rien inventer (pas de durée, pas de nom que tu ne lis pas)>\n"
+    "Ignore les boutons et l'interface du site.";
+
 struct StudyResult {
     bool humour = false;
     std::string technique, why;

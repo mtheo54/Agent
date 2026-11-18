@@ -62,6 +62,23 @@ const std::vector<ModelInfo>& ModelPlanner::Brains() {
     return brains;
 }
 
+std::optional<VisionModule> ModelPlanner::VisionFor(const std::string& brainFile) {
+    // Tailles relevées sur les dépôts unsloth (en-tête X-Linked-Size).
+    struct V {
+        const char* brain;
+        const char* repo;
+        std::uint64_t bytes;
+    };
+    static const V v[] = {{"Qwen3.5-9B-Q4_K_M.gguf", "Qwen3.5-9B", 918166080ull},
+                          {"Qwen3.5-4B-Q4_K_M.gguf", "Qwen3.5-4B", 672423616ull},
+                          {"Qwen3.5-2B-Q4_K_M.gguf", "Qwen3.5-2B", 668227264ull}};
+    for (const auto& x : v)
+        if (brainFile == x.brain)
+            return VisionModule{std::string(x.repo) + "-mmproj-F16.gguf",
+                                std::string("https://huggingface.co/unsloth/") + x.repo + "-GGUF/resolve/main/mmproj-F16.gguf", x.bytes};
+    return std::nullopt;
+}
+
 const ModelInfo* ModelPlanner::FindByFile(const std::string& file) {
     for (const auto& m : Brains())
         if (file == m.file) return &m;

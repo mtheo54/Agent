@@ -223,6 +223,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
         cfg.llmGamingModel = modelsDir / ModelPlanner::PlanGaming(calm).model->file;
     }
     cfg.neuralVoice = cfg.neuralVoice && vplan.neural;  // petite carte : Piper, la VRAM va au cerveau
+    if (cfg.llmMmproj.empty())  // module de vision déjà téléchargé (« regarde avec moi ») : il voit les images
+        if (const auto v = ModelPlanner::VisionFor(log::Narrow(cfg.llmModel.filename().wstring()));
+            v && std::filesystem::exists(cfg.llmModel.parent_path() / log::Widen(v->file)))
+            cfg.llmMmproj = cfg.llmModel.parent_path() / log::Widen(v->file);
     log::Info("Matériel : {} ({:.1f} Go de VRAM, {:.0f} Go de RAM). {}", hw.gpuName, hw.vramGiB, hw.ramGiB, normalPlan.why);
 
     // Premier lancement : les modèles ne sont pas livrés avec le programme, on télécharge ceux de CE PC.

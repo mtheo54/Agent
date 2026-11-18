@@ -71,8 +71,15 @@ struct Download {
     std::uint64_t bytes = 0;
 };
 
+// Module de vision (mmproj) qui va avec un cerveau Qwen3.5 : il lui permet de regarder des images.
+struct VisionModule {
+    std::string file, url;
+    std::uint64_t bytes = 0;
+};
+
 class ModelPlanner {
 public:
+    static std::optional<VisionModule> VisionFor(const std::string& brainFile);
     static const std::vector<ModelInfo>& Brains();  // du plus petit au plus gros
     static const ModelInfo* FindByFile(const std::string& file);
 

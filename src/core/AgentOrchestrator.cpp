@@ -1247,9 +1247,41 @@ bool AgentOrchestrator::HandleWatchCommand(const std::string& lower) {
     watchTitle_.clear();
     watchText_.clear();
     watchClips_ = watchForms_ = 0;
+    watchClipStart_ = std::chrono::steady_clock::now();
+    // Les images : il faut le module de vision du cerveau. Absent -> on demande avant de le télécharger.
+    if (!EnsureVision()) {
+        const auto vm = ModelPlanner::VisionFor(log::Narrow(cfg_.llmModel.filename().wstring()));
+        if (vm && d_.http && !visionDownload_.joinable() &&
+            d_.gate.Request(PermissionScope::Web, "vision-module",
+                            std::format("Pour voir les images aussi, il me faut mon module de vision : {} Mo à télécharger une fois. Je le prends ?",
+                                        vm->bytes / 1000000),
+                            std::chrono::seconds(20), {})) {
+            const auto dest = cfg_.llmModel.parent_path() / log::Widen(vm->file);
+            visionDownload_ = std::jthread([this, http = d_.http, url = vm->url, dest](std::stop_token) {
+                std::string err;
+                if (http->DownloadToFile(url, dest, {}, &err)) visionReady_ = true;
+                else log::Info("Vision: téléchargement impossible ({})", err);
+            });
+            Say("Je le télécharge pendant qu'on regarde. En attendant, j'écoute le son.");
+        }
+    }
     bank_.Load(d_.assetsDir / L"persona" / L"baits.json", d_.dataDir / L"learned_baits.json");
     Say("Vas-y, scrolle, je regarde avec toi. Je capte que le son du navigateur, et je décroche si t'ouvres tes messages.");
     return true;
+}
+
+bool AgentOrchestrator::EnsureVision() {
+    if (!cfg_.llmMmproj.empty() && std::filesystem::exists(cfg_.llmMmproj)) {
+        d_.brain.SetMmproj(cfg_.llmMmproj);
+        return d_.brain.HasVision();
+    }
+    const auto vm = ModelPlanner::VisionFor(log::Narrow(cfg_.llmModel.filename().wstring()));
+    if (!vm) return false;
+    const auto path = cfg_.llmModel.parent_path() / log::Widen(vm->file);
+    if (!std::filesystem::exists(path)) return false;
+    cfg_.llmMmproj = path;
+    d_.brain.SetMmproj(path);
+    return d_.brain.HasVision();
 }
 
 void AgentOrchestrator::OnWatchSpeech(std::string text, std::string title) {
@@ -1267,12 +1299,30 @@ void AgentOrchestrator::OnWatchSpeech(std::string text, std::string title) {
 }
 
 // Une vidéo regardée ensemble : parfois une réaction de pote (tout de suite), puis l'étude (leçon + formes de vannes).
-void AgentOrchestrator::FlushWatchClip(std::stop_token stop) {
-    const std::string text = std::exchange(watchText_, {});
-    if (text.size() < 60 || !EnsureBrain()) return;
-    const std::string title = watchTitle_;
+void AgentOrchestrator::FlushWatchClip(std::stop_token stop, std::chrono::steady_clock::time_point until) {
     const auto now = std::chrono::steady_clock::now();
+    if (until == std::chrono::steady_clock::time_point{}) until = now;
+    const std::string text = std::exchange(watchText_, {});
+    const auto frames = watch_.FramesBetween(watchClipStart_, until);
+    watchClipStart_ = until;
+    if ((text.size() < 60 && frames.empty()) || !EnsureBrain()) return;
+    const std::string title = watchTitle_;
+    // Les images : début et fin de la vidéo côte à côte, décrites par le modèle de vision LOCAL (rien ne sort du PC).
+    std::string visual;
+    if (!frames.empty() && EnsureVision()) {
+        const WatchFrame img = frames.size() >= 2 ? SideBySide(frames.front(), frames.back()) : frames.front();
+        GenerateOptions vo;
+        vo.maxTokens = 130;
+        vo.temperature = 0.2f;
+        vo.stop = stop;
+        if (const auto v = d_.brain.GenerateWithImage({{"user", std::string(LocalBrain::MediaMarker()) + "\n" + kWatchVisionPrompt}}, img.rgb.data(),
+                                                      img.width, img.height, vo))
+            visual = Trim(*v);
+        log::Info("WatchAlong: image -> {}", visual);
+    }
+    if (text.size() < 60 && visual.size() < 30) return;  // ni paroles, ni image exploitable
     ++watchClips_;
+    const std::string heard = text.empty() ? std::string("(pas de paroles)") : text.substr(0, 700);
     // 1) Réaction (1 vidéo sur 3, au plus toutes les 40 s, jamais par-dessus lui-même)
     const unsigned r = rng_.fetch_add(0x9E3779B9u) * 2654435761u;
     if (!watchSilent_ && now - lastWatchComment_ > std::chrono::seconds(40) && (r >> 8) % 3 == 0 && !d_.voice.IsSpeaking()) {
@@ -1283,7 +1333,8 @@ void AgentOrchestrator::FlushWatchClip(std::stop_token stop) {
         const auto out = d_.brain.Generate(
             {{"system", PersonaPrompt()},
              {"user", "[Contexte]\nTu regardes des vidéos (Reels / TikTok / YouTube) avec ton pote, sur son écran. Titre de l'onglet : « " +
-                          title + " ». Ce qu'on entend dans la vidéo : « " + text.substr(0, 700) + " ».\n[Message]\nRéagis en UNE phrase "
+                          title + " ». Ce qu'on entend : « " + heard + " »." + (visual.empty() ? std::string{} : "\nCe qu'on voit :\n" + visual) +
+                          "\n[Message]\nRéagis en UNE phrase "
                           "courte, comme un pote assis à côté : une vanne sur la vidéo, un avis tranché, ou un « attends, c'est quoi ce truc ». "
                           "Ne résume pas la vidéo."}},
             o);
@@ -1301,7 +1352,8 @@ void AgentOrchestrator::FlushWatchClip(std::stop_token stop) {
     o.temperature = 0.4f;
     o.grammar = kStudyGrammar;
     o.stop = stop;
-    const auto out = d_.brain.Generate({{"system", kStudySystem}, {"user", StudyPrompt(title.empty() ? "vidéo regardée ensemble" : title, text, "")}}, o);
+    const std::string material = heard + (visual.empty() ? std::string{} : "\n[Ce qu'on voit à l'image]\n" + visual);
+    const auto out = d_.brain.Generate({{"system", kStudySystem}, {"user", StudyPrompt(title.empty() ? "vidéo regardée ensemble" : title, material, "")}}, o);
     if (!out) return;
     StudyResult res = ParseStudy(*out, "regardé avec toi : " + title);
     if (!res.humour) return;
@@ -1323,7 +1375,13 @@ void AgentOrchestrator::StopWatching(bool announce) {
 
 // Arrêt automatique : en jeu, au bout de 90 min, ou si le navigateur s'est fermé.
 void AgentOrchestrator::CheckWatch() {
+    if (visionReady_.exchange(false) && EnsureVision() && watch_.Running()) Say("Ça y est, je vois les images aussi.");
     if (!watch_.Running()) return;
+    // Vidéo suivante : l'image a changé d'un coup (swipe), ou 25 s sur la même vidéo -> on étudie celle qui vient de passer.
+    const auto now = std::chrono::steady_clock::now();
+    const auto cut = watch_.LastCut();
+    if (cut > watchClipStart_ + std::chrono::seconds(3)) FlushWatchClip({}, cut);
+    else if (now - watchClipStart_ > std::chrono::seconds(25)) FlushWatchClip({}, now);
     if (mode_.load() == SystemMode::Gaming || std::chrono::steady_clock::now() - watch_.StartedAt() > std::chrono::minutes(90) ||
         !WasapiLoopback::FindProcessId(watch_.Browser()))
         StopWatching(true);

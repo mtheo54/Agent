@@ -483,8 +483,18 @@ C'est **toi** qui scrolles, avec **ton** compte, normalement. Omnis regarde à c
 - **« Omnis, regarde avec moi »** (ou « on regarde des Reels », « mode visionnage »). Il écoute seulement le son
   de ton navigateur (capture du processus : ni le reste du PC, ni ton micro) et lit le titre de l'onglet (sur TikTok,
   la légende de la vidéo).
-- Whisper transcrit sur ton PC, une phrase à la fois, et laisse passer sa voix d'abord. Il regroupe ce qu'il entend
-  par vidéo (le titre de l'onglet change).
+- Whisper transcrit sur ton PC, une phrase à la fois, et laisse passer sa voix d'abord.
+- **Il voit aussi les images.** Il capture la fenêtre du navigateur toutes les 2,5 s, en mémoire seulement : 20 s
+  au plus, rien sur le disque, jamais sur un onglet de messages. Pour chaque vidéo, le début et la fin, côte à
+  côte, vont au **modèle de vision local** de son cerveau. Il recopie le texte affiché (souvent la blague) et décrit
+  la scène, sans rien inventer.
+  - Une vidéo sans paroles (texte à l'écran, gag visuel) compte donc aussi.
+  - Il repère le **swipe** vers la vidéo suivante (l'image change d'un coup), ce qui marche même sur Instagram, où le
+    titre de l'onglet ne bouge pas.
+  - Le module de vision (918 Mo pour le 9B) est demandé et téléchargé la première fois, puis branché sans
+    redémarrer. Il sert aussi pour « regarde mon écran ».
+  - Testé : sur un faux Reel, il a recopié mot pour mot « QUAND TON POTE DIT QU IL VA CARRY / YASUO / SCORE FINAL
+    0 / 12 / 1 » (Qwen3.5 2B sur processeur, 16 s ; bien plus rapide sur ta carte graphique).
 - **Il réagit** de temps en temps, comme un pote assis à côté : une vanne, un avis, un « attends, c'est quoi ce
   truc ». « Regarde en silence » le fait taire, « tu peux commenter » le relance.
 - **Il apprend** : pour chaque vidéo, la même étude que l'entraînement vidéo (une leçon, des formes de vannes pour

@@ -80,6 +80,8 @@ public:
 
     // Vision locale. Le dernier message "user" doit contenir MediaMarker() là où va l'image.
     [[nodiscard]] bool HasVision() const;
+    // Module de vision (mmproj) téléchargé après coup : branché sans recharger le cerveau (chargé à la 1re image).
+    void SetMmproj(std::filesystem::path p) { cfg_.mmproj = std::move(p); }
     static const char* MediaMarker();
     std::optional<std::string> GenerateWithImage(const std::vector<ChatTurn>& messages, const unsigned char* rgb,
                                                  int width, int height, const GenerateOptions& opt);

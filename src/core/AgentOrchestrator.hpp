@@ -280,7 +280,12 @@ private:
     int watchClips_ = 0, watchForms_ = 0;
     bool HandleWatchCommand(const std::string& lower);
     void OnWatchSpeech(std::string text, std::string title);  // thread de transcription
-    void FlushWatchClip(std::stop_token stop);
+    void FlushWatchClip(std::stop_token stop, std::chrono::steady_clock::time_point until = {});
+    std::chrono::steady_clock::time_point watchClipStart_{};
+    // Module de vision (mmproj) du cerveau : téléchargé à la demande, branché à chaud.
+    bool EnsureVision();
+    std::jthread visionDownload_;
+    std::atomic<bool> visionReady_{false};
     void CheckWatch();
     void StopWatching(bool announce);  // ses 4 dernières vannes : pas de redites, pas de tics
     bool PlayBaitSound(bool earrape);
