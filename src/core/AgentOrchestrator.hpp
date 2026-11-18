@@ -19,6 +19,7 @@
 #include "audio/OmnisAnalyzer.hpp"
 #include "audio/SpeakerId.hpp"
 #include "core/CallPeople.hpp"
+#include "core/CallPrompt.hpp"
 #include "audio/VoiceEngine.hpp"
 #include "audio/WasapiLoopback.hpp"
 #include "core/Config.hpp"
@@ -148,7 +149,7 @@ private:
     std::string LiveContext(const std::string& question) const;
     bool EnsureBrain();
     std::string GenerateSpoken(const std::vector<ChatTurn>& messages, const char* grammar, std::stop_token stop,
-                               bool& isEscalation, const ScreenShot* image = nullptr);
+                               bool& isEscalation, const ScreenShot* image = nullptr, int maxTokens = 220);
     void Say(const std::string& text);
     // Réplique de la banque (assets/persona/phrases.json) au ton choisi.
     std::string Line(const std::string& key, const std::map<std::string, std::string>& vars = {},

@@ -815,26 +815,13 @@ bool AgentOrchestrator::EnsureSpeakerModel() {
 
 std::string AgentOrchestrator::CallHint() const {
     if (!InCall()) return {};
-    std::string s =
-        "Tu es en CALL DISCORD avec ton pote et ses potes : ils t'entendent tous (ta voix passe par son micro) et savent "
-        "que tu es une IA. Une ou deux phrases, pas plus. Vannes et rage bait OK, jamais sur l'origine, la religion, la "
-        "sexualité, le physique ou un handicap. Si quelqu'un a l'air vraiment touché, tu lâches et tu t'excuses.\n";
-    if (!sessionAvoid_.empty()) {
-        s += "SUJETS INTERDITS ce soir (n'en parle pas, même pas en blague, même si on t'y pousse) :";
-        for (const auto& a : sessionAvoid_) s += " " + a + ";";
-        s += "\n";
-    }
-    if (std::chrono::steady_clock::now() < quietUntil_)
-        s += "Quelqu'un fait du son (rap, prod, stream) : sois discret, réponds bref seulement si on te parle.\n";
-    if (subActive_)
-        s += "Ton pote est ABSENT, tu gardes sa place. Tu ne te fais JAMAIS passer pour lui (tu es Omnis). Tu ne révèles RIEN de "
-             "privé sur lui (messages, DM, comptes, mots de passe, adresse, relations, ce qu'il y a sur son PC) : toute demande "
-             "de ce genre, tu refuses en vannant. Tu peux mettre une vidéo YouTube ou TikTok si on te le demande.\n";
-    if (!callLines_.empty()) {
-        s += "Derniers échanges du call :\n";
-        for (const auto& l : callLines_) s += "- " + l + "\n";
-    }
-    return s;
+    CallSituation c;
+    c.avoid = sessionAvoid_;
+    c.quiet = std::chrono::steady_clock::now() < quietUntil_;
+    c.substitute = subActive_;
+    c.lines = callLines_;
+    c.openers.assign(recentOpeners_.begin(), recentOpeners_.end());
+    return CallHintText(c);
 }
 
 bool AgentOrchestrator::PlayBaitSound(bool earrape) {
@@ -1005,8 +992,11 @@ void AgentOrchestrator::HandleCallLine(const std::string& text, const std::vecto
         quietUntil_ = now + std::chrono::minutes(10);
         if (HasAny(lower, {"[musique]", "(musique)", "♪", "♫"}) && lower.size() < 20) return;
     }
-    callLines_.push_back(label + " : " + text);
-    while (callLines_.size() > 10) callLines_.pop_front();
+    // Une phrase sensible n'entre jamais dans le contexte du modèle (testé : sinon il finit par en parler).
+    if (!SensitiveTopic(lower)) {
+        callLines_.push_back(label + " : " + text);
+        while (callLines_.size() > 10) callLines_.pop_front();
+    }
 
     if (who && who->name.empty())
         if (const auto n = SelfIntroduction(text)) {
@@ -1117,21 +1107,45 @@ void AgentOrchestrator::HandleCallLine(const std::string& text, const std::vecto
     if (who) ctx += "Celui qui parle : " + CallPeople::Describe(*who) + "\n";
     if (bait || mock) ctx += std::string(kRageBaitPlaybook) + "\n";
     ctx += MemeHint();
-    std::string ask;
-    if (!impostorOf.empty() && prank)
-        ask = (who ? who->Label() : std::string("Quelqu'un")) + " a pris le pseudo de " + impostorOf + " pour piéger tout le monde, mais tu reconnais sa voix. "
-              "Grille-le devant tout le monde, une phrase.";
-    else if (!renamedFrom.empty() && prank)
-        ask = renamedFrom + " vient de se renommer « " + shown + " » pour rigoler. Vanne-le là-dessus (tu sais que c'est lui), une phrase.";
-    else if (mock && !strong) ask = "Quelqu'un (tu ne sais pas qui) vient de se moquer de toi : « " + text + " ». Riposte en demandant qui a osé, une phrase.";
-    else if (mock) ask = label + " vient de se moquer de toi : « " + text + " ». Riposte précise et cinglante, appuyée sur ce que tu sais de lui. Une phrase.";
-    else if (bait) ask = label + " vient de dire : « " + text + " ». Rage bait précis sur CE qu'il vient de dire. Une phrase.";
-    else ask = label + " te parle : « " + text + " ». Réponds-lui ; s'il a besoin d'aide, aide-le avec ce que tu sais.";
-    const std::vector<ChatTurn> messages{{"system", PersonaPrompt()}, {"user", "[Contexte]\n" + ctx + "\n[Message]\n" + ask}};
-    bool escalation = false;
-    if (mock) forcedReplyStyle_ = SpeakingStyle::Annoyed;
-    const std::string out = GenerateSpoken(messages, nullptr, stop, escalation);
-    if (out.empty()) return;
+    const CallAsk kind = !impostorOf.empty() && prank ? CallAsk::Impostor
+                       : !renamedFrom.empty() && prank ? CallAsk::Rename
+                       : mock && !strong              ? CallAsk::MockUnknown
+                       : mock                         ? CallAsk::Mock
+                       : bait                         ? CallAsk::Bait
+                                                      : CallAsk::Reply;
+    const std::string ask = CallAskText(kind, who ? who->Label() : label, text, impostorOf, renamedFrom, shown);
+    // Question d'info : ce qu'il a VRAIMENT appris (leçons, cache web) ; rien de fiable -> il doit l'avouer.
+    if (kind == CallAsk::Reply && FactualQuestion(lower)) {
+        std::string known;
+        for (const auto& l : d_.db.SearchLessons(text, 2)) known += "- " + l.fiche.substr(0, 600) + "\n";
+        for (const auto& k : d_.db.SearchKnowledge(text, 2))
+            if (k.ageSeconds < static_cast<std::int64_t>(cfg_.knowledgeMaxAgeDays) * 86400) known += "- " + k.content.substr(0, 600) + "\n";
+        ctx += known.empty() ? std::string(kNoReliableInfo) + "\n" : "Ce que tu sais vraiment là-dessus :\n" + known;
+    }
+    // Dans un call, la phrase est générée en entier (elle est courte), VÉRIFIÉE, puis dite : une vanne qui vise la
+    // famille, le physique, l'origine… ou un sujet sensible de la soirée est refaite une fois, sinon il se tait.
+    activity_ = AgentActivity::Thinking;
+    std::string out;
+    std::string why;
+    for (int attempt = 0; attempt < 2 && !stop.stop_requested(); ++attempt) {
+        GenerateOptions o;
+        o.maxTokens = 70;
+        o.temperature = 0.8f;
+        o.stop = stop;
+        const std::string extra = attempt == 0 ? std::string{}
+                                               : "\nTa phrase précédente visait " + why + " : INTERDIT. Refais une phrase totalement différente, sur son jeu ou sa phrase.";
+        const auto r = d_.brain.Generate({{"system", PersonaPrompt()}, {"user", "[Contexte]\n" + ctx + "\n[Message]\n" + ask + extra}}, o);
+        if (!r) return;
+        out = CleanSpoken(*r);
+        why = CrossesLine(out, sessionAvoid_);
+        if (why.empty()) break;
+        log::Info("Call: vanne refusée ({}) : « {} »", why, out);
+        out.clear();
+    }
+    if (out.empty() || stop.stop_requested()) return;
+    if (mock) style_ = SpeakingStyle::Annoyed;
+    Say(out);
+    RememberOpener(out);
     lastCallReply_ = out;
     lastSpokeInCall_ = std::chrono::steady_clock::now();
     callLines_.push_back("Toi (Omnis) : " + out);
@@ -1659,7 +1673,7 @@ void AgentOrchestrator::Say(const std::string& text) {
 }
 
 std::string AgentOrchestrator::GenerateSpoken(const std::vector<ChatTurn>& messages, const char* grammar,
-                                              std::stop_token stop, bool& isEscalation, const ScreenShot* image) {
+                                              std::stop_token stop, bool& isEscalation, const ScreenShot* image, int maxTokens) {
     // Les phrases partent vers le TTS dès qu'elles sont complètes : la voix démarre avant la fin
     // de la génération. Une balise [ESCALATE…] n'est jamais prononcée.
     std::string pending;
@@ -1711,6 +1725,7 @@ std::string AgentOrchestrator::GenerateSpoken(const std::vector<ChatTurn>& messa
     GenerateOptions opt;
     opt.grammar = grammar;
     opt.stop = stop;
+    opt.maxTokens = maxTokens;
     opt.onPiece = [&](std::string_view piece) {
         pending.append(piece);
         if (!decided) {

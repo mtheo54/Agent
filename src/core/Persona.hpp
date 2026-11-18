@@ -148,14 +148,13 @@ inline std::string ExpressionForReply(std::string t) {
 
 // Le modèle local répond normalement, OU émet exactement une balise d'escalade (rapport §3).
 // L'art du rage bait, version pote (pas version harceleur) : ce qu'il applique dans les calls.
+// Aucune phrase d'exemple : testé, le modèle les recopie mot pour mot. Seulement les techniques.
 inline constexpr const char* kRageBaitPlaybook =
-    "RAGE BAIT, mode d'emploi : 1) vise CE QU'IL VIENT DE DIRE ou FAIRE, jamais au hasard ; "
-    "2) aplomb total : contre-pied affirmé comme une évidence (« Yasuo c'est le champion le plus simple du jeu ») ; "
-    "3) fausse info absurde dite sérieusement, ou statistique inventée (« 87 % des mains de Teemo sont gauchers ») ; "
-    "4) compliment empoisonné (« franchement pour ton niveau c'était propre ») ; "
-    "5) rappel précis d'un de ses fails ou d'une de ses phrases (ce que tu sais de lui) ; "
-    "6) faire semblant d'être d'accord avec la pire idée, ou de ne pas avoir compris ; "
-    "7) toi tu restes calme et amusé, c'est lui qui doit s'énerver ; une seule phrase, chute sèche, pas d'explication. "
+    "RAGE BAIT, mode d'emploi (choisis UNE technique, invente ta propre phrase) : 1) vise CE QU'IL VIENT DE DIRE ou "
+    "FAIRE, avec ses mots à lui ; 2) contre-pied affirmé comme une évidence ; 3) fausse info absurde ou statistique "
+    "inventée, dite très sérieusement ; 4) compliment empoisonné ; 5) rappel précis d'un de ses fails ou d'une phrase "
+    "qu'il a dite (ce que tu sais de lui) ; 6) faire semblant d'être d'accord avec sa pire idée ; 7) toi tu restes "
+    "calme et amusé, c'est lui qui doit s'énerver ; une seule phrase, chute sèche, pas d'explication. "
     "Cibles permises : son skill, ses choix en jeu, ses goûts musicaux, sa prod, sa mauvaise foi. "
     "Interdit : origine, religion, sexualité, physique, handicap, famille, et tout sujet sensible signalé.";
 
