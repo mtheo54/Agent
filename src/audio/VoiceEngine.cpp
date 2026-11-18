@@ -794,7 +794,7 @@ struct VoiceEngine::Impl {
         if (style == SpeakingStyle::Bright) phrase *= 1.05f;
         if (style == SpeakingStyle::Soft || style == SpeakingStyle::Calm) phrase *= 0.93f;
         const float wavePeriod = 2.0f + 1.5f * NextRandom(vrng), wavePhase = 6.2832f * NextRandom(vrng);
-        const float waveDepth = 0.10f + 0.06f * NextRandom(vrng);  // contrastes plus marqués (demande utilisateur)
+        const float waveDepth = 0.06f + 0.05f * NextRandom(vrng);  // ±6 à 11 % : sensible sans paraître ivre
         const float estSeconds = std::max(1.0f, static_cast<float>(text.size()) / 15.f);  // ~15 caractères/s au débit brut
         std::size_t heard = 0;  // échantillons bruts déjà passés (horloge du contour)
         // « … » : il reste sur la fin du mot avant la pause (débit ralenti ~0,3 s avant), puis repart normalement.
@@ -809,11 +809,12 @@ struct VoiceEngine::Impl {
             const float t = static_cast<float>(samples) / static_cast<float>(outputRate);
             float k = phrase * (1.f + waveDepth * std::sin(6.2832f * t / wavePeriod + wavePhase));
             for (const float h : holds) {
-                if (t > h - 0.4f && t < h + 0.05f) k *= 0.55f;       // il traîne sur la fin du mot
-                else if (t >= h + 0.05f && t < h + 0.8f) k *= 1.1f;  // puis repart un peu plus vite
+                // Il traîne sur la fin du mot : ~30 % plus long (allongement mesuré chez l'humain qui hésite : 20 à 40 %).
+                if (t > h - 0.35f && t < h + 0.05f) k *= 0.76f;
+                else if (t >= h + 0.05f && t < h + 0.7f) k *= 1.05f;  // puis repart un poil plus vite
             }
-            if (t > dragAt && t < dragAt + 0.5f) k *= 0.62f;
-            else if (t >= dragAt + 0.5f && t < dragAt + 1.2f) k *= 1.1f;
+            if (t > dragAt && t < dragAt + 0.5f) k *= 0.84f;
+            else if (t >= dragAt + 0.5f && t < dragAt + 1.1f) k *= 1.05f;
             if (t < 0.35f) k *= 0.95f;                    // attaque posée
             if (t > 0.82f * estSeconds) k *= 0.88f;       // fin de phrase : on ralentit
             tempo.SetTempo(baseTempo * k);

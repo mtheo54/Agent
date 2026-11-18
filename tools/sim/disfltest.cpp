@@ -11,6 +11,15 @@ int main() {
                            "Ouais.", "Le Boss : on va dire que c'est un pseudo ironique, ça t'évitera la honte."};
     for (const char* l : lines)
         for (int i = 0; i < 2; ++i) std::printf("%s\n", Humanize(l, 0.5f, rng).c_str());
+    std::printf("--- avec budget (1 accident / ~22 mots), une conversation ---\n");
+    int since = 0, words = 0, events = 0;
+    for (int round = 0; round < 8; ++round)
+        for (const char* l : lines) {
+            const std::string out = Humanize(l, 0.5f, rng, false, true, &since);
+            words += static_cast<int>(disfl_detail::Words(l).size());
+            if (out != l) { ++events; if (round == 0) std::printf("%s\n", out.c_str()); }
+        }
+    std::printf("=> %d accidents pour %d mots : 1 tous les %.0f mots\n", events, words, static_cast<double>(words) / events);
     std::printf("--- technique (calme) ---\n");
     for (int i = 0; i < 3; ++i) std::printf("%s\n", Humanize(lines[1], 0.5f, rng, true).c_str());
 }

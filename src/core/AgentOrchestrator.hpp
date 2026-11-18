@@ -306,7 +306,8 @@ private:
     std::chrono::steady_clock::time_point lastAutoTraining_{};
     std::atomic<std::int64_t> listenUntilMs_{0};  // écoute du mix à la demande (hors FL Studio)
     std::atomic<std::int64_t> lastStudioMs_{-1'000'000};  // dernière fois en mode Studio (le mode clignote)
-    bool soundsOffered_ = false;                          // bruitages proposés une fois par session
+    bool soundsOffered_ = false;
+    int wordsSinceDisfluency_ = 0;  // une hésitation tous les ~22 mots (Disfluency)                          // bruitages proposés une fois par session
     void OfferSounds(std::stop_token stop);
     int InstallStarterSounds(std::stop_token stop);
 };
