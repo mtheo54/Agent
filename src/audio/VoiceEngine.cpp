@@ -778,11 +778,8 @@ struct VoiceEngine::Impl {
 
     // Un morceau de texte : voix neuronale (streaming) ou Piper, avec un éventuel bug de robot.
     void SpeakText(const std::string& text, uint32_t generation, SpeakingStyle style, bool forceGlitch) {
-        using clock = std::chrono::steady_clock;
-        // Petits bugs (coupure, saut, éclat, ondulation, envers, voix robot) : à tout moment ; gros bugs
-        // (syllabe qui accroche, bande qui ralentit, accéléré) : au plus un toutes les 20 s.
-        const bool allowBig = forceGlitch || clock::now() - lastGlitch > std::chrono::seconds(20);
-        glitcher.Plan(style, quirks.load(), vrng, forceGlitch, allowBig, systemLoad.load(std::memory_order_relaxed));
+        // Aucun glitch (demande utilisateur) : ni bugs de robot, ni voix bizarre, ni grésillement. forceGlitch ignoré.
+        (void)forceGlitch;
         float lengthMul, noiseMul, moodDelta;
         StyleParams(style, lengthMul, noiseMul, moodDelta);
         bool done = false;
@@ -866,7 +863,6 @@ struct VoiceEngine::Impl {
         // Mélodie vivante : dérive ±40 cents et virages (monte / redescend) dans la plupart des phrases.
         shaper.PlanPitch(style, 80.f * life, 0.8f * life, vrng);
         SyncMic();
-        color.PlanWeird(style, quirks.load(), vrng);
         if (UseNeural()) {
             const float jitter = (NextRandom(vrng) - 0.5f) * 0.12f;  // jamais deux fois la même intonation
             done = neural.Speak(text, style, [&](std::span<const float> pcm) {
@@ -906,7 +902,6 @@ struct VoiceEngine::Impl {
             if (!chunkBuf.empty()) PushAudio(chunkBuf, generation);
         }
 #endif
-        if (glitcher.UsedBig()) lastGlitch = clock::now();
     }
 
     void SyncMic() {
@@ -924,8 +919,6 @@ struct VoiceEngine::Impl {
             chunkBuf.assign(clip->begin(), clip->end());
             color.Process(chunkBuf.data(), chunkBuf.size(), /*weird=*/false);  // même micro que sa voix
             PushAudio(chunkBuf, generation);
-            // Une toux de robot finit parfois en grésillement.
-            if (v == Vocal::Cough && NextRandom(vrng) < 0.5f) PushAudio(RobotGlitcher::Burst(*clip, static_cast<int>(outputRate), vrng), generation);
         }
     }
 
@@ -968,9 +961,7 @@ struct VoiceEngine::Impl {
                 SpeakText(p.text, generation, style, forceGlitch);
                 forceGlitch = false;
             } else if (p.vocal == Vocal::Glitch) {
-                // (bug) avant du texte : la phrase suivante accroche ; en fin de phrase : grésillement seul.
-                if (i + 1 < parts.size() && !parts[i + 1].isVocal) forceGlitch = true;
-                else if (const auto* c = vocals.Pick(Vocal::Hmm, vrng)) PushAudio(RobotGlitcher::Burst(*c, static_cast<int>(outputRate), vrng), generation);
+                // (bug) : plus aucun effet, la balise est simplement retirée.
             } else {
                 PlayVocal(p.vocal, generation);
             }
