@@ -33,6 +33,16 @@
   "llmThreadsGaming": 2,
   // En jeu, débit max du cerveau (tokens/s) : courtes salves au rythme de la voix au lieu d'occuper la carte. 0 = libre.
   "llmGamingTokensPerSecond": 12,
+  // Presets de jeu : "auto" (mesuré), "carte", "carte-leger", "processeur", "processeur-leger".
+  // gamePresets (par jeu, exécutable en minuscules) passe avant gamingPreset (tous les jeux).
+  "gamingPreset": "auto",
+  "gamePresets": { "league of legends.exe": "auto", "cyberpunk2077.exe": "processeur" },
+  // Moniteur de perfs en jeu : FPS, 1 % low, impact d'Omnis ; rapports dans %LOCALAPPDATA%\CompanionAI\perf.
+  "perfMonitor": true,
+  // Ça bouffe trop (FPS -5 % ou 1 % low -10 %) -> preset plus léger, retenu pour ce jeu.
+  "perfAutoAdjust": true,
+  "perfMaxFpsDropPct": 5,
+  "perfMaxLowDropPct": 10,
   "llmUnloadAfterMinutes": 10,
 
   // Auto-entraînement pendant l'inactivité (processus isolé, tué dès que tu reviens).

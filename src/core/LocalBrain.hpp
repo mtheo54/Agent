@@ -16,6 +16,7 @@
 
 #include "core/MemoryDB.hpp"  // ChatTurn
 
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <functional>
@@ -70,6 +71,8 @@ public:
     bool Configure(bool useGpu, int threads);
     [[nodiscard]] bool UsesGpu() const noexcept { return useGpu_; }
     [[nodiscard]] int Ubatch() const noexcept { return cfg_.ubatch; }
+    // Génère en ce moment ? (lu par le moniteur de perfs à chaque image du jeu : thread-safe)
+    [[nodiscard]] bool Busy() const noexcept { return busy_.load(std::memory_order_relaxed); }
     // Débit maximal (tokens/s, 0 = libre). En jeu : salves courtes et espacées, au rythme de la voix.
     void SetPacing(int tokensPerSecond) noexcept { pacingTps_ = tokensPerSecond; }
 
@@ -88,6 +91,12 @@ private:
     LocalBrainConfig cfg_{};
     bool useGpu_ = true;
     int pacingTps_ = 0;
+    std::atomic<bool> busy_{false};
+    struct BusyScope {
+        std::atomic<bool>& f;
+        explicit BusyScope(std::atomic<bool>& b) : f(b) { f = true; }
+        ~BusyScope() { f = false; }
+    };
     void Pace(std::chrono::steady_clock::time_point& next) const;
     llama_model* model_ = nullptr;
     llama_context* ctx_ = nullptr;

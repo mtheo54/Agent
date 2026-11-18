@@ -1,9 +1,52 @@
 #include "core/ModelPlanner.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <format>
 
 namespace companion {
+
+const char* ToString(GamePreset p) noexcept {
+    switch (p) {
+        case GamePreset::Gpu: return "carte";
+        case GamePreset::GpuLight: return "carte-leger";
+        case GamePreset::Cpu: return "processeur";
+        case GamePreset::CpuLight: return "processeur-leger";
+        default: return "auto";
+    }
+}
+
+std::optional<GamePreset> ParseGamePreset(std::string_view s) {
+    std::string t;
+    for (unsigned char c : s) {
+        if (c == 0xC3) continue;  // « é » en UTF-8 : on garde l'octet suivant, ramené à « e »
+        t += c == 0xA9 ? 'e' : static_cast<char>(std::tolower(c));
+    }
+    const bool light = t.find("leger") != std::string::npos || t.find("light") != std::string::npos ||
+                       t.find("lite") != std::string::npos;
+    if (t == "auto" || t.empty()) return GamePreset::Auto;
+    if (t.starts_with("carte") || t.starts_with("gpu")) return light ? GamePreset::GpuLight : GamePreset::Gpu;
+    if (t.starts_with("processeur") || t.starts_with("cpu")) return light ? GamePreset::CpuLight : GamePreset::Cpu;
+    return std::nullopt;
+}
+
+GamePreset Lighter(GamePreset p) noexcept {
+    switch (p) {
+        case GamePreset::Gpu: return GamePreset::GpuLight;
+        case GamePreset::GpuLight: return GamePreset::CpuLight;
+        case GamePreset::Cpu: return GamePreset::CpuLight;
+        case GamePreset::CpuLight: return GamePreset::GpuLight;
+        default: return p;
+    }
+}
+
+int Smartness(GamePreset p) noexcept {
+    switch (p) {
+        case GamePreset::Gpu: return 3;
+        case GamePreset::Cpu: return 2;
+        default: return 1;
+    }
+}
 
 const std::vector<ModelInfo>& ModelPlanner::Brains() {
     static const std::vector<ModelInfo> brains{
@@ -81,6 +124,26 @@ BrainChoice ModelPlanner::PlanGaming(const HardwareInfo& hw, bool gpuSaturated) 
         rule = std::format("En jeu, VRAM libre {:.1f} Go moins 1 Go pour le jeu", hw.vramFreeGiB);
     }
     return Fit(budget, hw, true, rule);
+}
+
+BrainChoice ModelPlanner::PlanPreset(const HardwareInfo& hw, GamePreset preset) {
+    const ModelInfo* tiny = &Brains().front();
+    const std::string tag = std::format("Preset « {} »", ToString(preset));
+    switch (preset) {
+        case GamePreset::Gpu: {
+            BrainChoice c = PlanGaming(hw, false);
+            c.why = tag + ", " + c.why;
+            return c;
+        }
+        case GamePreset::GpuLight: {
+            const bool fits = hw.vramGiB >= 0.9 && (hw.vramFreeGiB < 0.0 || hw.vramFreeGiB - kGameMarginGiB >= tiny->vramNeedGiB);
+            if (fits) return {tiny, true, tag + std::format(" → {} sur la carte graphique", tiny->name)};
+            return {tiny, false, tag + std::format(" : pas la place sur la carte → {} sur le processeur", tiny->name)};
+        }
+        case GamePreset::Cpu: return OnCpu(hw, true, tag);
+        case GamePreset::CpuLight: return {tiny, false, tag + std::format(" → {} sur le processeur", tiny->name)};
+        default: return PlanGaming(hw, ModelPlanner::GameSaturatesGpu(hw.gameGpuLoad, true));
+    }
 }
 
 std::vector<Download> ModelPlanner::Required(const HardwareInfo& hw, bool neuralWanted) {

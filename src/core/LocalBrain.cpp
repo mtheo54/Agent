@@ -138,6 +138,7 @@ std::string LocalBrain::ApplyTemplate(const std::vector<ChatTurn>& messages) con
 }
 
 std::optional<std::string> LocalBrain::Generate(const std::vector<ChatTurn>& messages, const GenerateOptions& opt) {
+    const BusyScope busy(busy_);
     if (!IsLoaded() && !Load(cfg_)) return std::nullopt;
     const llama_vocab* vocab = llama_model_get_vocab(model_);
 
@@ -362,6 +363,7 @@ const char* LocalBrain::MediaMarker() {
 std::optional<std::string> LocalBrain::GenerateWithImage(const std::vector<ChatTurn>& messages,
                                                          const unsigned char* rgb, int width, int height,
                                                          const GenerateOptions& opt) {
+    const BusyScope busy(busy_);
 #if COMPANION_WITH_MTMD
     if (!HasVision()) return std::nullopt;
     if (!IsLoaded() && !Load(cfg_)) return std::nullopt;

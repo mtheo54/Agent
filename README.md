@@ -149,6 +149,51 @@ Dès qu'un jeu est détecté (processus connu ou appli plein écran) :
 
 Tout se rétablit automatiquement à la sortie du jeu. `gameIsolation: false` pour désactiver le confinement.
 
+### Moniteur de perfs et presets
+
+Pendant chaque partie, Omnis mesure **ce qu'il coûte vraiment à ton jeu** :
+
+- **FPS et 1 % low** du jeu, lus comme PresentMon / CapFrameX (événements `Present` de DXGI via ETW, jeux
+  D3D11 / D3D12). Aucune injection, aucune lecture de la mémoire du jeu : compatible Vanguard et VAC.
+- Chaque image est classée **« Omnis au repos »** ou **« Omnis travaille »** (cerveau qui génère, voix qui
+  parle). L'écart entre les deux, c'est son impact sur *ta* partie, pas sur un benchmark.
+- Processeur et carte graphique du jeu et d'Omnis, chaque seconde.
+- Fichiers dans `%LOCALAPPDATA%\CompanionAI\perf` : `perf-<jeu>-<date>.csv` (une ligne par seconde, à ouvrir
+  dans Excel) et `perf-<jeu>-<date>.txt`, le résumé de la partie (« Impact d'Omnis : -1,2 % de FPS → OK »
+  ou « ÇA BOUFFE TROP »).
+
+**Lire les FPS demande un droit Windows** (sinon tout le reste est mesuré, sans les FPS). Une seule fois,
+dans PowerShell **en administrateur**, puis déconnecte-toi / reconnecte-toi :
+
+```powershell
+Add-LocalGroupMember -SID S-1-5-32-559 -Member $env:USERNAME
+```
+
+(groupe « Utilisateurs du journal de performances » ; lancer Omnis en administrateur marche aussi.)
+
+**Presets** (`gamingPreset` pour tous les jeux, `gamePresets` par jeu dans `companion.json`, ou à la voix) :
+
+| Preset | Où | Modèle (ta config) |
+|---|---|---|
+| `auto` | carte ou processeur selon ce que le jeu sature, + ce qu'Omnis a appris sur ce jeu | 4B ou 2B |
+| `carte` | carte graphique, priorité basse, micro-lots | modèle du quart de VRAM (4B) |
+| `carte-leger` | carte graphique | 0.8B (~0,9 Go) |
+| `processeur` | cœur isolé | 2B |
+| `processeur-leger` | cœur isolé | 0.8B |
+
+À la voix, en partie :
+
+- **« teste les perfs »** : calibrage d'une minute pendant que tu joues (repos / carte / repos / processeur, et
+  la version légère si les deux coûtent trop). Il retient pour ce jeu le mode qui coûte le moins de FPS
+  (à 1,5 point près, le plus intelligent) et te dit les chiffres.
+- **« ça bouffe combien ? »** : FPS au calme et quand il bosse, sa part de processeur et de carte.
+- **« passe sur le processeur »**, **« mets-toi sur la carte »**, **« mode léger »**, **« mode auto »** : retenu
+  pour ce jeu (`game_presets.json`).
+
+**Garde-fou** (`perfAutoAdjust`) : en `auto`, si sur au moins 15 s de travail il fait perdre plus de 5 % de
+FPS ou 10 % de 1 % low, il passe un cran plus léger pour ce jeu et te le dit. Il ne touche jamais à un preset
+que tu as choisi.
+
 ## Réglages
 
 `Ctrl+Alt+O` (ou « ouvre les réglages ») : fenêtre au style du site abrasion — nom, taille, opacité et coin

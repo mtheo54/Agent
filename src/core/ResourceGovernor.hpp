@@ -81,6 +81,9 @@ public:
     [[nodiscard]] bool IsGaming() const noexcept { return Mode() == SystemMode::Gaming; }
     // Exécutable du jeu détecté (minuscules, ex. "cyberpunk2077.exe"), vide sinon.
     [[nodiscard]] std::wstring ActiveGame() const;
+    // Processus du jeu : celui de la liste, sinon (jeu détecté en plein écran) celui de la fenêtre au premier plan.
+    // gameName reçoit son exécutable en minuscules. 0 = aucun.
+    [[nodiscard]] DWORD ActiveGamePid(std::wstring* gameName = nullptr) const;
     [[nodiscard]] SystemSnapshot Snapshot() const;
 
     // Conditions d'auto-entraînement réunies (Idle + CPU/GPU sous les seuils) ?
@@ -133,6 +136,7 @@ private:
     std::atomic<std::int64_t> idleMs_{0};
     bool gameRunning_ = false;
     std::wstring activeGame_;  // protégé par mutex_
+    DWORD activeGamePid_ = 0;  // protégé par mutex_
     bool dawRunning_ = false;
 
     mutable std::mutex mutex_;  // protège stopSource_ et les listeners

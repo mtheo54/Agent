@@ -313,6 +313,7 @@ std::wstring ResourceGovernor::ActiveGame() const {
 void ResourceGovernor::ScanProcesses() {
     bool game = false, daw = false;
     std::wstring gameName;
+    DWORD gamePid = 0;
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snap == INVALID_HANDLE_VALUE) return;
     PROCESSENTRY32W pe{};
@@ -323,6 +324,7 @@ void ResourceGovernor::ScanProcesses() {
         if (!game && games_.contains(name)) {
             game = true;
             gameName = name;
+            gamePid = pe.th32ProcessID;
         }
         if (!daw && daws_.contains(name)) daw = true;
     }
@@ -331,6 +333,34 @@ void ResourceGovernor::ScanProcesses() {
     dawRunning_ = daw;
     std::scoped_lock lock(mutex_);
     activeGame_ = gameName;
+    activeGamePid_ = gamePid;
+}
+
+DWORD ResourceGovernor::ActiveGamePid(std::wstring* gameName) const {
+    {
+        std::scoped_lock lock(mutex_);
+        if (activeGamePid_) {
+            if (gameName) *gameName = activeGame_;
+            return activeGamePid_;
+        }
+    }
+    if (!IsGaming()) return 0;
+    DWORD pid = 0;
+    if (HWND fg = GetForegroundWindow()) GetWindowThreadProcessId(fg, &pid);
+    if (!pid || pid == GetCurrentProcessId()) return 0;
+    if (gameName) {
+        gameName->clear();
+        if (HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid)) {
+            wchar_t path[MAX_PATH];
+            DWORD n = MAX_PATH;
+            if (QueryFullProcessImageNameW(h, 0, path, &n)) {
+                std::wstring_view full(path, n);
+                *gameName = ToLower(std::wstring(full.substr(full.find_last_of(L"\\/") + 1)));
+            }
+            CloseHandle(h);
+        }
+    }
+    return pid;
 }
 
 bool ResourceGovernor::IsFullscreenAppRunning() noexcept {

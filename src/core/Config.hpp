@@ -87,6 +87,14 @@ struct CompanionConfig {
     // En jeu, le cerveau ne dépasse pas ce débit : la voix en lit ~5 par seconde, inutile d'aller plus vite.
     // Il travaille par courtes salves espacées au lieu d'occuper la carte ou la mémoire en continu (0 = libre).
     int llmGamingTokensPerSecond = 12;
+    // Presets de jeu : "auto" (mesuré), "carte", "carte-leger", "processeur", "processeur-leger".
+    std::string gamingPreset = "auto";                  // pour tous les jeux
+    std::map<std::string, std::string> gamePresets;     // par jeu : exécutable en minuscules -> preset (prioritaire)
+    // Moniteur de perfs en jeu (FPS, 1 % low, impact d'Omnis ; rapports dans %LOCALAPPDATA%\CompanionAI\perf).
+    bool perfMonitor = true;
+    bool perfAutoAdjust = true;      // ça bouffe trop -> preset plus léger pour ce jeu (retenu)
+    double perfMaxFpsDropPct = 5.0;  // « trop » = FPS moyen en baisse de plus de 5 %…
+    double perfMaxLowDropPct = 10.0; // …ou 1 % low (saccades) en baisse de plus de 10 %
     // En jeu : petit modèle sur CPU, chargé seulement si tu lui parles (VRAM laissée au jeu). Absent :
     // le modèle principal sur CPU (plus lent).
     std::filesystem::path llmGamingModel = L"auto";

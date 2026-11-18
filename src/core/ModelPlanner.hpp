@@ -16,7 +16,9 @@
 // permet de tester toutes les configurations.
 
 #include <cstdint>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace companion {
@@ -49,6 +51,21 @@ struct VoicePlan {
     const char* whisperFile = "ggml-base-q5_1.bin";
 };
 
+// Presets de jeu : où et quoi charger quand tu lui parles en partie.
+enum class GamePreset : std::uint8_t {
+    Auto,      // mesuré : carte ou processeur selon ce que le jeu sature (+ ce qu'Omnis a appris sur ce jeu)
+    Gpu,       // carte graphique, priorité basse : modèle du quart de VRAM (4B sur 16 Go)
+    GpuLight,  // carte graphique, le plus petit modèle (0.8B, ~0,9 Go)
+    Cpu,       // processeur, cœur isolé : 2B (0.8B avec moins de 16 Go de RAM)
+    CpuLight,  // processeur, le plus petit modèle (0.8B)
+};
+const char* ToString(GamePreset p) noexcept;  // "auto", "carte", "carte-leger", "processeur", "processeur-leger"
+std::optional<GamePreset> ParseGamePreset(std::string_view s);  // accepte aussi gpu / cpu / -light / léger
+// Un cran plus léger (garde-fou quand ça bouffe trop) ; renvoie le même s'il n'y a plus plus léger.
+GamePreset Lighter(GamePreset p) noexcept;
+// Rang d'intelligence (à impact égal, on garde le plus malin) : carte 4B > processeur 2B > 0.8B.
+int Smartness(GamePreset p) noexcept;
+
 struct Download {
     std::string file, url;
     std::uint64_t bytes = 0;
@@ -73,6 +90,8 @@ public:
     static VoicePlan PlanVoice(const HardwareInfo& hw, bool neuralWanted);
     static BrainChoice PlanNormal(const HardwareInfo& hw, bool neuralVoice);
     static BrainChoice PlanGaming(const HardwareInfo& hw, bool gpuSaturated = false);
+    // Preset imposé (pas Auto) : carte / processeur, normal ou léger.
+    static BrainChoice PlanPreset(const HardwareInfo& hw, GamePreset preset);
     // Fichiers à télécharger pour ce plan (cerveaux normal + jeu, Whisper, Piper, voix neuronale).
     static std::vector<Download> Required(const HardwareInfo& hw, bool neuralWanted);
 

@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <fstream>
 
 namespace companion {
@@ -65,6 +66,18 @@ CompanionConfig LoadConfig(const std::filesystem::path& jsonFile) {
         cfg.llmGpuLayers = j.value("llmGpuLayers", cfg.llmGpuLayers);
         cfg.llmThreads = j.value("llmThreads", cfg.llmThreads);
         cfg.llmThreadsGaming = j.value("llmThreadsGaming", cfg.llmThreadsGaming);
+        cfg.gamingPreset = j.value("gamingPreset", cfg.gamingPreset);
+        if (j.contains("gamePresets") && j["gamePresets"].is_object())
+            for (const auto& [k, v] : j["gamePresets"].items())
+                if (v.is_string()) {
+                    std::string key = k;
+                    for (auto& c : key) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                    cfg.gamePresets[key] = v.get<std::string>();
+                }
+        cfg.perfMonitor = j.value("perfMonitor", cfg.perfMonitor);
+        cfg.perfAutoAdjust = j.value("perfAutoAdjust", cfg.perfAutoAdjust);
+        cfg.perfMaxFpsDropPct = std::clamp(j.value("perfMaxFpsDropPct", cfg.perfMaxFpsDropPct), 0.5, 50.0);
+        cfg.perfMaxLowDropPct = std::clamp(j.value("perfMaxLowDropPct", cfg.perfMaxLowDropPct), 0.5, 80.0);
         cfg.llmGamingTokensPerSecond = std::clamp(j.value("llmGamingTokensPerSecond", cfg.llmGamingTokensPerSecond), 0, 1000);
         cfg.llmUnloadAfterMinutes = j.value("llmUnloadAfterMinutes", cfg.llmUnloadAfterMinutes);
         cfg.userAgent = j.value("userAgent", cfg.userAgent);

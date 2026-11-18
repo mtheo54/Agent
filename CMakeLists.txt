@@ -135,6 +135,7 @@ add_executable(CompanionAI WIN32
     src/core/MemeBank.cpp
     src/core/PermissionGate.cpp
     src/core/ResourceGovernor.cpp
+    src/core/GamePerfMonitor.cpp
     src/modules/GameCoach.cpp
     src/modules/ScreenCapture.cpp
     src/modules/SelfTrainer.cpp

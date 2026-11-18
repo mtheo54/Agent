@@ -5,11 +5,15 @@
 
 #include <objbase.h>
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <ctime>
 #include <cctype>
 #include <format>
+#include <fstream>
 #include <regex>
+#include <thread>
 
 namespace companion {
 namespace {
@@ -61,6 +65,7 @@ AgentOrchestrator::AgentOrchestrator(OrchestratorDeps deps) : d_(deps), cfg_(dep
     backchannels_ = cfg_.backchannels;
     expressiveness_ = cfg_.expressiveness;
     d_.analyzer.SetAlertCallback([this](MixAlert a, const MixMetrics& m) { OnMixAlert(a, m); });
+    LoadLearnedPresets();
 }
 AgentOrchestrator::~AgentOrchestrator() { Stop(); }
 
@@ -81,6 +86,7 @@ void AgentOrchestrator::Stop() {
     d_.trainer.Kill();  // normalement déjà fait par la révocation du bail par le governor
     d_.loopback.Stop();
     d_.analyzer.Stop();
+    perf_.Stop();  // résumé de la partie en cours, s'il y en a une
 }
 
 void AgentOrchestrator::Post(Job job) {
@@ -280,6 +286,7 @@ void AgentOrchestrator::WorkerMain(std::stop_token st) {
         }
         UpdateStudioCapture();
         CheckGameEvents();  // au plus toutes les 5 s, comme le sondage de l'API LoL
+        UpdatePerfMonitor();
         if (deviceDirty_.exchange(false)) {
             const bool gaming = mode_.load() == SystemMode::Gaming;
             // Entrée en jeu : tout est libéré (VRAM et RAM rendues au jeu), rien n'est rechargé tant qu'on ne lui
@@ -299,6 +306,7 @@ void AgentOrchestrator::WorkerMain(std::stop_token st) {
             job(jobStop);
             activity_ = AgentActivity::Idle;
         }
+        CheckPerfGuard();
         // Fin d'une humeur temporaire (empathie, apaisement) : retour à la posture normale.
         {
             bool expire = false;
@@ -407,7 +415,14 @@ bool AgentOrchestrator::EnsureBrain() {
                 gameGpuBusy_ = busy;
                 gpuVerdictAt_ = now;
             }
-            const BrainChoice c = ModelPlanner::PlanGaming(hw, gameGpuBusy_);
+            // Preset : calibrage en cours > companion.json (ce jeu, puis tous) > appris sur ce jeu > mesuré.
+            if (gameKey_.empty()) gameKey_ = log::Narrow(d_.governor.ActiveGame());
+            std::string source;
+            const GamePreset preset = forcedPreset_ ? *forcedPreset_ : EffectivePreset(&source);
+            const BrainChoice c = preset == GamePreset::Auto ? ModelPlanner::PlanGaming(hw, gameGpuBusy_)
+                                                             : ModelPlanner::PlanPreset(hw, preset);
+            const bool tiny = c.model == &ModelPlanner::Brains().front();
+            activePreset_ = c.gpu ? (tiny ? GamePreset::GpuLight : GamePreset::Gpu) : (tiny ? GamePreset::CpuLight : GamePreset::Cpu);
             const auto dir = cfg_.llmGamingModel.parent_path();
             const ModelInfo* pick = nullptr;  // le plus gros DÉJÀ téléchargé qui tient dans le budget
             for (const auto& m : ModelPlanner::Brains())
@@ -437,6 +452,294 @@ bool AgentOrchestrator::EnsureBrain() {
     bc.ubatch = ubatch;
     d_.brain.Configure(gpu, bc.threads);
     return d_.brain.Load(bc);
+}
+
+// ---------------------------------------------------------------------------
+// Perfs en jeu
+
+namespace {
+const char* HumanPreset(GamePreset p) {
+    switch (p) {
+        case GamePreset::Gpu: return "carte graphique";
+        case GamePreset::GpuLight: return "carte graphique, petit modèle";
+        case GamePreset::Cpu: return "processeur";
+        case GamePreset::CpuLight: return "processeur, petit modèle";
+        default: return "automatique";
+    }
+}
+std::string GameLabel(const std::string& exe) {
+    if (exe.starts_with("league of legends")) return "LoL";
+    if (exe.starts_with("valorant")) return "Valorant";
+    if (exe == "cs2.exe") return "CS2";
+    const auto dot = exe.rfind('.');
+    return dot == std::string::npos ? exe : exe.substr(0, dot);
+}
+}  // namespace
+
+void AgentOrchestrator::LoadLearnedPresets() {
+    std::ifstream f(d_.dataDir / L"game_presets.json", std::ios::binary);
+    if (!f) return;
+    try {
+        const auto j = nlohmann::json::parse(f);
+        for (const auto& [game, v] : j.items())
+            if (v.is_object() && ParseGamePreset(v.value("preset", std::string{})))
+                learned_[game] = {v.value("preset", std::string{}), v.value("by", std::string{}) == "toi"};
+    } catch (const std::exception&) {
+        learned_.clear();
+    }
+}
+
+void AgentOrchestrator::SaveLearnedPresets() const {
+    nlohmann::json j = nlohmann::json::object();
+    for (const auto& [game, l] : learned_) j[game] = {{"preset", l.preset}, {"by", l.byUser ? "toi" : "mesure"}};
+    std::error_code ec;
+    std::filesystem::create_directories(d_.dataDir, ec);
+    const auto file = d_.dataDir / L"game_presets.json";
+    auto tmp = file;
+    tmp += L".tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (!out) return;
+        out << j.dump(2) << "\n";
+    }
+    std::filesystem::rename(tmp, file, ec);
+}
+
+GamePreset AgentOrchestrator::EffectivePreset(std::string* source) const {
+    const auto set = [&](const char* s, GamePreset p) {
+        if (source) *source = s;
+        return p;
+    };
+    if (const auto it = cfg_.gamePresets.find(gameKey_); it != cfg_.gamePresets.end())
+        if (const auto p = ParseGamePreset(it->second)) return set("config", *p);
+    if (const auto p = ParseGamePreset(cfg_.gamingPreset); p && *p != GamePreset::Auto) return set("config", *p);
+    if (const auto it = learned_.find(gameKey_); it != learned_.end())
+        if (const auto p = ParseGamePreset(it->second.preset)) return set(it->second.byUser ? "toi" : "mesure", *p);
+    return set("auto", GamePreset::Auto);
+}
+
+// Démarre la mesure dès qu'une partie est détectée (réessaie toutes les 10 s), l'arrête à la sortie du jeu.
+void AgentOrchestrator::UpdatePerfMonitor() {
+    const bool gaming = mode_.load() == SystemMode::Gaming;
+    if (!gaming || !cfg_.perfMonitor) {
+        if (perf_.Running()) perf_.Stop();
+        if (!gaming) gameKey_.clear();
+        return;
+    }
+    if (perf_.Running() && perf_.GameAlive()) return;
+    if (perf_.Running()) perf_.Stop();  // le jeu s'est fermé, un autre a peut-être pris sa place
+    const auto now = std::chrono::steady_clock::now();
+    if (now < perfRetryAt_) return;
+    perfRetryAt_ = now + std::chrono::seconds(10);
+    std::wstring name;
+    const DWORD pid = d_.governor.ActiveGamePid(&name);
+    if (!pid) return;
+    gameKey_ = log::Narrow(name);
+    triedThisGame_.clear();
+    perf_.SetLimits(cfg_.perfMaxFpsDropPct, cfg_.perfMaxLowDropPct);
+    perf_.Start(pid, name, d_.dataDir / L"perf",
+                [this] { return d_.brain.Busy() || d_.voice.IsSpeaking(); },
+                [this] { return std::string(ToString(activePreset_.load())); });
+}
+
+// Garde-fou : s'il bouffe trop de FPS à ce jeu (mesuré sur au moins 15 s de travail), il passe un cran plus
+// léger et le retient pour ce jeu. Jamais sur un preset que tu as choisi (companion.json ou à la voix).
+void AgentOrchestrator::CheckPerfGuard() {
+    if (!cfg_.perfAutoAdjust || !perf_.Running() || calibrating_ || mode_.load() != SystemMode::Gaming) return;
+    const auto now = std::chrono::steady_clock::now();
+    if (now - lastGuard_ < std::chrono::seconds(10)) return;
+    lastGuard_ = now;
+    std::string source;
+    (void)EffectivePreset(&source);
+    if (source == "config" || source == "toi") return;
+    const PerfSession s = perf_.Snapshot();
+    if (s.busySeconds < 15.0) return;
+    const PerfImpact i = Impact(s.calm, s.busy);
+    if (!TooMuch(i, cfg_.perfMaxFpsDropPct, cfg_.perfMaxLowDropPct)) return;
+    const GamePreset cur = activePreset_.load();
+    triedThisGame_.insert(cur);
+    const GamePreset next = Lighter(cur);
+    if (cur == GamePreset::Auto || triedThisGame_.contains(next)) {
+        log::Info("Perf: impact -{:.1f} % FPS / -{:.1f} % 1 % low, déjà au plus léger", i.fpsDropPct, i.lowDropPct);
+        perf_.ResetBusy();
+        return;
+    }
+    learned_[gameKey_] = {ToString(next), false};
+    SaveLearnedPresets();
+    perf_.ResetBusy();
+    d_.brain.Unload();  // la prochaine question recharge avec le nouveau preset
+    log::Info("Perf: {} -{:.1f} % FPS, -{:.1f} % 1 % low en « {} » → « {} »", gameKey_, i.fpsDropPct, i.lowDropPct, ToString(cur),
+              ToString(next));
+    const double worst = std::max(i.fpsDropPct, i.lowDropPct);
+    Say(std::format("Je te bouffais {:.0f} % de FPS. Je passe en mode {} pour {}.", worst, HumanPreset(next), GameLabel(gameKey_)));
+}
+
+void AgentOrchestrator::SayPerfReport() {
+    if (!perf_.Running()) {
+        Say("Je mesure seulement pendant une partie. Après chaque partie, le résumé est dans le dossier perf.");
+        return;
+    }
+    const PerfSession s = perf_.Snapshot();
+    const PerfImpact i = Impact(s.calm, s.busy);
+    std::string t;
+    if (s.calm.frames > 0) {
+        t = std::format("Au calme t'es à {:.0f} FPS", s.calm.AvgFps());
+        if (i.known) {
+            t += std::format(", et quand je bosse {:.0f}", s.busy.AvgFps());
+            t += i.fpsDropPct < 0.5 ? ", aucune différence." : std::format(", moins {:.0f} pour cent.", i.fpsDropPct);
+            if (TooMuch(i, cfg_.perfMaxFpsDropPct, cfg_.perfMaxLowDropPct)) t += " Ça bouffe trop, je vais m'alléger.";
+        } else {
+            t += ". J'ai pas encore assez bossé pour mesurer mon impact. Dis teste les perfs pour un vrai test.";
+        }
+    } else {
+        t = "Je ne vois pas tes FPS, " + (perf_.FpsProblem().empty() ? std::string("ce jeu ne passe pas par DXGI") : perf_.FpsProblem()) + ".";
+    }
+    t += std::format(" Je prends {:.1f} pour cent du processeur", s.selfCpuAvg);
+    if (s.selfGpuAvg >= 0) t += std::format(" et {:.1f} pour cent de la carte", s.selfGpuAvg);
+    t += std::format(". Mode : {}.", HumanPreset(activePreset_.load()));
+    Say(t);
+}
+
+bool AgentOrchestrator::HandlePerfCommand(const std::string& lower, std::stop_token stop) {
+    if (ContainsAny(lower, {"teste les perf", "test les perf", "teste tes perf", "test tes perf", "calibre", "benchmark",
+                            "test de perf", "teste ton impact"})) {
+        Calibrate(stop);
+        return true;
+    }
+    // Choix à la voix, retenu pour ce jeu : « passe sur le processeur », « mets-toi sur la carte », « mode léger »…
+    std::optional<GamePreset> chosen;
+    const bool light = ContainsAny(lower, {"léger", "leger", "petit modèle", "petit modele"});
+    const bool place = ContainsAny(lower, {"passe sur", "mets-toi sur", "mets toi sur", "tourne sur", "bascule sur"});
+    if (place && ContainsAny(lower, {"processeur", "cpu"})) chosen = light ? GamePreset::CpuLight : GamePreset::Cpu;
+    else if (place && ContainsAny(lower, {"carte", "gpu"})) chosen = light ? GamePreset::GpuLight : GamePreset::Gpu;
+    else if (ContainsAny(lower, {"mode léger", "mode leger"}))
+        chosen = activePreset_.load() == GamePreset::Gpu || activePreset_.load() == GamePreset::GpuLight ? GamePreset::GpuLight
+                                                                                                          : GamePreset::CpuLight;
+    else if (ContainsAny(lower, {"mode auto", "preset auto", "remets-toi en auto", "remets toi en auto"}))
+        chosen = GamePreset::Auto;
+    if (chosen) {
+        if (gameKey_.empty()) {
+            Say("Dis-le-moi pendant une partie, je le retiens pour ce jeu-là.");
+            return true;
+        }
+        if (*chosen == GamePreset::Auto) learned_.erase(gameKey_);
+        else learned_[gameKey_] = {ToString(*chosen), true};
+        SaveLearnedPresets();
+        d_.brain.Unload();
+        perf_.ResetBusy();
+        triedThisGame_.clear();
+        Say(std::format("Ok, mode {} pour {}.", HumanPreset(*chosen), GameLabel(gameKey_)));
+        return true;
+    }
+    if (ContainsAny(lower, {"tu bouffes", "ça bouffe", "ca bouffe", "combien de fps", "mes fps", "tes perfs", "mes perfs",
+                            "les perfs", "ton impact"})) {
+        SayPerfReport();
+        return true;
+    }
+    return false;
+}
+
+// Calibrage, en pleine partie : repos / carte / repos / processeur (+ version légère si besoin), ~15 s chacun,
+// sans parler. Le preset qui coûte le moins de FPS est retenu pour ce jeu (le plus malin à 1,5 point près).
+void AgentOrchestrator::Calibrate(std::stop_token stop) {
+    if (mode_.load() != SystemMode::Gaming || !perf_.Running()) {
+        Say("Lance une partie d'abord, je mesure en vrai pendant que tu joues.");
+        return;
+    }
+    if (!perf_.FpsAvailable()) {
+        Say("Je ne vois pas tes FPS : " + perf_.FpsProblem() + ". Le README explique comment me donner ce droit.");
+        return;
+    }
+    Say("Ok, je teste mes modes pendant une minute environ. Joue normalement, je reste muet.");
+    const auto wait = [&](double seconds) {
+        const auto end = std::chrono::steady_clock::now() + std::chrono::duration<double>(seconds);
+        while (std::chrono::steady_clock::now() < end) {
+            if (stop.stop_requested() || mode_.load() != SystemMode::Gaming) return false;
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        return true;
+    };
+    for (int i = 0; i < 150 && d_.voice.IsSpeaking(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    calibrating_ = true;
+    struct Restore {
+        AgentOrchestrator& o;
+        ~Restore() {
+            o.forcedPreset_.reset();
+            o.calibrating_ = false;
+            o.d_.brain.Unload();
+            o.perf_.ResetBusy();
+        }
+    } restore{*this};
+
+    const auto calm = [&]() -> std::optional<FrameStats> {
+        d_.brain.Unload();
+        if (!wait(2.0)) return std::nullopt;
+        perf_.BeginWindow();
+        if (!wait(12.0)) return std::nullopt;
+        return perf_.EndWindow();
+    };
+    const auto load = [&](GamePreset p) -> std::optional<FrameStats> {
+        forcedPreset_ = p;
+        if (!EnsureBrain()) return std::nullopt;
+        const std::vector<ChatTurn> messages{{"system", PersonaPrompt()},
+                                             {"user", "Raconte-moi en détail ta pire partie de League of Legends, minute par minute."}};
+        perf_.BeginWindow();
+        const auto t0 = std::chrono::steady_clock::now();
+        const auto elapsed = [&] { return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(); };
+        while (elapsed() < 15.0 && !stop.stop_requested() && mode_.load() == SystemMode::Gaming) {
+            GenerateOptions o;
+            o.maxTokens = 400;
+            o.temperature = 0.9f;
+            o.stop = stop;
+            o.onPiece = [&](std::string_view) { return elapsed() < 15.0; };
+            if (!d_.brain.Generate(messages, o)) break;
+        }
+        const FrameStats f = perf_.EndWindow();
+        if (stop.stop_requested() || mode_.load() != SystemMode::Gaming) return std::nullopt;
+        return f;
+    };
+
+    FrameStats rest;
+    std::vector<std::pair<GamePreset, PerfImpact>> results;
+    std::vector<std::pair<GamePreset, FrameStats>> loads;
+    for (GamePreset p : {GamePreset::Gpu, GamePreset::Cpu}) {
+        const auto c = calm();
+        if (!c) return;
+        rest.Merge(*c);
+        const auto l = load(p);
+        if (!l) return;
+        loads.emplace_back(p, *l);
+    }
+    for (const auto& [p, f] : loads) results.emplace_back(p, Impact(rest, f));
+    // Les deux coûtent trop : on essaie la version légère du meilleur.
+    if (const GamePreset best = ChooseCalibrated(results); best != GamePreset::Auto) {
+        const auto it = std::ranges::find(results, best, &std::pair<GamePreset, PerfImpact>::first);
+        if (TooMuch(it->second, cfg_.perfMaxFpsDropPct, cfg_.perfMaxLowDropPct)) {
+            const GamePreset lighter = Lighter(best);
+            if (const auto l = load(lighter)) results.emplace_back(lighter, Impact(rest, *l));
+            else return;
+        }
+    }
+    const GamePreset pick = ChooseCalibrated(results);
+    std::string detail = std::format("Perf: calibrage {} — repos {:.0f} FPS (1 % low {:.0f})", gameKey_, rest.AvgFps(), rest.Low1Fps());
+    for (const auto& [p, i] : results)
+        detail += std::format(" ; {} {:.0f} FPS -{:.1f} % / 1 % low -{:.1f} %", ToString(p), i.busyFps, i.fpsDropPct, i.lowDropPct);
+    log::Info("{}", detail);
+    if (pick == GamePreset::Auto) {
+        Say("Pas assez d'images pour conclure, on retentera dans une partie plus calme.");
+        return;
+    }
+    learned_[gameKey_] = {ToString(pick), false};
+    SaveLearnedPresets();
+    triedThisGame_.clear();
+    std::string t = std::format("Résultat. Au calme : {:.0f} FPS.", rest.AvgFps());
+    for (const auto& [p, i] : results)
+        t += i.fpsDropPct < 0.5 ? std::format(" {} : aucune perte.", HumanPreset(p))
+                                : std::format(" {} : moins {:.0f} pour cent.", HumanPreset(p), i.fpsDropPct);
+    const auto it = std::ranges::find(results, pick, &std::pair<GamePreset, PerfImpact>::first);
+    t += std::format(" Je garde le mode {} pour {}.", HumanPreset(pick), GameLabel(gameKey_));
+    if (TooMuch(it->second, cfg_.perfMaxFpsDropPct, cfg_.perfMaxLowDropPct)) t += " Même comme ça je te coûte un peu, évite de me parler en plein teamfight.";
+    Say(t);
 }
 
 // Les 2-3 premiers mots de la réponse (« Ah ouais ? », « Carrément. »), ponctuation comprise.
@@ -850,6 +1153,7 @@ bool AgentOrchestrator::HandleLevel0(const std::string& text, std::stop_token st
         Say(Line("goodbye", {}, "À plus."));
         return true;
     }
+    if (HandlePerfCommand(lower, stop)) return true;  // « teste les perfs », « passe sur le processeur »…
     if (HandleSystemCommand(text, lower, stop)) return true;  // volume d'abord : « monte le son » n'est pas un bruitage
     if (HandleSoundboard(text, lower, stop)) return true;
 

@@ -19,6 +19,7 @@
 #include "audio/VoiceEngine.hpp"
 #include "audio/WasapiLoopback.hpp"
 #include "core/Config.hpp"
+#include "core/GamePerfMonitor.hpp"
 #include "core/MemeBank.hpp"
 #include "core/MixLexicon.hpp"
 #include "core/ModelPlanner.hpp"
@@ -44,6 +45,7 @@
 #include <mutex>
 #include <map>
 #include <optional>
+#include <set>
 #include <stop_token>
 #include <string>
 #include <thread>
@@ -195,6 +197,28 @@ private:
     // En jeu : le jeu sature-t-il la carte ? (verdict gardé au moins 60 s : pas de rechargement en boucle)
     bool gameGpuBusy_ = true;
     std::chrono::steady_clock::time_point gpuVerdictAt_{};
+
+    // Perfs en jeu : mesure (FPS, impact), presets par jeu, garde-fou, calibrage (« teste les perfs »).
+    GamePerfMonitor perf_;
+    std::string gameKey_;  // exécutable du jeu en cours, minuscules (clé des presets)
+    std::chrono::steady_clock::time_point perfRetryAt_{}, lastGuard_{};
+    struct LearnedPreset {
+        std::string preset;
+        bool byUser = false;  // choisi à la voix : le garde-fou n'y touche pas
+    };
+    std::map<std::string, LearnedPreset> learned_;  // %LOCALAPPDATA%\CompanionAI\game_presets.json
+    std::optional<GamePreset> forcedPreset_;         // pendant le calibrage
+    std::atomic<GamePreset> activePreset_{GamePreset::Auto};  // ce qui est réellement chargé (lu par le moniteur)
+    std::set<GamePreset> triedThisGame_;             // garde-fou : pas de ping-pong entre deux presets
+    bool calibrating_ = false;
+    void LoadLearnedPresets();
+    void SaveLearnedPresets() const;
+    [[nodiscard]] GamePreset EffectivePreset(std::string* source) const;
+    void UpdatePerfMonitor();
+    void CheckPerfGuard();
+    bool HandlePerfCommand(const std::string& lower, std::stop_token stop);
+    void Calibrate(std::stop_token stop);
+    void SayPerfReport();
     std::chrono::steady_clock::time_point lastAutoTraining_{};
     std::atomic<std::int64_t> listenUntilMs_{0};  // écoute du mix à la demande (hors FL Studio)
 };
