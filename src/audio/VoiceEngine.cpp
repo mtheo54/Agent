@@ -1009,7 +1009,7 @@ void VoiceEngine::TranscribeExternal(std::vector<float> pcm16k, std::function<vo
     Impl& d = *impl_;
     d.Post([&d, pcm = std::move(pcm16k), done = std::move(done)]() mutable {
         std::string text = d.Whisper(std::move(pcm));
-        if (!text.empty() && done) done(std::move(text));
+        if (done) done(std::move(text));  // toujours appelé (vide = rien reconnu) : l'appelant compte ses envois
     });
 }
 

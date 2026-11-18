@@ -39,6 +39,7 @@
 #include "modules/DesktopPilot.hpp"
 #include "modules/DiscordSpeaking.hpp"
 #include "modules/VideoStudy.hpp"
+#include "modules/WatchAlong.hpp"
 #include "network/WebSurf.hpp"
 #include "modules/GameCoach.hpp"
 #include "modules/SelfTrainer.hpp"
@@ -269,7 +270,19 @@ private:
     std::chrono::steady_clock::time_point lastSpokeInCall_{}, lastEarrape_{}, quietUntil_{}, lastCallLineAt_{};
     std::string lastCallReply_;
     std::deque<std::string> recentBaits_, recentTechniques_;
-    BaitBank bank_;  // ses 4 dernières vannes : pas de redites, pas de tics
+    BaitBank bank_;
+    // « Regarde avec moi » : il écoute le son de ton navigateur pendant que TU scrolles, apprend, réagit parfois.
+    WatchAlong watch_;
+    std::atomic<int> watchPending_{0};  // transcriptions en cours (1 au plus : sa voix passe avant)
+    bool watchSilent_ = false;
+    std::string watchTitle_, watchText_;
+    std::chrono::steady_clock::time_point lastWatchComment_{};
+    int watchClips_ = 0, watchForms_ = 0;
+    bool HandleWatchCommand(const std::string& lower);
+    void OnWatchSpeech(std::string text, std::string title);  // thread de transcription
+    void FlushWatchClip(std::stop_token stop);
+    void CheckWatch();
+    void StopWatching(bool announce);  // ses 4 dernières vannes : pas de redites, pas de tics
     bool PlayBaitSound(bool earrape);
     void PrefetchCallSounds();
     // « Prends ma place » : il garde ta place 60 min au plus, te résume tout à ton retour

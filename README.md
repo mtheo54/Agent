@@ -476,6 +476,25 @@ Pendant ses séances d'auto-entraînement (PC inactif, tué dès que tu touches 
   yt-dlp pour YouTube), téléchargés une fois depuis leurs pages officielles. Ils ne sont lancés que si leur empreinte
   **SHA-256 correspond à celle publiée**. yt-dlp est repris tous les 30 jours (YouTube change souvent).
 
+### « Regarde avec moi » (tes Reels, ton TikTok, YouTube)
+
+C'est **toi** qui scrolles, avec **ton** compte, normalement. Omnis regarde à côté :
+
+- **« Omnis, regarde avec moi »** (ou « on regarde des Reels », « mode visionnage »). Il écoute seulement le son
+  de ton navigateur (capture du processus : ni le reste du PC, ni ton micro) et lit le titre de l'onglet (sur TikTok,
+  la légende de la vidéo).
+- Whisper transcrit sur ton PC, une phrase à la fois, et laisse passer sa voix d'abord. Il regroupe ce qu'il entend
+  par vidéo (le titre de l'onglet change).
+- **Il réagit** de temps en temps, comme un pote assis à côté : une vanne, un avis, un « attends, c'est quoi ce
+  truc ». « Regarde en silence » le fait taire, « tu peux commenter » le relance.
+- **Il apprend** : pour chaque vidéo, la même étude que l'entraînement vidéo (une leçon, des formes de vannes pour
+  sa banque).
+- **Vie privée** :
+  - il n'écoute plus dès que l'onglet passe sur des messages (DM, boîte de réception, discussions, mails) ;
+  - rien n'est piloté : pas de clic, aucune requête faite au nom de ton compte.
+- « Arrête de regarder » : il te dit combien de vidéos vous avez vues et combien de vannes il en a tirées. Il
+  s'arrête tout seul en jeu, au bout de 90 minutes, ou si le navigateur se ferme.
+
 ### Surfer pour s'entraîner (« tu peux surfer cette nuit »)
 
 « **Omnis, tu peux surfer cette nuit** » : jusqu'à 10 h le lendemain (14 h au plus). « **Arrête de surfer** » coupe.

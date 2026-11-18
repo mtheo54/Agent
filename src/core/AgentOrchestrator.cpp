@@ -89,6 +89,7 @@ void AgentOrchestrator::Stop() {
     d_.analyzer.Stop();
     perf_.Stop();  // résumé de la partie en cours, s'il y en a une
     seeing_.Stop();
+    watch_.Stop();
 }
 
 void AgentOrchestrator::Post(Job job) {
@@ -290,6 +291,7 @@ void AgentOrchestrator::WorkerMain(std::stop_token st) {
         CheckGameEvents();  // au plus toutes les 5 s, comme le sondage de l'API LoL
         UpdatePerfMonitor();
         CheckSubstitute();
+        CheckWatch();
         if (deviceDirty_.exchange(false)) {
             const bool gaming = mode_.load() == SystemMode::Gaming;
             // Entrée en jeu : tout est libéré (VRAM et RAM rendues au jeu), rien n'est rechargé tant qu'on ne lui
@@ -1198,6 +1200,135 @@ void AgentOrchestrator::HandleCallLine(const std::string& text, const std::vecto
 // « Prends ma place » : 60 min au plus. Il se présente comme Omnis (jamais comme toi), répond, note ce qu'on te
 // demande, met des vidéos ou montre ses recherches sur l'écran 1, et te fait le résumé — en privé — à ton retour.
 
+// ---------------------------------------------------------------------------
+// « Regarde avec moi » (WatchAlong)
+
+bool AgentOrchestrator::HandleWatchCommand(const std::string& lower) {
+    if (watch_.Running() && ContainsAny(lower, {"arrête de regarder", "arrete de regarder", "on arrête de regarder", "stop le visionnage",
+                                                "c'est bon on arrête", "fin du visionnage"})) {
+        StopWatching(true);
+        return true;
+    }
+    if (watch_.Running() && ContainsAny(lower, {"regarde en silence", "commente pas", "commente plus", "tais-toi et regarde"})) {
+        watchSilent_ = true;
+        Say("Ok, je regarde sans rien dire.");
+        return true;
+    }
+    if (watch_.Running() && ContainsAny(lower, {"tu peux commenter", "commente", "réagis", "reagis"})) {
+        watchSilent_ = false;
+        Say("Ok, je commente.");
+        return true;
+    }
+    if (!ContainsAny(lower, {"regarde avec moi", "regarde avec nous", "on regarde des", "on regarde ensemble", "mode visionnage",
+                             "regarde mes reels", "regarde mes tiktok", "scroll avec moi"}))
+        return false;
+    if (mode_.load() == SystemMode::Gaming) {
+        Say("Pas pendant une partie.");
+        return true;
+    }
+    if (watch_.Running()) {
+        Say("Je regarde déjà avec toi.");
+        return true;
+    }
+    std::string error;
+    if (!watch_.Start([this](std::vector<float> pcm, std::string title) {
+            if (watchPending_.load() >= 1) return;  // Whisper déjà occupé : on saute (sa voix passe avant)
+            ++watchPending_;
+            d_.voice.TranscribeExternal(std::move(pcm), [this, title = std::move(title)](std::string text) mutable {
+                --watchPending_;
+                if (!text.empty()) OnWatchSpeech(std::move(text), std::move(title));
+            });
+        },
+                      error)) {
+        Say("J'arrive pas à écouter ton navigateur : " + error + ".");
+        return true;
+    }
+    watchSilent_ = false;
+    watchTitle_.clear();
+    watchText_.clear();
+    watchClips_ = watchForms_ = 0;
+    bank_.Load(d_.assetsDir / L"persona" / L"baits.json", d_.dataDir / L"learned_baits.json");
+    Say("Vas-y, scrolle, je regarde avec toi. Je capte que le son du navigateur, et je décroche si t'ouvres tes messages.");
+    return true;
+}
+
+void AgentOrchestrator::OnWatchSpeech(std::string text, std::string title) {
+    text = Trim(std::move(text));
+    const std::string lower = Lower(text);
+    if (text.size() < 4 || HasAny(lower, {"sous-titr", "amara.org", "merci d'avoir regardé"})) return;
+    Post([this, text = std::move(text), title = std::move(title)](std::stop_token stop) {
+        if (!watch_.Running()) return;
+        // Nouvelle vidéo (le titre de l'onglet change, ex. légende TikTok) : on clôt la précédente.
+        if (!watchText_.empty() && title != watchTitle_) FlushWatchClip(stop);
+        watchTitle_ = title;
+        watchText_ += (watchText_.empty() ? "" : " ") + text;
+        if (watchText_.size() > 600) FlushWatchClip(stop);  // longue vidéo : par morceaux
+    });
+}
+
+// Une vidéo regardée ensemble : parfois une réaction de pote (tout de suite), puis l'étude (leçon + formes de vannes).
+void AgentOrchestrator::FlushWatchClip(std::stop_token stop) {
+    const std::string text = std::exchange(watchText_, {});
+    if (text.size() < 60 || !EnsureBrain()) return;
+    const std::string title = watchTitle_;
+    const auto now = std::chrono::steady_clock::now();
+    ++watchClips_;
+    // 1) Réaction (1 vidéo sur 3, au plus toutes les 40 s, jamais par-dessus lui-même)
+    const unsigned r = rng_.fetch_add(0x9E3779B9u) * 2654435761u;
+    if (!watchSilent_ && now - lastWatchComment_ > std::chrono::seconds(40) && (r >> 8) % 3 == 0 && !d_.voice.IsSpeaking()) {
+        GenerateOptions o;
+        o.maxTokens = 50;
+        o.temperature = 0.8f;
+        o.stop = stop;
+        const auto out = d_.brain.Generate(
+            {{"system", PersonaPrompt()},
+             {"user", "[Contexte]\nTu regardes des vidéos (Reels / TikTok / YouTube) avec ton pote, sur son écran. Titre de l'onglet : « " +
+                          title + " ». Ce qu'on entend dans la vidéo : « " + text.substr(0, 700) + " ».\n[Message]\nRéagis en UNE phrase "
+                          "courte, comme un pote assis à côté : une vanne sur la vidéo, un avis tranché, ou un « attends, c'est quoi ce truc ». "
+                          "Ne résume pas la vidéo."}},
+            o);
+        if (out) {
+            const std::string say = CleanSpoken(*out);
+            if (!say.empty() && CrossesLine(say, {}).empty()) {
+                Say(say);
+                lastWatchComment_ = now;
+            }
+        }
+    }
+    // 2) Étude : même fiche que l'entraînement vidéo -> leçon + formes de vannes ajoutées à sa banque.
+    GenerateOptions o;
+    o.maxTokens = 380;
+    o.temperature = 0.4f;
+    o.grammar = kStudyGrammar;
+    o.stop = stop;
+    const auto out = d_.brain.Generate({{"system", kStudySystem}, {"user", StudyPrompt(title.empty() ? "vidéo regardée ensemble" : title, text, "")}}, o);
+    if (!out) return;
+    StudyResult res = ParseStudy(*out, "regardé avec toi : " + title);
+    if (!res.humour) return;
+    std::erase_if(res.forms, [](const BaitForm& f) { return !CrossesLine(f.form, {}).empty(); });
+    watchForms_ += bank_.AddLearned(res.forms);
+    d_.db.AddLesson("rage bait : " + (title.empty() ? std::string("vidéo regardée ensemble") : title), res.technique, res.technique + " — " + res.why);
+    log::Info("WatchAlong: « {} » -> {} ({} formes)", title, res.technique, res.forms.size());
+}
+
+void AgentOrchestrator::StopWatching(bool announce) {
+    if (!watch_.Running()) return;
+    watch_.Stop();
+    FlushWatchClip({});
+    if (announce)
+        Say(watchClips_ ? std::format("Ok. On a regardé {} vidéo{}, j'en ai tiré {} vanne{}.", watchClips_, watchClips_ > 1 ? "s" : "", watchForms_,
+                                      watchForms_ > 1 ? "s" : "")
+                        : std::string("Ok, j'arrête de regarder."));
+}
+
+// Arrêt automatique : en jeu, au bout de 90 min, ou si le navigateur s'est fermé.
+void AgentOrchestrator::CheckWatch() {
+    if (!watch_.Running()) return;
+    if (mode_.load() == SystemMode::Gaming || std::chrono::steady_clock::now() - watch_.StartedAt() > std::chrono::minutes(90) ||
+        !WasapiLoopback::FindProcessId(watch_.Browser()))
+        StopWatching(true);
+}
+
 void AgentOrchestrator::JoinedCall() {
     // Formes de vannes : écrites à la main + celles apprises en regardant des vidéos depuis le dernier call.
     bank_.Load(d_.assetsDir / L"persona" / L"baits.json", d_.dataDir / L"learned_baits.json");
@@ -1882,6 +2013,7 @@ bool AgentOrchestrator::HandleLevel0(const std::string& text, std::stop_token st
         return true;
     }
     if (HandleCallCommand(lower, stop)) return true;  // « rejoins le call », « quitte le call »
+    if (HandleWatchCommand(lower)) return true;       // « regarde avec moi », « arrête de regarder »
     // « Tu peux surfer cette nuit » : surf libre pour s'entraîner jusqu'à 10 h le lendemain (14 h au plus).
     if (ContainsAny(lower, {"arrête de surfer", "arrete de surfer", "plus d'internet", "plus le droit de surfer", "coupe internet"})) {
         d_.db.SetProfile("web.freeUntil", "0");
