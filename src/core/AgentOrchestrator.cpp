@@ -374,6 +374,12 @@ void AgentOrchestrator::OnMixAlert(MixAlert alert, const MixMetrics& m) {
 // ---------------------------------------------------------------------------
 std::string AgentOrchestrator::PersonaPrompt() const { return companion::PersonaPrompt(cfg_.name, cfg_.tone); }
 
+// Système selon le mode de la question en cours (chacun a sa photo d'état : pas de recalcul à chaque fois).
+std::string AgentOrchestrator::ModePrompt() const {
+    if (chatMode_ == ChatMode::Technical) return TechnicalPrompt(cfg_.name);
+    return RageBaitChatPrompt(cfg_.name);
+}
+
 std::string AgentOrchestrator::Line(const std::string& key, const std::map<std::string, std::string>& vars,
                                     const std::string& fallback) {
     d_.phrases.SetTone(static_cast<Tone>(cfg_.tone));
@@ -1944,13 +1950,22 @@ void AgentOrchestrator::HandleLevel1(const std::string& text, const std::vector<
         EscalateCloud("REASON", text, text, stop);
         return;
     }
-    std::vector<ChatTurn> messages{{"system", PersonaPrompt()}};
+    // Mode décidé AVANT de répondre : technique (prioritaire en cas de doute) ou rage bait (bavardage, excuses, ego).
+    chatMode_ = DetectChatMode(Lower(text));
+    searchRound_ = 0;
+    log::Info("Orchestrator: mode {}", chatMode_ == ChatMode::Technical ? "technique" : "rage bait");
+    std::vector<ChatTurn> messages{{"system", ModePrompt()}};
     messages.insert(messages.end(), history.begin(), history.end());
-    const std::string ctx = LiveContext(text) + CallHint() + extraContext + OpenerHint() + MemeHint() + SoundHint() + RageBaitHint(text);
+    // Technique : rien qui distraie (memes, bruitages, rage bait) ; rage bait : tout le sel habituel.
+    const std::string ctx = chatMode_ == ChatMode::Technical
+                                ? LiveContext(text) + CallHint() + extraContext
+                                : LiveContext(text) + CallHint() + extraContext + OpenerHint() + MemeHint() + SoundHint() + RageBaitHint(text);
     messages.push_back({"user", ctx.empty() ? text : "[Contexte]\n" + ctx + "\n[Message]\n" + text});
 
     bool escalation = false;
-    const std::string out = GenerateSpoken(messages, kEscalateGrammar, stop, escalation);
+    // Rage bait : 2 à 3 phrases, sec ; technique : de quoi expliquer.
+    const std::string out = GenerateSpoken(messages, kEscalateGrammar, stop, escalation, nullptr,
+                                           chatMode_ == ChatMode::Technical ? 260 : 90);
     if (stop.stop_requested()) return;
     if (!escalation) {
         if (!out.empty()) {
@@ -1965,7 +1980,9 @@ void AgentOrchestrator::HandleLevel1(const std::string& text, const std::vector<
         Say(Line("stuck", {}, "Je bloque là-dessus."));
         return;
     }
-    const std::string type = m[1].str(), subject = Trim(m[2].str());
+    std::string type, subject;
+    EscalationOf(m, type, subject);
+    subject = Trim(subject);
     log::Info("Orchestrator: escalade {} « {} »", type, subject);
     if (type == "WEB") ResearchLocally(subject, text, stop);
     else if (type == "REASON") EscalateCloud(type, subject, text, stop);
@@ -1992,7 +2009,29 @@ void AgentOrchestrator::ResearchLocally(const std::string& subject, const std::s
         origin = "cache-local";
     }
 
-    // 2) Sinon, wiki en liste blanche, avec ta permission.
+    // 2) Technique : le vrai web d'abord (un manuel Profinet n'est pas sur Wikipédia). Permission : « tu peux surfer
+    //    cette nuit », ou ta réponse à la question (« toujours » la retient).
+    if (sources.empty() && chatMode_ == ChatMode::Technical && d_.http) {
+        const bool allowed = WebSurf::Allowed(d_.db) ||
+                             d_.gate.Request(PermissionScope::Web, "web-libre", Line("askWebFree", {}, "Je cherche ça sur le web ?"),
+                                             std::chrono::seconds(20), stop);
+        if (stop.stop_requested()) return;
+        if (!allowed) {
+            Say(Line("webDenied", {}, "Ok, pas de web."));
+            return;
+        }
+        {
+            Say(Line("lookUp", {}, "Je regarde."));
+            WebSurf surf(*d_.http);
+            int pages = 4;
+            sources = surf.Research(subject, 3, pages);
+            if (!sources.empty()) {
+                d_.db.AddKnowledge("web-libre", subject, sources);
+                origin = "web-libre";
+            }
+        }
+    }
+    // 3) Sinon, wiki en liste blanche, avec ta permission.
     if (sources.empty()) {
         const bool inLol = d_.coach.Latest().has_value();
         const WikiSource* src = d_.web.PickSource(subject + " " + question + (inLol ? " lol" : ""));
@@ -2027,15 +2066,36 @@ void AgentOrchestrator::AnswerFromSources(const std::string& question, const std
     }
     const std::string ctx = LiveContext(question);
     std::vector<ChatTurn> messages{
-        {"system", PersonaPrompt()},
-        {"user", "[Contexte]\n" + ctx + "\n[Sources]\n" + sources.substr(0, 6000) +
-                     "\n[Consigne]\nRéponds à la question à partir des sources ci-dessus (elles peuvent être en "
-                     "anglais, réponds en français). Si elles ne suffisent pas, dis-le franchement.\n[Question]\n" +
-                     question}};
-    bool escalation = false;
-    const std::string answer = GenerateSpoken(messages, nullptr, stop, escalation);
-    if (stop.stop_requested() || answer.empty()) return;
-    d_.db.AddMessage("assistant", answer);
+        {"system", ModePrompt()},
+        {"user", "[Contexte]\n" + ctx + "\n<contexte_web>\n" + sources.substr(0, 6000) + "\n</contexte_web>\n[Consigne]\n" +
+                     WebContextRules(chatMode_) + " Les sources peuvent être en anglais : réponds en français.\n[Question]\n" + question}};
+    // Réponse générée en entier PUIS vérifiée : « Information absente de la source » ne doit pas être dite telle quelle.
+    GenerateOptions o;
+    o.maxTokens = chatMode_ == ChatMode::Technical ? 260 : 120;
+    o.temperature = chatMode_ == ChatMode::Technical ? 0.2f : 0.7f;
+    o.stop = stop;
+    activity_ = AgentActivity::Thinking;
+    const auto out = d_.brain.Generate(messages, o);
+    if (stop.stop_requested() || !out) return;
+    const std::string answer = Trim(*out);
+    std::smatch m;
+    const bool absent = answer.find(kAbsentMarker) != std::string::npos;
+    const bool again = std::regex_search(answer, m, EscalateTag());
+    if (absent || (again && answer.rfind('[', 0) == 0)) {
+        // Une seule recherche plus ciblée ; toujours rien -> Claude (avec ta permission).
+        std::string type, next;
+        if (again) EscalationOf(m, type, next);
+        if (searchRound_ == 0 && again && type == "WEB" && Trim(next) != subject) {
+            ++searchRound_;
+            log::Info("Orchestrator: info absente, recherche plus ciblée « {} »", Trim(next));
+            ResearchLocally(Trim(next), question, stop);
+            return;
+        }
+        log::Info("Orchestrator: info toujours absente après recherche -> Claude");
+        EscalateCloud("REASON", subject, question, stop);
+        return;
+    }
+    Say(answer);
     d_.db.LogEscalation("WEB", subject, origin, answer, question);
 }
 
@@ -2251,8 +2311,10 @@ void AgentOrchestrator::HandleVision(const std::string& question, std::stop_toke
         }
         std::smatch m;
         if (escalation && std::regex_search(out, m, EscalateTag())) {
-            if (m[1].str() == "WEB") {  // ex. nom de quête lu à l'écran -> wiki en liste blanche
-                ResearchLocally(Trim(m[2].str()), question, stop);
+            std::string type, subject;
+            EscalationOf(m, type, subject);
+            if (type == "WEB") {  // ex. nom de quête lu à l'écran -> recherche
+                ResearchLocally(Trim(subject), question, stop);
                 return;
             }
         }

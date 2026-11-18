@@ -21,6 +21,7 @@
 #include "core/CallPeople.hpp"
 #include "core/CallPrompt.hpp"
 #include "core/BaitBank.hpp"
+#include "core/OmnisModes.hpp"
 #include "core/RageBait.hpp"
 #include "audio/VoiceEngine.hpp"
 #include "audio/WasapiLoopback.hpp"
@@ -150,6 +151,9 @@ private:
     void StartTraining(bool manual, bool silent = false);
 
     std::string PersonaPrompt() const;
+    std::string ModePrompt() const;  // technique ou rage bait, selon la question en cours
+    ChatMode chatMode_ = ChatMode::RageBait;
+    int searchRound_ = 0;  // 0 = 1re recherche ; 1 = recherche plus ciblée (ensuite : Claude)
     std::string LiveContext(const std::string& question) const;
     bool EnsureBrain();
     std::string GenerateSpoken(const std::vector<ChatTurn>& messages, const char* grammar, std::stop_token stop,

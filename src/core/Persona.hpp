@@ -5,6 +5,8 @@
 #include "audio/SpeakingStyle.hpp"
 
 #include <algorithm>
+#include "core/OmnisModes.hpp"
+
 #include <format>
 #include <map>
 #include <vector>
@@ -93,11 +95,9 @@ inline std::string PersonaPrompt(const std::string& name, int tone = 2) {
         "Si le contexte donne le [Ton de voix] de l'utilisateur, adapte-toi sans le souligner : doux et "
         "rassurant s'il est triste ou fatigué (et là, pas de vannes), calme et posé s'il est énervé ou "
         "stressé, enthousiaste avec lui s'il est joyeux.\n"
-        "Si la réponse dépend d'infos récentes ou précises que tu n'as pas (build, patch, stats, quête, "
-        "actualité), n'invente rien et réponds UNIQUEMENT : [ESCALATE | type: WEB | sujet: <recherche courte>]\n"
-        "Si tu dois voir l'écran : [ESCALATE | type: VISION | sujet: <ce qu'il faut regarder>]\n"
-        "Si c'est trop complexe pour toi : [ESCALATE | type: REASON | sujet: <résumé court>]",
-        name, ToneInstructions(tone));
+        "Si la réponse dépend d'infos récentes ou précises que tu n'as pas (build, patch, stats, quête, actualité), "
+        "n'invente rien. {}",
+        name, ToneInstructions(tone), kSearchProtocol);
 }
 
 // Relances orales jouées instantanément pendant que le modèle prépare sa réponse.
@@ -159,17 +159,29 @@ inline constexpr const char* kRageBaitPlaybook =
     "Interdit : origine, religion, sexualité, physique, handicap, famille, et tout sujet sensible signalé.";
 
 inline constexpr const char* kEscalateGrammar = R"GBNF(
-root      ::= [ ]* ( escalate | answer )
+root      ::= [ ]* ( escalate | search | answer )
 escalate  ::= "[ESCALATE | type: " kind " | sujet: " subject "]"
+search    ::= "[SEARCH: " subject "]"
 kind      ::= "WEB" | "VISION" | "REASON"
 subject   ::= [^\]\n] [^\]\n]*
 answer    ::= [^\[ \n] [^\x00]*
 )GBNF";
 
-// Balise d'escalade, crochets facultatifs (les petits modèles les omettent parfois).
+// Balise d'escalade, crochets facultatifs (les petits modèles les omettent parfois), ou [SEARCH: mots-clés] (= WEB).
 inline const std::regex& EscalateTag() {
-    static const std::regex tag(R"(\[?ESCALATE\s*\|\s*type:\s*(WEB|VISION|REASON)\s*\|\s*sujet:\s*([^\]\n]+)\]?)");
+    static const std::regex tag(
+        R"(\[?ESCALATE\s*\|\s*type:\s*(WEB|VISION|REASON)\s*\|\s*sujet:\s*([^\]\n]+)\]?|\[SEARCH:\s*([^\]\n]+)\])");
     return tag;
+}
+// Type (WEB / VISION / REASON) et sujet d'une balise trouvée par EscalateTag().
+inline void EscalationOf(const std::smatch& m, std::string& type, std::string& subject) {
+    if (m[3].matched) {
+        type = "WEB";
+        subject = m[3].str();
+    } else {
+        type = m[1].str();
+        subject = m[2].str();
+    }
 }
 
 }  // namespace companion

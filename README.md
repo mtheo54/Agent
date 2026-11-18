@@ -312,6 +312,32 @@ voix Piper `fr_FR-siwis-medium`, voix neuronale Qwen3-TTS 0.6B (`Serveurperso/Qw
 Imposer un modèle : un chemin dans `llmModel` / `llmGamingModel` (`companion.json`) au lieu de `"auto"`.
 Vision locale (optionnelle) : `mmproj-F16.gguf` du même dépôt que le cerveau, dans `llmMmproj`.
 
+## Deux modes : technique ou rage bait
+
+Avant chaque réponse, Omnis décide du mode **dans le code**, pas au hasard du modèle (`OmnisModes.hpp`) :
+
+| Mode | Déclencheur | Comportement |
+|---|---|---|
+| **Technique** (prioritaire en cas de doute) | C++, DSP, plugins, mixage, MAO, électrotechnique, automates, câblage, dépannage, stratégie de jeu sérieuse ; ou une vraie question | Chirurgical, rapide, fiable. Zéro blague, zéro sarcasme. Il n'invente jamais une valeur, un registre, une broche. |
+| **Rage bait** | Bavardage, excuses de défaite, ego, avis subjectif, provocation | Faux expert arrogant, calme, faussement bienveillant. Il ne reconnaît jamais avoir tort, minimise tes excuses, chipote. 2 à 3 phrases, sans insultes. |
+
+**Recherche** : quand il lui faut une doc, une spec, une info récente ou un fait précis, il répond seulement
+`[SEARCH: mots-clés]`, en 3 à 6 mots-clés secs (par exemple `[SEARCH: "Murrelektronik" Profinet BF LED fault manual]`).
+
+1. **Où il cherche** :
+   - en technique, sur le vrai web d'abord (avec ta permission, ou l'autorisation « surfe cette nuit ») ;
+   - sinon, sur les wikis autorisés.
+2. **Les résultats** lui reviennent dans `<contexte_web>`, avec des règles selon le mode :
+   - **technique** : il répond uniquement avec ce qui est dans la source ; si l'info exacte manque, il dit
+     « Information absente de la source » et lance **une** recherche plus ciblée ;
+   - **rage bait** : il se sert du fait exact pour te contredire, sans le déformer.
+3. **Toujours rien** (ou la même recherche une deuxième fois) : il passe la main à **Claude**, avec ta permission.
+
+Testé avec le vrai modèle :
+- il produit la balise de recherche exacte ;
+- avec une source qui contient l'info, il y répond (câble, nom d'appareil PROFINET, conflit d'IP) ;
+- avec une source qui ne la contient pas, il dit « Information absente de la source » et relance.
+
 ## Il prend la main (clavier et souris)
 
 Dans l'appli au premier plan, à ta demande : **« prends la main et ouvre le mixer »**, **« clique sur
