@@ -89,6 +89,16 @@ std::string NormalizeForSpeechFr(const std::string& input) {
     static const std::regex plusAfterWord(R"(([A-Za-z])\+(\d))");  // « sub+3 »
     text = std::regex_replace(text, plusAfterWord, "$1 plus $2");
 
+    // Taux de compression « 4:1 » -> « 4 pour 1 » (lu « 4, 1 » sinon). Les heures (14:30) ne finissent pas par « :1 ».
+    static const std::regex ratio(R"((\d{1,3}(?:[.,]\d)?)\s?:\s?1(?![\d:]))");
+    text = std::regex_replace(text, ratio, "$1 pour 1");
+    // Heures : « 14:00 » -> « 14 heures », « 14:30 » -> « 14 heures 30 » ; autre « 3:12 » (score) -> « 3 12 ».
+    static const std::regex hourPile(R"(\b([01]?\d|2[0-3]):00\b)");
+    text = std::regex_replace(text, hourPile, "$1 heures");
+    static const std::regex hour(R"(\b([01]?\d|2[0-3]):([0-5]\d)\b)");
+    text = std::regex_replace(text, hour, "$1 heures $2");
+    static const std::regex colonDigits(R"((\d):(\d))");
+    text = std::regex_replace(text, colonDigits, "$1 $2");
     static const std::regex fraction(R"((\d+)\s?/\s?(\d+))");
     text = std::regex_replace(text, fraction, "$1 sur $2");
 
@@ -149,6 +159,10 @@ std::string NormalizeForSpeechFr(const std::string& input) {
     }
     out.append(text, last, std::string::npos);
 
+    // Accord : « vingt et un heures » -> « vingt et une heures », « un heures » -> « une heure ».
+    static const std::regex oneHour(R"((^|[^\w])un heures)");
+    out = std::regex_replace(out, std::regex("et un heures"), "et une heures");
+    out = std::regex_replace(out, oneHour, "$1une heure");
     static const std::regex amp(R"(\s&\s)");
     out = std::regex_replace(out, amp, " et ");
     return out;

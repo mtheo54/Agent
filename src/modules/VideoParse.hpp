@@ -140,7 +140,9 @@ inline constexpr const char* kWatchVisionPrompt =
     "Deux captures d'une même vidéo courte (Reel, TikTok ou YouTube) : à gauche le début, à droite un peu plus tard. "
     "Réponds exactement sur ce modèle, rien d'autre :\n"
     "Texte à l'écran : <TOUT le texte écrit sur les images, recopié mot pour mot, de haut en bas ; « aucun » s'il n'y en a pas>\n"
-    "Scène : <une phrase : ce qu'on voit, sans rien inventer (pas de durée, pas de nom que tu ne lis pas)>\n"
+    "Scène : <une phrase courte : seulement ce qui est clairement visible (personnes, objets, décor, jeu) ; si ce n'est que "
+    "du texte sur des fonds de couleur, écris « texte sur fond de couleur » ; aucune personne ni objet que tu ne vois pas, "
+    "pas de durée, pas de nom que tu ne lis pas>\n"
     "Ignore les boutons et l'interface du site.";
 
 struct StudyResult {
