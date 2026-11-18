@@ -56,5 +56,7 @@ private:
 
 // Lecture WAV minimale (PCM 16 bits ou float 32, mono ou stéréo → mono). Faux si format non géré.
 bool ReadWavMono(const std::filesystem::path& file, std::vector<float>& out, int& sampleRate);
+// WAV 16 bits mono (prises de voix enregistrées par l'utilisateur).
+bool WriteWavMono(const std::filesystem::path& file, const std::vector<float>& pcm, int sampleRate);
 
 }  // namespace companion

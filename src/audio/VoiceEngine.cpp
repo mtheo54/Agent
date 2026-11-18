@@ -438,6 +438,7 @@ struct VoiceEngine::Impl {
 
     std::mutex cbMutex;
     TranscriptCallback onTranscript;
+    VoiceEngine::RawUtterance rawCapture;  // une fois (cbMutex)
 
     // Émotion dans la voix
     std::mutex emotionMutex;
@@ -722,6 +723,17 @@ struct VoiceEngine::Impl {
             emo = emotion.Analyze(pcm);
         }
         log::Info("Écoute : {:.1f} s de voix, transcription…", static_cast<double>(pcm.size()) / kSttSampleRate);
+        VoiceEngine::RawUtterance raw;
+        {
+            std::scoped_lock lock(cbMutex);
+            raw.swap(rawCapture);
+        }
+        if (raw) {  // prise de voix : l'audio brut et ce qui a été dit, rien d'autre
+            std::vector<float> keep = pcm;
+            std::string said = Whisper(std::move(pcm));
+            raw(std::move(keep), NotSpeech(said) ? std::string{} : said);
+            return;
+        }
         std::string text = Whisper(std::move(pcm));
         log::Info("Écoute : « {} »", text);
         if (NotSpeech(text)) {
@@ -1152,6 +1164,19 @@ void VoiceEngine::SetGamingMode(bool gaming) noexcept {
     if (!d.neuralEnabled.load() || d.neuralInGame.load()) return;
     if (gaming) d.Post([&d] { if (d.gaming.load()) d.neural.Unload(); });
     else d.Post([&d] { if (!d.gaming.load() && d.neuralEnabled.load() && !d.neural.Ready()) d.neural.Load(d.cfg.neural); });
+}
+void VoiceEngine::CaptureNextUtterance(RawUtterance cb) {
+    std::scoped_lock lock(impl_->cbMutex);
+    impl_->rawCapture = std::move(cb);
+}
+void VoiceEngine::SetNeuralVoiceDir(std::filesystem::path dir) {
+    auto& d = *impl_;
+    d.Post([&d, dir = std::move(dir)] {
+        d.cfg.neural.voiceDir = dir;
+        d.neural.Unload();
+        if (d.neuralEnabled.load() && !d.gaming.load()) d.neural.Load(d.cfg.neural);
+        log::Info("Voix : prises de {}", log::Narrow(dir.filename().wstring()));
+    });
 }
 void VoiceEngine::SetNeuralVoice(bool enabled, bool inGame) noexcept {
     auto& d = *impl_;

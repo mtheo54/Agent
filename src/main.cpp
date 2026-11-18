@@ -514,6 +514,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     vcfg.neural.talker = root / L"assets" / L"models" / L"qwen-talker-0.6b-base-Q8_0.gguf";
     vcfg.neural.codec = root / L"assets" / L"models" / L"qwen-tokenizer-12hz-Q8_0.gguf";
     vcfg.neural.voiceDir = root / L"assets" / L"voice" / L"omnis";
+    // « Prends ma voix » : prises de l'utilisateur (enregistrées par lui, sur ce PC) si actives.
+    if (const auto mine = DataDir() / L"voice" / L"toi"; std::filesystem::exists(mine / L"active") && std::filesystem::exists(mine / L"normal.wav"))
+        vcfg.neural.voiceDir = mine;
     vcfg.neural.device = cfg.neuralVoiceDevice;
     vcfg.neuralEnabled = cfg.neuralVoice;
     vcfg.neuralInGame = cfg.neuralVoiceInGame;

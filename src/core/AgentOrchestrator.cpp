@@ -2,6 +2,7 @@
 
 #include "core/Log.hpp"
 #include "core/Persona.hpp"
+#include "audio/NeuralVoice.hpp"
 
 #include <objbase.h>
 #include <shellapi.h>
@@ -13,6 +14,7 @@
 #include <cctype>
 #include <format>
 #include <fstream>
+#include <future>
 #include <regex>
 #include <thread>
 
@@ -1401,7 +1403,109 @@ void AgentOrchestrator::CheckWatch() {
         StopWatching(true);
 }
 
+// ---------------------------------------------------------------------------
+// Voix de l'utilisateur : Qwen3-TTS reproduit une voix à partir de quelques secondes (en local, rien n'est envoyé).
+// Seulement la voix de l'utilisateur, enregistrée par lui au micro quand il le demande. Dans un call, Omnis annonce
+// que c'est lui avec cette voix et garde son effet robot : personne ne croit que c'est l'utilisateur qui parle.
+
+bool AgentOrchestrator::UsesUserVoice() const {
+    return std::filesystem::exists(d_.dataDir / L"voice" / L"toi" / L"active");
+}
+
+bool AgentOrchestrator::HandleVoiceClone(const std::string& lower, std::stop_token stop) {
+    const bool take = HasAny(lower, {"prends ma voix", "prend ma voix", "copie ma voix", "imite ma voix", "clone ma voix",
+                                     "parle avec ma voix", "utilise ma voix", "prendre ma voix"});
+    const bool back = HasAny(lower, {"reprends ta voix", "reprend ta voix", "ta vraie voix", "ta voix normale", "remets ta voix",
+                                     "ta voix à toi", "ta voix a toi", "ta voix de robot"});
+    const bool forget = HasAny(lower, {"oublie ma voix", "efface ma voix", "supprime ma voix"});
+    if (!take && !back && !forget) return false;
+    namespace fs = std::filesystem;
+    const fs::path dir = d_.dataDir / L"voice" / L"toi";
+    std::error_code ec;
+    if (back || forget) {
+        fs::remove(dir / L"active", ec);
+        if (forget) fs::remove_all(dir, ec);
+        d_.voice.SetNeuralVoiceDir(d_.assetsDir / L"voice" / L"omnis");
+        Say(forget ? "C'est effacé, j'ai plus ta voix nulle part." : "Je reprends ma voix à moi.");
+        return true;
+    }
+    if (!d_.voice.HasNeuralVoice()) {
+        Say("Il me faut ma voix neuronale pour ça, et elle est pas chargée là.");
+        return true;
+    }
+    fs::create_directories(dir, ec);
+    const auto waitSilence = [&] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(400));
+        for (int i = 0; i < 150 && d_.voice.IsSpeaking() && !stop.stop_requested(); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));  // pas d'écho de sa propre voix
+    };
+    struct Take {
+        const char* style;
+        const char* ask;
+        float minSeconds;
+    };
+    int got = 0;
+    for (const Take t : {Take{"normal", "Ok, je copie ta voix, ça reste sur ton PC. Parle-moi normalement pendant 8 secondes, raconte ta journée, vas-y.", 4.f},
+                         Take{"bright", "Parfait. Maintenant une phrase à fond, comme si t'avais gagné une game.", 2.f}}) {
+        bool ok = false;
+        for (int attempt = 0; attempt < 2 && !ok && !stop.stop_requested(); ++attempt) {
+            Say(attempt ? "C'était trop court ou j'ai rien compris. Encore une fois, un peu plus long." : t.ask);
+            waitSilence();
+            auto promise = std::make_shared<std::promise<std::pair<std::vector<float>, std::string>>>();
+            auto future = promise->get_future();
+            d_.voice.CaptureNextUtterance([promise](std::vector<float> pcm, std::string text) {
+                promise->set_value({std::move(pcm), std::move(text)});
+            });
+            bool ready = false;
+            for (int i = 0; i < 300 && !stop.stop_requested(); ++i)  // 30 s pour parler
+                if (future.wait_for(std::chrono::milliseconds(100)) == std::future_status::ready) {
+                    ready = true;
+                    break;
+                }
+            if (!ready) {
+                d_.voice.CaptureNextUtterance(nullptr);
+                continue;
+            }
+            auto [pcm16, text] = future.get();
+            if (text.empty() || static_cast<float>(pcm16.size()) < t.minSeconds * 16000.f) continue;
+            // 16 -> 24 kHz (le format des prises), volume ramené à -3 dBFS en crête.
+            std::vector<float> pcm24(pcm16.size() * 3 / 2);
+            float peak = 1e-6f;
+            for (std::size_t i = 0; i < pcm24.size(); ++i) {
+                const double x = static_cast<double>(i) * 2.0 / 3.0;
+                const auto i0 = static_cast<std::size_t>(x);
+                const auto i1 = std::min(pcm16.size() - 1, i0 + 1);
+                pcm24[i] = static_cast<float>(pcm16[i0] + (pcm16[i1] - pcm16[i0]) * (x - static_cast<double>(i0)));
+                peak = std::max(peak, std::abs(pcm24[i]));
+            }
+            for (auto& x : pcm24) x *= 0.7f / peak;
+            const fs::path wav = dir / (std::string(t.style) + ".wav");
+            if (!WriteWavMono(wav, pcm24, 24000)) continue;
+            std::ofstream(dir / (std::string(t.style) + ".txt"), std::ios::binary | std::ios::trunc) << Trim(text);
+            ok = true;
+            ++got;
+        }
+        if (!ok && std::string_view(t.style) == "normal") {
+            Say("Laisse tomber, je garde ma voix pour l'instant. Redemande-moi quand tu veux.");
+            return true;
+        }
+    }
+    if (stop.stop_requested() || !got) return true;
+    std::ofstream(dir / L"active") << "1";
+    d_.voice.SetNeuralVoiceDir(dir);
+    waitSilence();
+    std::this_thread::sleep_for(std::chrono::seconds(2));  // le temps de recharger la voix
+    Say("Voilà. Je parle avec ta voix maintenant. Dis « reprends ta voix » pour revenir, ou « oublie ma voix » pour tout effacer.");
+    return true;
+}
+
 void AgentOrchestrator::JoinedCall() {
+    // Avec la voix de l'utilisateur : on le dit, et l'effet robot reste (personne ne croit que c'est lui qui parle).
+    if (UsesUserVoice()) {
+        d_.voice.SetMood(std::max(cfg_.fxIntensity, 0.5f));
+        Say("Petite info : c'est Omnis, l'IA, avec la voix de mon pote. Quand ça sonne robot, c'est moi.");
+    }
     // Formes de vannes : écrites à la main + celles apprises en regardant des vidéos depuis le dernier call.
     bank_.Load(d_.assetsDir / L"persona" / L"baits.json", d_.dataDir / L"learned_baits.json");
     log::Info("Call: {} formes de vannes ({} apprises en vidéo)", bank_.Size(), bank_.LearnedCount());
@@ -1410,6 +1514,7 @@ void AgentOrchestrator::JoinedCall() {
 
 void AgentOrchestrator::LeftCall() {
     seeing_.Stop();
+    d_.voice.SetMood(cfg_.fxIntensity);
     listenOnly_ = false;
     if (peopleLoaded_) {
         people_.MergeDuplicates();  // un renommage reconnu en retard : deux fiches, une seule voix
@@ -1426,8 +1531,8 @@ void AgentOrchestrator::StartSubstitute(const std::string& reason) {
     absenceLog_.clear();
     shownLog_.clear();
     SeedRageBaitTraining();
-    Say("Mon pote est parti " + reason + ", c'est moi, Omnis, qui garde sa place. Je suis pas lui, mais posez vos questions, et "
-        "je peux vous mettre une vidéo.");
+    Say("Mon pote est parti " + reason + ", c'est moi, Omnis, qui garde sa place. Je suis pas lui" +
+        std::string(UsesUserVoice() ? ", même si j'ai sa voix" : "") + ", mais posez vos questions, et je peux vous mettre une vidéo.");
     log::Info("Call: Omnis garde la place ({} min max)", cfg_.substituteMaxMinutes);
 }
 
@@ -2095,6 +2200,7 @@ bool AgentOrchestrator::HandleLevel0(const std::string& text, std::stop_token st
         Say(Line("goodbye", {}, "À plus."));
         return true;
     }
+    if (HandleVoiceClone(lower, stop)) return true;   // « prends ma voix », « reprends ta voix »
     if (HandleCallCommand(lower, stop)) return true;  // « rejoins le call », « quitte le call »
     if (HandleWatchCommand(lower)) return true;       // « regarde avec moi », « arrête de regarder »
     // « Tu peux surfer cette nuit » : surf libre pour s'entraîner jusqu'à 10 h le lendemain (14 h au plus).

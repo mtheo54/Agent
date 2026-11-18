@@ -4,6 +4,7 @@
 #include "core/Log.hpp"
 
 #include <algorithm>
+#include <cstdint>
 #include <cstring>
 #include <fstream>
 #include <vector>
@@ -14,6 +15,19 @@
 #endif
 
 namespace companion {
+
+bool WriteWavMono(const std::filesystem::path& file, const std::vector<float>& pcm, int sampleRate) {
+    std::ofstream f(file, std::ios::binary | std::ios::trunc);
+    if (!f) return false;
+    const auto u32 = [&](std::uint32_t v) { f.write(reinterpret_cast<const char*>(&v), 4); };
+    const auto u16 = [&](std::uint16_t v) { f.write(reinterpret_cast<const char*>(&v), 2); };
+    const std::uint32_t bytes = static_cast<std::uint32_t>(pcm.size() * 2);
+    f.write("RIFF", 4); u32(36 + bytes); f.write("WAVEfmt ", 8); u32(16); u16(1); u16(1);
+    u32(static_cast<std::uint32_t>(sampleRate)); u32(static_cast<std::uint32_t>(sampleRate) * 2); u16(2); u16(16);
+    f.write("data", 4); u32(bytes);
+    for (float x : pcm) u16(static_cast<std::uint16_t>(static_cast<std::int16_t>(std::clamp(x, -1.f, 1.f) * 32767.f)));
+    return static_cast<bool>(f);
+}
 
 bool ReadWavMono(const std::filesystem::path& file, std::vector<float>& out, int& sampleRate) {
     std::ifstream f(file, std::ios::binary);

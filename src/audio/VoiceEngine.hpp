@@ -118,6 +118,12 @@ public:
 
     // Pont Discord : sortie de la voix (nullptr = aucun) et transcription de l'audio des autres (16 kHz mono).
     void SetVoiceTap(VoiceTap* tap) noexcept;
+    // Prendre la voix de l'utilisateur : la prochaine phrase dite au micro est livrée brute (16 kHz) avec sa
+    // transcription, au lieu d'être traitée comme une demande. Une seule fois ; nullptr annule.
+    using RawUtterance = std::function<void(std::vector<float> pcm16k, std::string text)>;
+    void CaptureNextUtterance(RawUtterance cb);
+    // Change la voix neuronale (dossier de prises <style>.wav/.txt en 24 kHz), rechargée sur le thread de synthèse.
+    void SetNeuralVoiceDir(std::filesystem::path dir);
     void TranscribeExternal(std::vector<float> pcm16k, std::function<void(std::string)> done);
 
     [[nodiscard]] bool HasStt() const noexcept;

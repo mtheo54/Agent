@@ -245,6 +245,9 @@ private:
     bool HandlePilot(const std::string& text, const std::string& lower, std::stop_token stop);
     // Call Discord (par ton micro) : rejoindre / quitter, réagir à ce que disent les autres
     bool HandleCallCommand(const std::string& lower, std::stop_token stop);
+    // « Prends ma voix » / « reprends ta voix » / « oublie ma voix » : clone local de la voix de l'utilisateur.
+    bool HandleVoiceClone(const std::string& lower, std::stop_token stop);
+    [[nodiscard]] bool UsesUserVoice() const;
     void HandleCallLine(const std::string& text, const std::vector<float>& pcm, std::chrono::steady_clock::time_point end,
                         std::stop_token stop);
     [[nodiscard]] std::string CallHint() const;
