@@ -59,11 +59,18 @@ inline ChatMode DetectChatMode(const std::string& lower) {
         "avoue", "j'ai raison", "t'as tort", "tu as tort", "nul à chier", "le meilleur"});
     if (tech > 0 && tech >= rage) return ChatMode::Technical;
     if (rage > 0) return ChatMode::RageBait;
-    // Doute : une vraie question -> technique (prioritaire) ; un simple bavardage -> rage bait.
-    const bool question = lower.find('?') != std::string::npos ||
-                          Count(t, {" comment ", " pourquoi ", " c'est quoi ", " quel ", " quelle ", " combien ", " est-ce que ",
-                                    " explique", " aide-moi", " aide moi"}) > 0;
-    return question ? ChatMode::Technical : ChatMode::RageBait;
+    // Doute : une demande d'explication -> technique (prioritaire) ; bavardage, même avec un « ? » -> rage bait.
+    // Vu sur le terrain : « T'as mangé quoi toi ? », « Comment ça ? », « Qu'est-ce que tu me racontes ? » partaient en
+    // technique (réponse sèche et sérieuse) parce qu'ils finissaient par « ? ».
+    if (Count(t, {" comment ça", " comment ca", " ça va", " ca va", " tu racontes", " t'as mangé", " tu manges", " tu fais quoi",
+                  " t'es où", " t'es la", " t'es là", " tu m'entends", " tu es là", " tu es la", " t'en penses", " tu penses quoi",
+                  " sérieux ?", " serieux ?", " quoi ?", " hein ?", " ah bon"}) > 0)
+        return ChatMode::RageBait;
+    const bool explain = Count(t, {" comment je ", " comment j'", " comment on ", " comment faire", " comment tu fais", " pourquoi ",
+                                   " c'est quoi un", " c'est quoi une", " c'est quoi le ", " c'est quoi la ", " c'est quoi les ",
+                                   " quel ", " quelle ", " quels ", " quelles ", " combien ", " explique", " aide-moi", " aide moi",
+                                   " est-ce que je ", " est-ce qu'on ", " je dois ", " il faut "}) > 0;
+    return explain ? ChatMode::Technical : ChatMode::RageBait;
 }
 
 // Mode technique : faut-il une source AVANT de répondre ? Testé avec le 9B : « comment je fais un sidechain dans FL

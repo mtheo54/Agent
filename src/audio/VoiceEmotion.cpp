@@ -205,6 +205,12 @@ EmotionEstimate VoiceEmotionAnalyzer::Estimate(const ProsodyFeatures& f) const {
     }
     // Confiance : intensité de l'écart × maturité de la voix habituelle (10 phrases = pleine confiance).
     e.confidence = std::clamp(std::abs(e.arousal) * 1.6f, 0.f, 1.f) * (0.45f + 0.55f * std::min(1.f, n_ / 10.f));
+    // Voix habituelle encore inconnue (8 premières phrases) : aucun verdict. Vu sur le terrain : 1re session, voix
+    // normale classée « triste » à chaque phrase (comparée à des valeurs par défaut) -> plus de vannes « car il est down ».
+    if (n_ < 8) {
+        e.label = VoiceEmotion::Neutral;
+        e.confidence = 0.f;
+    }
 
     // Description en français, pour le modèle local.
     std::vector<std::string> cues;
@@ -221,6 +227,7 @@ EmotionEstimate VoiceEmotionAnalyzer::Estimate(const ProsodyFeatures& f) const {
     std::string d;
     for (size_t i = 0; i < cues.size(); ++i) d += (i ? (i + 1 == cues.size() ? " et " : ", ") : "") + cues[i];
     e.description = d.empty() ? "voix habituelle" : d + " que d'habitude";
+    if (n_ < 8) e.description = "voix habituelle encore en apprentissage";
     return e;
 }
 

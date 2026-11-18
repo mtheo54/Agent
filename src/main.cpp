@@ -429,6 +429,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     // Mode prudent si la session d'avant a été tuée (pilote de la carte réinitialisé, par exemple). Avant tout ggml.
     GpuGuard gpuGuard(DataDir());
     cfg.gpuSafeStage = gpuGuard.Begin();
+    // Cartes AMD : plantage confirmé dans amdvlk64.dll (RX 9060 XT, 1re réponse du 9B) avec les optimisations Vulkan
+    // coopmat / produit scalaire entier ; sans elles, le 9B tourne sur la carte sans souci. Cran 1 d'office.
+    if (cfg.gpuSafeStage < 1 && (hw.gpuName.find("AMD") != std::string::npos || hw.gpuName.find("Radeon") != std::string::npos)) {
+        cfg.gpuSafeStage = 1;
+        log::Info("Carte AMD : optimisations Vulkan instables coupées d'office");
+    }
     if (cfg.gpuSafeStage >= 1) {
         for (const char* v : {"GGML_VK_DISABLE_COOPMAT", "GGML_VK_DISABLE_COOPMAT2", "GGML_VK_DISABLE_INTEGER_DOT_PRODUCT"}) {
             _putenv_s(v, "1");
