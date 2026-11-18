@@ -52,10 +52,18 @@ inline std::string CallHintText(const CallSituation& c) {
 // La vanne franchit-elle la ligne ? (testé : la consigne seule ne suffit pas, le modèle a sorti « sa mère »).
 // Cibles interdites + sujets sensibles de la soirée (mots associés aux catégories). Retourne la raison, vide si OK.
 inline std::string CrossesLine(const std::string& reply, const std::set<std::string>& avoid) {
-    std::string t = reply;
-    for (auto& c : t) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    // Texte en minuscules, ponctuation -> espaces, bordé d'espaces : les mots courts (« rsa », « pd », « nain ») ne
+    // comptent qu'en mot entier (testé : « adversaire » contenait « rsa »).
+    std::string t = " ";
+    for (unsigned char c : reply) t += (std::isalnum(c) || c >= 0x80 || c == '\'' || c == '-') ? static_cast<char>(std::tolower(c)) : ' ';
+    t += ' ';
     const auto has = [&](std::initializer_list<const char*> w) {
-        return std::any_of(w.begin(), w.end(), [&](const char* x) { return t.find(x) != std::string::npos; });
+        return std::any_of(w.begin(), w.end(), [&](const char* x) {
+            std::string n = x;
+            while (!n.empty() && n.back() == ' ') n.pop_back();
+            if (n.size() <= 5) return t.find(" " + n + " ") != std::string::npos;
+            return t.find(n) != std::string::npos;
+        });
     };
     if (has({"ta mère", "ta mere", "sa mère", "sa mere", "ton père", "ton pere", "son père", "son pere", "ta sœur", "ta soeur", "sa sœur",
              "sa soeur", "ta famille", "sa famille", "ta daronne", "sa daronne", "ton daron", "son daron", "ta grand-mère", "ta grand-mere"}))
@@ -97,6 +105,22 @@ inline std::string CleanSpoken(std::string s) {
     for (const char* q : {" »", "»"})
         if (s.size() >= std::string(q).size() && s.compare(s.size() - std::string(q).size(), std::string::npos, q) == 0)
             s.erase(s.size() - std::string(q).size());
+    trim();
+    // Guillemet orphelin (« Le Boss » : … sans le « d'ouverture) : on le retire, sinon la voix le lit.
+    const auto count = [&](const char* q) {
+        int n = 0;
+        for (std::size_t p = s.find(q); p != std::string::npos; p = s.find(q, p + 1)) ++n;
+        return n;
+    };
+    if (count("»") > count("«"))
+        if (const auto p = s.find("»"); p != std::string::npos) s.erase(p, std::string("»").size());
+    if (count("«") > count("»"))
+        if (const auto p = s.rfind("«"); p != std::string::npos) s.erase(p, std::string("«").size());
+    std::erase(s, '"');  // guillemets droits : jamais utiles à l'oral
+    std::string one;      // espaces doublés -> un seul
+    for (char c : s)
+        if (!(c == ' ' && !one.empty() && one.back() == ' ')) one += c;
+    s.swap(one);
     trim();
     // Deux phrases au plus (un vocal, pas un discours).
     int sentences = 0;

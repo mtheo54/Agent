@@ -123,6 +123,18 @@ bool ::= "true" | "false"
 ws ::= [ \n]*
 )";
 
+inline constexpr const char* kStudySystem =
+    "Tu étudies l'humour pour apprendre l'art de la vanne et du rage bait ENTRE POTES : taquiner, faire réagir, jamais blesser.";
+
+inline std::string StudyPrompt(const std::string& title, const std::string& transcript, const std::string& comments) {
+    return "Vidéo : « " + title + " »\n[Transcription]\n" + transcript + "\n[Commentaires les plus likés]\n" + comments +
+           "\nRéponds en JSON. humour : la vidéo contient-elle des vannes, de la répartie ou du rage bait ? technique : nom court de la "
+           "technique principale. pourquoi : en une phrase, pourquoi ça fait rire ou réagir. formes : 1 à 4 FORMES de vannes "
+           "réutilisables entre potes, inspirées de la vidéo mais ÉCRITES PAR TOI (pas recopiées), avec des [crochets] pour ce qui "
+           "dépend de la cible (ex. [son objectif], [sa phrase], [sujet], [chose]). Jamais sur l'origine, la religion, la sexualité, le "
+           "genre, le physique, un handicap, la famille, la santé ou l'argent.";
+}
+
 struct StudyResult {
     bool humour = false;
     std::string technique, why;
