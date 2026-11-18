@@ -454,11 +454,11 @@ bool AgentOrchestrator::EnsureBrain() {
     if (d_.brain.IsLoaded() && d_.brain.ModelPath() == wanted && d_.brain.UsesGpu() == gpu && d_.brain.Ubatch() == ubatch)
         return true;
     if (d_.brain.IsLoaded()) d_.brain.Unload();  // autre modèle, périphérique ou découpage : rechargement propre
-    const bool small = wanted != cfg_.llmModel;
+    const bool lightBrain = wanted != cfg_.llmModel;
     LocalBrainConfig bc;
     bc.model = wanted;
-    bc.mmproj = small ? std::filesystem::path{} : cfg_.llmMmproj;  // pas de vision avec le petit cerveau
-    bc.lora = small ? std::filesystem::path{} : cfg_.loraAdapter;
+    bc.mmproj = lightBrain ? std::filesystem::path{} : cfg_.llmMmproj;  // pas de vision avec le petit cerveau
+    bc.lora = lightBrain ? std::filesystem::path{} : cfg_.loraAdapter;
     bc.contextTokens = cfg_.llmContext;
     bc.gpuLayers = 99;
     bc.threads = gaming ? cfg_.llmThreadsGaming : cfg_.llmThreads;
