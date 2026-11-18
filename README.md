@@ -458,8 +458,14 @@ Pendant ses séances d'auto-entraînement (PC inactif, tué dès que tu touches 
 - **Quoi** : d'abord les liens que tu lui donnes, puis des recherches YouTube à tour de rôle (clashs, roasts,
   punchlines, rage bait, trashtalk gaming…).
   - Copie un lien YouTube ou TikTok et dis « **étudie le lien copié** », ou ajoute-le dans `to_watch.txt`.
-  - TikTok bloque la recherche automatique (l'extracteur de hashtags de yt-dlp est marqué cassé) : pour TikTok, ce
-    sont tes liens.
+  - **Réseaux sociaux** (TikTok, Reels Instagram, Shorts YouTube) : il trouve des vidéos **publiques** par moteur de
+    recherche (« site:tiktok.com vanne », « site:instagram.com/reel humour »…), en plus de tes liens (« étudie le
+    lien copié » marche aussi pour un Reel).
+  - **Aucun compte n'est utilisé** : ni ton Instagram, ni ton TikTok. Ouvrir ton fil personnel voudrait dire donner
+    tes cookies de connexion à un programme qui navigue seul : c'est interdit par ces plateformes et ça peut faire
+    bloquer ton compte.
+  - **Jamais** : messages privés, stories, profils, réglages.
+  - Certains Reels exigent d'être connecté pour être lus : ceux-là, il les saute.
 - **Comprendre** :
   - le titre ;
   - les sous-titres, ou sinon l'audio, décodé par Windows et transcrit par Whisper sur ton PC ;

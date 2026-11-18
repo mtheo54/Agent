@@ -6,6 +6,7 @@
 #include "core/MemoryDB.hpp"
 #include "core/RageBait.hpp"
 #include "network/HttpClient.hpp"
+#include "network/WebSurf.hpp"
 
 #include <windows.h>
 #include <bcrypt.h>
@@ -341,11 +342,7 @@ bool VideoStudy::Fetch(const std::string& url, std::string& title, std::string& 
 bool VideoStudy::QueueLink(const std::filesystem::path& dataDir, const std::string& url) {
     std::string u = url;
     while (!u.empty() && (u.back() == ' ' || u.back() == '\n' || u.back() == '\r')) u.pop_back();
-    if (u.rfind("https://", 0) != 0) return false;
-    const std::string host = u.substr(8, u.find('/', 8) - 8);
-    static const char* ok[] = {"www.youtube.com", "youtube.com", "m.youtube.com", "youtu.be", "www.tiktok.com", "tiktok.com", "vm.tiktok.com"};
-    if (std::none_of(std::begin(ok), std::end(ok), [&](const char* h) { return host == h; })) return false;
-    if (u.find_first_of(" \"'<>") != std::string::npos || u.size() > 300) return false;
+    if (!IsSocialVideoUrl(u)) return false;  // vidéos publiques YouTube / TikTok / Instagram ; jamais DM, stories, profils
     std::ofstream(dataDir / L"to_watch.txt", std::ios::app) << u << "\n";
     return true;
 }
@@ -368,7 +365,19 @@ std::string VideoStudy::RunSession(LocalBrain& brain, MemoryDB& db, BaitBank& ba
         for (std::string l; std::getline(q, l);)
             if (!l.empty() && std::ranges::find(seen, l) == seen.end()) todo.push_back(l);
     }
-    // 2) Des recherches, à tour de rôle
+    // 2) Découverte sur les réseaux (TikTok, Reels Instagram, Shorts) par moteur de recherche : on ne se connecte à
+    //    AUCUN compte ; seulement des vidéos publiques.
+    if (cfg_.socialDiscovery && static_cast<int>(todo.size()) < cfg_.perSession) {
+        WebSurf surf(http_);
+        int si = std::atoi(db.GetProfile("videostudy.s").value_or("0").c_str());
+        for (int tries = 0; tries < 2 && !cfg_.socialQueries.empty(); ++tries) {
+            const std::string& q = cfg_.socialQueries[static_cast<std::size_t>(si++) % cfg_.socialQueries.size()];
+            for (const auto& u : surf.FindSocialVideos(q))
+                if (std::ranges::find(seen, u) == seen.end() && std::ranges::find(todo, u) == todo.end()) todo.push_back(u);
+        }
+        db.SetProfile("videostudy.s", std::to_string(si));
+    }
+    // 3) Des recherches YouTube, à tour de rôle
     int qi = std::atoi(db.GetProfile("videostudy.q").value_or("0").c_str());
     for (int tries = 0; static_cast<int>(todo.size()) < cfg_.perSession + 2 && tries < 3 && !cfg_.queries.empty(); ++tries) {
         const std::string& query = cfg_.queries[static_cast<std::size_t>(qi++) % cfg_.queries.size()];

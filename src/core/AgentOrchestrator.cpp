@@ -1913,8 +1913,9 @@ bool AgentOrchestrator::HandleLevel0(const std::string& text, std::stop_token st
         return true;
     }
     // « Étudie le lien que j'ai copié » / « regarde ce TikTok » : le lien du presse-papiers va dans sa file de vidéos.
-    if (ContainsAny(lower, {"étudie", "etudie", "regarde ce tiktok", "regarde cette vidéo", "regarde cette video", "apprends de"}) &&
-        ContainsAny(lower, {"lien", "tiktok", "vidéo", "video", "copié", "copie"})) {
+    if (ContainsAny(lower, {"étudie", "etudie", "regarde ce tiktok", "regarde ce reel", "regarde ce short", "regarde cette vidéo",
+                            "regarde cette video", "apprends de"}) &&
+        ContainsAny(lower, {"lien", "tiktok", "reel", "short", "insta", "vidéo", "video", "copié", "copie"})) {
         std::string url;
         if (OpenClipboard(nullptr)) {
             if (HANDLE h = GetClipboardData(CF_UNICODETEXT))
@@ -1924,9 +1925,9 @@ bool AgentOrchestrator::HandleLevel0(const std::string& text, std::stop_token st
                 }
             CloseClipboard();
         }
-        if (url.empty()) Say("Copie d'abord le lien de la vidéo, YouTube ou TikTok, et redis-moi.");
+        if (url.empty()) Say("Copie d'abord le lien de la vidéo, YouTube, TikTok ou un Reel Insta, et redis-moi.");
         else if (VideoStudy::QueueLink(d_.dataDir, Trim(url))) Say("Noté, je la regarde à mon prochain entraînement et j'en tire des vannes.");
-        else Say("Ce lien-là, non : seulement YouTube ou TikTok.");
+        else Say("Ce lien-là, non : seulement une vidéo publique YouTube, TikTok ou Instagram. Jamais des messages ou des stories.");
         return true;
     }
     if (HandlePerfCommand(lower, stop)) return true;  // « teste les perfs », « passe sur le processeur »…

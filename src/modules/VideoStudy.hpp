@@ -34,7 +34,13 @@ struct VideoStudyConfig {
     std::vector<std::string> queries{"meilleures vannes clash humour français", "rage bait compilation français",
                                      "roast battle français punchlines", "répartie mauvaise foi meilleurs moments",
                                      "chambrage entre potes vocal discord", "compilation tiktok vannes fr",
-                                     "punchlines stand up français", "trashtalk gaming français"};
+                                     "punchlines stand up français", "trashtalk gaming français", "vanne #shorts",
+                                     "rage bait #shorts français"};
+    // Découverte de vidéos publiques sur les réseaux (moteur de recherche, aucun compte utilisé).
+    bool socialDiscovery = true;
+    std::vector<std::string> socialQueries{"site:tiktok.com rage bait", "site:tiktok.com vanne humour", "site:tiktok.com clash punchline",
+                                           "site:instagram.com/reel humour vanne", "site:instagram.com/reel rage bait",
+                                           "site:youtube.com/shorts vanne"};
     std::filesystem::path whisperModel;  // vide = pas de transcription audio (sous-titres seulement)
 };
 

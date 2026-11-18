@@ -14,19 +14,25 @@ bool WebSurf::Allowed(MemoryDB& db) {
     return until > static_cast<long long>(std::time(nullptr));
 }
 
-std::vector<std::string> WebSurf::SearchLinks(const std::string& query) {
+std::vector<std::string> WebSurf::SearchLinks(const std::string& query, bool socialVideos) {
     HttpRequest r;
     r.headers = {{L"Accept-Language", L"fr-FR,fr;q=0.9"}};
     r.timeoutMs = 12000;
     r.maxBodyBytes = 1u << 20;
     r.url = "https://lite.duckduckgo.com/lite/?q=" + HttpClient::UrlEncode(query);
     auto res = http_.Send(r);
-    std::vector<std::string> links = res.Ok() ? ParseDdgLite(res.body) : std::vector<std::string>{};
+    std::vector<std::string> links = res.Ok() ? ParseDdgLite(res.body, socialVideos) : std::vector<std::string>{};
     if (links.empty()) {  // DuckDuckGo refuse (page « anomaly ») : Bing
         r.url = "https://www.bing.com/search?setlang=fr&q=" + HttpClient::UrlEncode(query);
         res = http_.Send(r);
-        if (res.Ok()) links = ParseBing(res.body);
+        if (res.Ok()) links = ParseBing(res.body, socialVideos);
     }
+    return links;
+}
+
+std::vector<std::string> WebSurf::FindSocialVideos(const std::string& query) {
+    auto links = SearchLinks(query, true);
+    log::Info("WebSurf: « {} » -> {} vidéo(s) de réseaux sociaux", query, links.size());
     return links;
 }
 
