@@ -449,7 +449,8 @@ bool AgentOrchestrator::EnsureBrain() {
         if (!std::filesystem::exists(wanted)) wanted = cfg_.llmModel;  // rien de mieux : le principal
     }
     // En jeu : calculs courts (micro-lots de 64) et débit plafonné, sur la carte comme sur le processeur.
-    const int ubatch = gaming && gpu ? 64 : 512;
+    if (cfg_.gpuSafeStage >= 2) gpu = false;  // mode prudent : la carte a fait planter Omnis
+    const int ubatch = gaming && gpu ? 64 : cfg_.gpuSafeStage >= 1 && gpu ? 128 : 512;
     d_.brain.SetPacing(gaming ? cfg_.llmGamingTokensPerSecond : 0);
     if (d_.brain.IsLoaded() && d_.brain.ModelPath() == wanted && d_.brain.UsesGpu() == gpu && d_.brain.Ubatch() == ubatch)
         return true;

@@ -38,6 +38,7 @@
 #include "render/OverlayWindow.hpp"
 #include "core/Persona.hpp"
 #include "core/BaitBank.hpp"
+#include "core/GpuGuard.hpp"
 #if defined(_MSC_VER)
 #include <intrin.h>
 #else
@@ -59,6 +60,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <csignal>
 #include <cstdint>
 #include <cstring>
 #include <chrono>
@@ -225,6 +227,17 @@ LONG WINAPI OnCrash(EXCEPTION_POINTERS* e) {
     return EXCEPTION_CONTINUE_SEARCH;  // Windows affiche/enregistre le plantage comme d'habitude
 }
 
+// abort() (ggml s'arrête ainsi, par exemple si le pilote de la carte a « perdu » le périphérique) : noté aussi.
+void OnAbort(int) {
+    std::error_code ec;
+    std::filesystem::create_directories(DataDir(), ec);
+    SYSTEMTIME t{};
+    GetLocalTime(&t);
+    if (std::ofstream f(DataDir() / L"crash.txt", std::ios::binary | std::ios::app); f)
+        f << std::format("{:04}-{:02}-{:02} {:02}:{:02}:{:02}  abort() (souvent : carte graphique perdue par le pilote)\n", t.wYear,
+                         t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
+}
+
 // --selftest : vérifie que tout ce qui est livré marche sur CE PC, sans modèle et sans rien télécharger.
 // Rapport dans %LOCALAPPDATA%\CompanionAI\selftest.txt (et dans la console qui l'a lancé). Code 0 = tout va bien.
 int RunSelfTest() {
@@ -316,6 +329,7 @@ int RunSelfTest() {
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     SetUnhandledExceptionFilter(OnCrash);
+    std::signal(SIGABRT, OnAbort);
 #if defined(COMPANION_REQUIRES_AVX512)
     if (!CpuHasAvx512()) {
         if (cmdLine && std::wstring_view(cmdLine).find(L"--selftest") != std::wstring_view::npos) return 3;  // pas de fenêtre en test
@@ -388,6 +402,19 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
             v && std::filesystem::exists(cfg.llmModel.parent_path() / log::Widen(v->file)))
             cfg.llmMmproj = cfg.llmModel.parent_path() / log::Widen(v->file);
     log::Info("Matériel : {} ({:.1f} Go de VRAM, {:.0f} Go de RAM). {}", hw.gpuName, hw.vramGiB, hw.ramGiB, normalPlan.why);
+
+    // Mode prudent si la session d'avant a été tuée (pilote de la carte réinitialisé, par exemple). Avant tout ggml.
+    GpuGuard gpuGuard(DataDir());
+    cfg.gpuSafeStage = gpuGuard.Begin();
+    if (cfg.gpuSafeStage >= 1) {
+        for (const char* v : {"GGML_VK_DISABLE_COOPMAT", "GGML_VK_DISABLE_COOPMAT2", "GGML_VK_DISABLE_INTEGER_DOT_PRODUCT"}) {
+            _putenv_s(v, "1");
+            SetEnvironmentVariableA(v, "1");
+        }
+    }
+    if (cfg.gpuSafeStage >= 2) cfg.llmGpuLayers = 0;
+    if (cfg.gpuSafeStage >= 3) cfg.neuralVoice = false;
+    if (cfg.gpuSafeStage) log::Info("Mode prudent {} (session précédente interrompue)", cfg.gpuSafeStage);
 
     // Premier lancement : les modèles ne sont pas livrés avec le programme, on télécharge ceux de CE PC.
     std::vector<Download> missing;
@@ -628,7 +655,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
 
     if (const auto it = cfg.soundEvents.find("greeting"); it != cfg.soundEvents.end() && soundboard.Has(it->second))
         voice.PlaySound(it->second);
-    voice.Speak(phrases.Pick("greeting", {}, "Salut. Je suis en ligne."));
+    if (gpuGuard.Escalated()) {
+        static const char* kSafe[] = {"",
+            "La dernière fois, j'ai planté en utilisant ta carte graphique. Je passe en mode prudent : calculs plus courts sur la carte.",
+            "J'ai encore planté sur la carte graphique. Cette fois, je réfléchis avec le processeur : un peu plus lent, mais stable.",
+            "Toujours instable : je laisse complètement ta carte graphique tranquille, et je prends ma voix de secours."};
+        voice.Speak(kSafe[cfg.gpuSafeStage]);
+    } else {
+        voice.Speak(phrases.Pick("greeting", {}, "Salut. Je suis en ligne."));
+    }
 
     // --- Boucle principale : messages + rendu cadencé -------------------------
     using clock = std::chrono::steady_clock;
@@ -759,6 +794,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     db.Close();
     overlay.Destroy();
     if (singleInstance) CloseHandle(singleInstance);
+    gpuGuard.End();  // fermeture propre : pas de mode prudent au prochain démarrage
     CoUninitialize();
     return 0;
 }

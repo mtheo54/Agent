@@ -82,6 +82,7 @@ struct CompanionConfig {
     // (une capture d'écran part alors vers Claude Vision, avec ta permission).
     std::filesystem::path llmMmproj;
     int llmContext = 4096;
+    int gpuSafeStage = 0;        // mode prudent (GpuGuard, pas lu dans companion.json) : 1 lots courts, 2 cerveau CPU, 3 + Piper
     int llmGpuLayers = 99;       // hors jeu : tout sur la RX 9060 XT (Vulkan)
     int llmThreads = 4;
     int llmThreadsGaming = 2;    // en jeu : 2 threads (sur le cœur isolé)
