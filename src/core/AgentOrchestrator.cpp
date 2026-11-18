@@ -140,7 +140,12 @@ std::string AgentOrchestrator::ToneContext() const {
     if (std::chrono::steady_clock::now() - emotionAt_ > std::chrono::seconds(90) || lastEmotion_.confidence < 0.35f ||
         lastEmotion_.label == VoiceEmotion::Neutral)
         return {};
-    return std::format("[Ton de voix] Il semble {} ({}).\n", ToString(lastEmotion_.label), lastEmotion_.description);
+    // Indice seulement : vu sur le terrain, « Il semble triste » a suffi pour que le modèle parle de dépression à quelqu'un
+    // qui allait très bien. Il adapte son TON, il n'en parle pas et ne pose aucun diagnostic.
+    return std::format("[Ton de voix, indice incertain] Il a peut-être l'air un peu {} ({}). Adapte seulement ton ton ; n'en parle "
+                       "pas, ne lui demande pas s'il va bien, et ne parle JAMAIS de dépression, de santé mentale ou de moral sauf "
+                       "s'il en parle lui-même.\n",
+                       ToString(lastEmotion_.label), lastEmotion_.description);
 }
 
 void AgentOrchestrator::UpdateConfig(const CompanionConfig& cfg) {
