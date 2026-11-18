@@ -32,7 +32,8 @@ int main(int, char** argv) {
     CallSituation call;
     std::set<std::string> protectedPeople;
     float gain = 0.9f;
-    std::deque<std::string> recentBaits;
+    std::deque<std::string> recentBaits, recentTech;
+    bool renameSeen = false;
     std::uint32_t rng = 12345;
     std::string lastReply;
     const Line script[] = {
@@ -76,7 +77,7 @@ int main(int, char** argv) {
         CallAsk kind = CallAsk::Bait;
         std::string impostor, renamed;
         if (std::string(l.who) == "Tom" && std::string(l.shownAs) == "Léa") { kind = CallAsk::Impostor; impostor = "Léa"; }
-        else if (std::string(l.shownAs) == "Le Boss") { kind = CallAsk::Rename; renamed = "Karim"; }
+        else if (std::string(l.shownAs) == "Le Boss" && !renameSeen) { kind = CallAsk::Rename; renamed = "Karim"; renameSeen = true; }
         else if (mock) kind = CallAsk::Mock;
         else if (named) kind = CallAsk::Reply;
         if (kind == CallAsk::Bait && protectedPeople.contains(l.who)) { std::printf("    → %s est ménagée ce soir : pas de vanne.\n", l.who); continue; }
@@ -97,11 +98,15 @@ int main(int, char** argv) {
             br.targetLine = l.text;
             br.avoid = call.avoid;
             br.recent.assign(recentBaits.begin(), recentBaits.end());
+            br.recentTechniques.assign(recentTech.begin(), recentTech.end());
             br.hasHistory = !who.said.empty() || !who.mocks.empty();
             const BaitResult res = WriteBait(brain, br, rng);
             for (const auto& t : res.tried) refused += "      " + t + "\n";
             r = res.text;
-            if (!r.empty()) { recentBaits.push_back(r); while (recentBaits.size() > 4) recentBaits.pop_front(); }
+            if (!r.empty()) {
+                recentBaits.push_back(r); while (recentBaits.size() > 4) recentBaits.pop_front();
+                recentTech.push_back(res.technique); while (recentTech.size() > 2) recentTech.pop_front();
+            }
         }
         for (int attempt = 0; r.empty() && kind == CallAsk::Reply && attempt < 2; ++attempt) {
             GenerateOptions o;

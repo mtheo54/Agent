@@ -261,7 +261,7 @@ private:
     int heardStreak_ = 0;
     std::chrono::steady_clock::time_point lastSpokeInCall_{}, lastEarrape_{}, quietUntil_{}, lastCallLineAt_{};
     std::string lastCallReply_;
-    std::deque<std::string> recentBaits_;  // ses 4 dernières vannes : pas de redites, pas de tics
+    std::deque<std::string> recentBaits_, recentTechniques_;  // ses 4 dernières vannes : pas de redites, pas de tics
     bool PlayBaitSound(bool earrape);
     void PrefetchCallSounds();
     // « Prends ma place » : il garde ta place 60 min au plus, te résume tout à ton retour

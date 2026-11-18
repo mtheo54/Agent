@@ -1136,6 +1136,7 @@ void AgentOrchestrator::HandleCallLine(const std::string& text, const std::vecto
         br.targetLine = text;
         br.avoid = sessionAvoid_;
         br.recent.assign(recentBaits_.begin(), recentBaits_.end());
+        br.recentTechniques.assign(recentTechniques_.begin(), recentTechniques_.end());
         br.hasHistory = who && (!who->said.empty() || !who->mocks.empty());
         std::uint32_t r = rng_.fetch_add(0x9E3779B9u) * 2654435761u;
         const BaitResult res = WriteBait(d_.brain, br, r, stop);
@@ -1143,6 +1144,8 @@ void AgentOrchestrator::HandleCallLine(const std::string& text, const std::vecto
         if (res.text.empty() || stop.stop_requested()) return;
         recentBaits_.push_back(res.text);
         while (recentBaits_.size() > 4) recentBaits_.pop_front();
+        recentTechniques_.push_back(res.technique);
+        while (recentTechniques_.size() > 2) recentTechniques_.pop_front();
         out = res.text;
     }
     for (int attempt = 0; out.empty() && attempt < 2 && !stop.stop_requested(); ++attempt) {

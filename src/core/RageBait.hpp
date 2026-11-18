@@ -28,12 +28,14 @@ struct BaitRequest {
     std::string targetLine;   // ce qu'il vient de dire (pour la précision)
     std::set<std::string> avoid;      // sujets sensibles de la soirée
     std::vector<std::string> recent;  // dernières vannes d'Omnis (tics à éviter)
+    std::vector<std::string> recentTechniques;  // techniques des 2 dernières vannes : pas de « fausse stat » en boucle
     bool hasHistory = false;  // on connaît des fails / phrases de lui (technique « rappel »)
     int candidates = 3;
 };
 
 struct BaitResult {
     std::string text;               // vide = rien de propre, il se tait
+    std::string technique;
     std::vector<std::string> tried;  // pour le journal / la démo : « [technique] phrase (score) »
 };
 

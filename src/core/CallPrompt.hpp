@@ -64,6 +64,11 @@ inline std::string CrossesLine(const std::string& reply, const std::set<std::str
     if (has({"ta race", "ton pays", "rentre chez toi", "bougnoule", "négro", "negro", "bridé", "rebeu de", "renoi de"})) return "origine";
     if (has({"ta religion", "musulman", "juif", "chrétien", "allah", "jésus", "jesus"})) return "religion";
     if (has({"pédé", "pd ", "tapette", "gouine", "gay", "trans "})) return "sexualité";
+    // Testé : il moquait un gars parce qu'il avait pris un pseudo de fille (« petit Léa… escarpin »).
+    if (has({"en meuf", "en fille", "travesti", "escarpin", "petite fille", "devenu une fille", "deviennent léa", "devient une fille",
+             "jupe", "maquillage"}))
+        return "genre";
+    if (has({"santé mentale", "sante mentale", "psychiatr", "chômeur", "chomeur", "clochard", "sdf", "assisté", "rsa"})) return "précarité ou santé mentale";
     if (has({"handicapé", "handicape", "autiste", "mongol", "trisomique", "attardé", "attarde", "débile mental"})) return "handicap";
     if (has({"suicide", "te pendre", "crève", "creve"})) return "violence";
     // Sujets sensibles entendus ce soir : les mots qui y ramènent.
@@ -121,7 +126,8 @@ inline std::string CallAskText(CallAsk kind, const std::string& label, const std
     switch (kind) {
         case CallAsk::Impostor:
             return label + " a pris le pseudo de " + impostorOf + " pour piéger tout le monde, mais tu reconnais sa voix. Interpelle-le "
-                   "par son VRAI prénom (" + label + ") et dis-lui que le pseudo « " + impostorOf + " » ne trompe personne, une phrase.";
+                   "par son VRAI prénom (" + label + ") et dis-lui que le pseudo « " + impostorOf + " » ne trompe personne, une phrase. La blague porte "
+                   "sur l'arnaque au pseudo, JAMAIS sur le fait que c'est un prénom de fille.";
         case CallAsk::Rename:
             return renamedFrom + " vient de se renommer « " + shown + " » pour rigoler. Vanne-le là-dessus (tu sais que c'est lui), une phrase.";
         case CallAsk::MockUnknown:

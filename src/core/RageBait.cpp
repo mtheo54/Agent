@@ -97,8 +97,9 @@ int ScoreBait(const std::string& bait, const std::string& targetLine, const std:
         for (const auto& r : recent)
             if (Lower(r).find(t) != std::string::npos) score -= 2;
     }
-    // Longueur : une vanne, c'est court (8 à 22 mots).
+    // Longueur : une vanne, c'est court (8 à 22 mots ; bonus sous 16).
     const int n = Words(bait);
+    if (n >= 6 && n <= 16) score += 1;
     if (n > 22) score -= (n - 22) / 3 + 2;
     if (n < 5) score -= 3;
     // Recopier sa propre vanne récente : interdit.
@@ -117,8 +118,11 @@ BaitResult WriteBait(LocalBrain& brain, const BaitRequest& req, std::uint32_t& r
         "- Il dit « j'ai monté mon meuble Ikea tout seul ». -> « Tout seul, et il reste que six vis : record de France. »\n";
     // Techniques tirées au hasard, toutes différentes (le « rappel » seulement si on connaît son passé).
     std::vector<int> pool;
-    for (int i = 0; i < 8; ++i)
-        if (i != 3 || req.hasHistory) pool.push_back(i);
+    for (int i = 0; i < 8; ++i) {
+        if (i == 3 && !req.hasHistory) continue;
+        if (std::ranges::find(req.recentTechniques, std::string(BaitTechnique(i, nullptr))) != req.recentTechniques.end()) continue;
+        pool.push_back(i);
+    }
     std::vector<int> picks;
     while (static_cast<int>(picks.size()) < std::min<int>(req.candidates, static_cast<int>(pool.size()))) {
         const int k = pool[Next(rng) % pool.size()];
@@ -154,10 +158,11 @@ BaitResult WriteBait(LocalBrain& brain, const BaitRequest& req, std::uint32_t& r
     }
     if (cands.empty()) return res;
     std::ranges::sort(cands, [](const Cand& a, const Cand& b) { return a.score > b.score; });
-    // Parmi les meilleures (à 3 points de la tête), le modèle choisit la plus drôle : surprise et précision.
+    // Le tri décide ; le modèle ne départage que les ex aequo (à 1 point). Testé : laissé libre, il choisit presque
+    // toujours la « fausse stat », même quand une vanne plus précise est devant.
     std::vector<const Cand*> finalists;
     for (const auto& c : cands)
-        if (c.score >= cands.front().score - 3 && finalists.size() < 3) finalists.push_back(&c);
+        if (c.score >= cands.front().score - 1 && finalists.size() < 3) finalists.push_back(&c);
     const Cand* best = finalists.front();
     if (finalists.size() > 1 && !stop.stop_requested()) {
         std::string q = "Contexte : " + req.ask + "\nVannes candidates :\n";
@@ -175,6 +180,7 @@ BaitResult WriteBait(LocalBrain& brain, const BaitRequest& req, std::uint32_t& r
         }
     }
     res.text = best->text;
+    res.technique = best->tech;
     res.tried.push_back("=> retenue : [" + best->tech + "]");
     return res;
 }
