@@ -11,6 +11,8 @@
 
 #include <windows.h>
 
+struct IUIAutomation;
+
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -57,6 +59,9 @@ private:
     std::deque<Snap> timeline_;
     Clock::time_point lastSeen_{};
     std::vector<std::uint8_t> pixels_;
+    IUIAutomation* uia_ = nullptr;  // créé une fois (thread de lecture)
+    HWND discord_ = nullptr;        // fenêtre Discord, recherchée toutes les 3 s au plus
+    ULONGLONG discordAt_ = 0;
 };
 
 }  // namespace companion

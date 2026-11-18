@@ -107,7 +107,11 @@ void DiscordSpeaking::Stop() {
 
 std::vector<DiscordSpeaking::Shown> DiscordSpeaking::Sample() {
     std::vector<Shown> names;
-    HWND hwnd = FindDiscordWindow();
+    if (!discord_ || !IsWindow(discord_) || IsIconic(discord_) || GetTickCount64() - discordAt_ > 3000) {
+        discord_ = FindDiscordWindow();  // instantané des processus + énumération : pas à chaque image
+        discordAt_ = GetTickCount64();
+    }
+    HWND hwnd = discord_;
     if (!hwnd) return names;
     RECT rc{};
     GetClientRect(hwnd, &rc);
@@ -140,9 +144,11 @@ std::vector<DiscordSpeaking::Shown> DiscordSpeaking::Sample() {
     ReleaseDC(nullptr, screen);
     if (marks.empty()) return names;
 
-    ComPtr<IUIAutomation> uia;
-    if (FAILED(CoCreateInstance(kClsidUia, nullptr, CLSCTX_INPROC_SERVER, kIidUia, reinterpret_cast<void**>(uia.GetAddressOf()))))
+    if (!uia_ && FAILED(CoCreateInstance(kClsidUia, nullptr, CLSCTX_INPROC_SERVER, kIidUia, reinterpret_cast<void**>(&uia_)))) {
+        uia_ = nullptr;
         return names;
+    }
+    IUIAutomation* uia = uia_;
     for (std::size_t k = 0; k < marks.size(); ++k) {
         const SpeakingMark& m = marks[k];
         // Pseudo : à droite de l'anneau (liste), en bas à gauche dans la tuile (vue du call).
@@ -150,7 +156,7 @@ std::vector<DiscordSpeaking::Shown> DiscordSpeaking::Sample() {
                           : POINT{m.right + static_cast<LONG>(14 * scale), (m.top + m.bottom) / 2};
         ClientToScreen(hwnd, &pt);
         if (GetAncestor(WindowFromPoint(pt), GA_ROOT) != hwnd) continue;  // caché par une autre fenêtre : on ne devine pas
-        std::string n = NameAt(uia.Get(), pt);
+        std::string n = NameAt(uia, pt);
         if (!n.empty() && std::ranges::none_of(names, [&](const Shown& x) { return x.name == n; })) names.push_back({std::move(n), sigs[k]});
     }
     return names;
@@ -160,6 +166,13 @@ void DiscordSpeaking::Main(std::stop_token st) {
     log::SetCurrentThreadName(L"Companion.DiscordSpeaking");
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
     Com com;
+    struct Release {
+        IUIAutomation*& p;
+        ~Release() {
+            if (p) p->Release();
+            p = nullptr;
+        }
+    } release{uia_};  // avant CoUninitialize (Com est détruit après)
     while (!st.stop_requested()) {
         Sleep(250);
         if (!should_ || !should_()) continue;

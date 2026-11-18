@@ -178,6 +178,12 @@ VideoStudy::VideoStudy(HttpClient& http, std::filesystem::path dataDir, VideoStu
     deno_ = tools_ / L"deno.exe";
 }
 
+VideoStudy::~VideoStudy() {
+#if COMPANION_WITH_WHISPER
+    if (whisper_) whisper_free(static_cast<whisper_context*>(whisper_));
+#endif
+}
+
 bool VideoStudy::EnsureTools(std::string& error) {
     std::error_code ec;
     std::filesystem::create_directories(tools_, ec);
@@ -267,9 +273,12 @@ std::string VideoStudy::Transcribe(const std::filesystem::path& audio) {
     if (cfg_.whisperModel.empty() || !std::filesystem::exists(cfg_.whisperModel)) return {};
     const std::vector<float> pcm = DecodeAudio16k(audio, cfg_.maxSeconds);
     if (pcm.size() < 16000 * 2) return {};
-    whisper_context_params cp = whisper_context_default_params();
-    cp.use_gpu = false;
-    whisper_context* w = whisper_init_from_file_with_params(log::Narrow(cfg_.whisperModel.wstring()).c_str(), cp);
+    if (!whisper_) {
+        whisper_context_params cp = whisper_context_default_params();
+        cp.use_gpu = false;
+        whisper_ = whisper_init_from_file_with_params(log::Narrow(cfg_.whisperModel.wstring()).c_str(), cp);
+    }
+    auto* w = static_cast<whisper_context*>(whisper_);
     if (!w) return {};
     whisper_full_params wp = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
     wp.language = "fr";
@@ -278,7 +287,6 @@ std::string VideoStudy::Transcribe(const std::filesystem::path& audio) {
     std::string text;
     if (whisper_full(w, wp, pcm.data(), static_cast<int>(pcm.size())) == 0)
         for (int i = 0; i < whisper_full_n_segments(w); ++i) text += whisper_full_get_segment_text(w, i);
-    whisper_free(w);
     return text;
 #else
     (void)audio;

@@ -768,6 +768,7 @@ struct VoiceEngine::Impl {
         }
 #if COMPANION_WITH_ONNX && COMPANION_WITH_ESPEAK
         if (!done && tts) {
+            tempo.Reset();  // la voix neuronale a pu échouer en cours de route : on ne mélange pas ses restes
             std::vector<float> pcm;
             for (const auto& sentence : SplitSentences(NormalizeForSpeechFr(text))) {
                 if (speechGeneration.load() != generation) break;

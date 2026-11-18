@@ -51,7 +51,9 @@ std::string WebSurf::Research(const std::string& query, int maxPages, int& pages
         r.headers = {{L"Accept", L"text/html"}, {L"Accept-Language", L"fr-FR,fr;q=0.9"}};
         const auto page = http_.Send(r);
         --pagesLeft;
-        if (!page.Ok() || page.body.find("<html") == std::string::npos) continue;  // pages texte seulement
+        std::string head = page.body.substr(0, 4096);
+        for (auto& c : head) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (!page.Ok() || head.find("<html") == std::string::npos) continue;  // pages texte seulement (<HTML> compris)
         const std::string text = WebResearcher::HtmlToText(page.body);
         if (text.size() < 400) continue;
         std::string title;

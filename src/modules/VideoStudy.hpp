@@ -47,6 +47,9 @@ struct VideoStudyConfig {
 class VideoStudy {
 public:
     VideoStudy(HttpClient& http, std::filesystem::path dataDir, VideoStudyConfig cfg);
+    ~VideoStudy();
+    VideoStudy(const VideoStudy&) = delete;
+    VideoStudy& operator=(const VideoStudy&) = delete;
 
     bool EnsureTools(std::string& error);
     std::vector<VideoItem> Search(const std::string& query, int n);
@@ -64,6 +67,7 @@ private:
     std::filesystem::path dir_, tools_;
     VideoStudyConfig cfg_;
     std::filesystem::path ytdlp_, deno_;
+    void* whisper_ = nullptr;  // whisper_context, chargé à la 1re vidéo sans sous-titres, gardé pour la séance
 
     int Run(const std::vector<std::wstring>& args, std::string& out, int timeoutSec, std::stop_token stop = {});
     std::string Transcribe(const std::filesystem::path& audio);

@@ -91,9 +91,11 @@ inline bool SurfBlocked(const std::string& url) {
     const std::string h = surf_detail::HostOf(url);
     if (h.empty()) return true;
     static const char* bad[] = {"facebook.", "instagram.", "messenger.", "whatsapp.", "x.com", "twitter.", "snapchat.", "discord.",
-                                "telegram.", "tiktok.", "linkedin.", "mail.", "outlook.", "gmail.", "proton.", "icloud.", "bank",
-                                "banque", "paypal.", "boursorama", "credit", "impots.", "ameli.", "pornhub", "xvideos", "xnxx",
+                                "telegram.", "tiktok.", "linkedin.", "outlook.", "gmail.", "proton.", "icloud.", "webmail",
+                                "banque", "paypal.", "boursorama", "impots.", "ameli.", "pornhub", "xvideos", "xnxx",
                                 "onlyfans", "duckduckgo.", "bing.com", "google.", "microsoft.com", "msn.com", "doubleclick"};
+    // Boîtes mail et banques : par préfixe d'hôte (« mail.google.com », « bank.… ») ou nom connu, pas n'importe quelle sous-chaîne.
+    if (h.rfind("mail.", 0) == 0 || h.rfind("bank", 0) == 0 || h.find(".bank") != std::string::npos) return true;
     return std::any_of(std::begin(bad), std::end(bad), [&](const char* b) { return h.find(b) != std::string::npos; });
 }
 

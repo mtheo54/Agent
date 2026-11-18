@@ -308,18 +308,19 @@ CallPeople::Match CallPeople::Resolve(const std::vector<float>* emb, const std::
 }
 
 void CallPeople::MergeDuplicates() {
-    for (auto a = people_.begin(); a != people_.end(); ++a)
-        for (auto b = std::next(a); b != people_.end();) {
+    // Par indices : deque::erase au milieu invalide TOUS les itérateurs et références.
+    for (std::size_t ia = 0; ia < people_.size(); ++ia)
+        for (std::size_t ib = ia + 1; ib < people_.size();) {
+            CallPerson& keep = people_[ia];
+            CallPerson& gone = people_[ib];
             float sim = 0.f;
-            for (const auto& va : a->voices)
-                for (const auto& vb : b->voices) sim = std::max(sim, Cosine(va, vb));
+            for (const auto& va : keep.voices)
+                for (const auto& vb : gone.voices) sim = std::max(sim, Cosine(va, vb));
             // Très strict (deux voix différentes ne dépassent pas ~0,56 même quand elles se ressemblent).
-            if (sim < 0.72f || a->voices.empty() || b->voices.empty()) {
-                ++b;
+            if (sim < 0.72f || keep.voices.empty() || gone.voices.empty()) {
+                ++ib;
                 continue;
             }
-            CallPerson& keep = *a;
-            CallPerson& gone = *b;
             if (keep.name.empty()) keep.name = gone.name;
             else if (!gone.name.empty() && gone.name != keep.name) keep.aliases.push_back(gone.name);
             for (auto& al : gone.aliases) keep.aliases.push_back(al);
@@ -327,10 +328,10 @@ void CallPeople::MergeDuplicates() {
             for (auto& l : gone.said) Remember(keep, l);
             for (auto& l : gone.mocks) Mocked(keep, l);
             for (auto& c : gone.avoid) Avoid(keep, c);
-            for (std::size_t i = 0; i < gone.voices.size(); ++i) Learn(keep, gone.voices[i]);
+            for (const auto& v : gone.voices) Learn(keep, v);
             if (keep.avatar.empty()) keep.avatar = gone.avatar;
             keep.samples += gone.samples;
-            b = people_.erase(b);
+            people_.erase(people_.begin() + static_cast<std::ptrdiff_t>(ib));  // ib reste sur l'élément suivant
         }
 }
 

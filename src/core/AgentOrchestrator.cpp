@@ -814,9 +814,10 @@ bool AgentOrchestrator::EnsureSpeakerModel() {
     if (std::filesystem::exists(model)) return speaker_.Load(model);
     // Premier call : 30 Mo téléchargés en arrière-plan ; en attendant, il ne sait pas qui parle (« un pote »).
     if (d_.http && !modelDownload_.joinable()) {
-        modelDownload_ = std::jthread([http = d_.http, model](std::stop_token) {
+        modelDownload_ = std::jthread([http = d_.http, model](std::stop_token st) {
             std::string err;
-            if (http->DownloadToFile(SpeakerId::kModelUrl, model, {}, &err)) log::Info("SpeakerId: modèle téléchargé");
+            const auto keepGoing = [&st](std::uint64_t, std::uint64_t) { return !st.stop_requested(); };  // quitter = annuler
+            if (http->DownloadToFile(SpeakerId::kModelUrl, model, keepGoing, &err)) log::Info("SpeakerId: modèle téléchargé");
             else log::Info("SpeakerId: téléchargement impossible ({})", err);
         });
     }
@@ -1257,9 +1258,10 @@ bool AgentOrchestrator::HandleWatchCommand(const std::string& lower) {
                                         vm->bytes / 1000000),
                             std::chrono::seconds(20), {})) {
             const auto dest = cfg_.llmModel.parent_path() / log::Widen(vm->file);
-            visionDownload_ = std::jthread([this, http = d_.http, url = vm->url, dest](std::stop_token) {
+            visionDownload_ = std::jthread([this, http = d_.http, url = vm->url, dest](std::stop_token st) {
                 std::string err;
-                if (http->DownloadToFile(url, dest, {}, &err)) visionReady_ = true;
+                const auto keepGoing = [&st](std::uint64_t, std::uint64_t) { return !st.stop_requested(); };  // quitter = annuler
+                if (http->DownloadToFile(url, dest, keepGoing, &err)) visionReady_ = true;
                 else log::Info("Vision: téléchargement impossible ({})", err);
             });
             Say("Je le télécharge pendant qu'on regarde. En attendant, j'écoute le son.");
@@ -1381,7 +1383,7 @@ void AgentOrchestrator::CheckWatch() {
     const auto now = std::chrono::steady_clock::now();
     const auto cut = watch_.LastCut();
     if (cut > watchClipStart_ + std::chrono::seconds(3)) FlushWatchClip({}, cut);
-    else if (now - watchClipStart_ > std::chrono::seconds(25)) FlushWatchClip({}, now);
+    else if (now - watchClipStart_ > std::chrono::seconds(25) && !watchText_.empty()) FlushWatchClip({}, now);  // page immobile : rien
     if (mode_.load() == SystemMode::Gaming || std::chrono::steady_clock::now() - watch_.StartedAt() > std::chrono::minutes(90) ||
         !WasapiLoopback::FindProcessId(watch_.Browser()))
         StopWatching(true);
@@ -2286,8 +2288,15 @@ void AgentOrchestrator::AnswerFromSources(const std::string& question, const std
         EscalateCloud("REASON", subject, question, stop);
         return;
     }
-    Say(answer);
-    d_.db.LogEscalation("WEB", subject, origin, answer, question);
+    // Balise en fin de réponse (fréquent en rage bait) : on dit ce qui précède, jamais la balise.
+    std::string spoken = answer;
+    if (again) spoken = Trim(answer.substr(0, static_cast<std::size_t>(m.position(0))));
+    if (spoken.empty()) {
+        EscalateCloud("REASON", subject, question, stop);
+        return;
+    }
+    Say(spoken);
+    d_.db.LogEscalation("WEB", subject, origin, spoken, question);
 }
 
 void AgentOrchestrator::EscalateCloud(const std::string& type, const std::string& subject,
@@ -2504,7 +2513,9 @@ void AgentOrchestrator::HandleVision(const std::string& question, std::stop_toke
         if (escalation && std::regex_search(out, m, EscalateTag())) {
             std::string type, subject;
             EscalationOf(m, type, subject);
-            if (type == "WEB") {  // ex. nom de quête lu à l'écran -> recherche
+            if (type == "WEB") {  // ex. nom de quête lu à l'écran -> recherche, en mode technique (réponse fondée)
+                chatMode_ = ChatMode::Technical;
+                searchRound_ = 0;
                 ResearchLocally(Trim(subject), question, stop);
                 return;
             }

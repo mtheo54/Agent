@@ -383,14 +383,26 @@ void DesktopPilot::WatchMain(std::stop_token st) {
     HWND h = CreateWindowExW(0, MAKEINTATOM(cls), L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, GetModuleHandleW(nullptr), nullptr);
     if (!h) return;
     SetWindowLongPtrW(h, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
+    // Raw Input est PAR PROCESSUS : on garde ce qui était enregistré (ex. le governor pendant un entraînement) pour le remettre.
+    std::vector<RAWINPUTDEVICE> before;
+    UINT count = 0;
+    GetRegisteredRawInputDevices(nullptr, &count, sizeof(RAWINPUTDEVICE));
+    if (count) {
+        before.resize(count);
+        if (GetRegisteredRawInputDevices(before.data(), &count, sizeof(RAWINPUTDEVICE)) == static_cast<UINT>(-1)) before.clear();
+        else before.resize(count);
+    }
     RAWINPUTDEVICE dev[2] = {{0x01, 0x02, RIDEV_INPUTSINK, h}, {0x01, 0x06, RIDEV_INPUTSINK, h}};  // souris, clavier
     RegisterRawInputDevices(dev, 2, sizeof(RAWINPUTDEVICE));
     watchWnd_ = h;
     std::stop_callback onStop(st, [h] { PostMessageW(h, WM_CLOSE, 0, 0); });
     MSG m;
     while (GetMessageW(&m, nullptr, 0, 0) > 0) DispatchMessageW(&m);
-    RAWINPUTDEVICE rm[2] = {{0x01, 0x02, RIDEV_REMOVE, nullptr}, {0x01, 0x06, RIDEV_REMOVE, nullptr}};
-    RegisterRawInputDevices(rm, 2, sizeof(RAWINPUTDEVICE));
+    for (const USHORT usage : {USHORT{0x02}, USHORT{0x06}}) {
+        const auto it = std::ranges::find_if(before, [&](const RAWINPUTDEVICE& d) { return d.usUsagePage == 0x01 && d.usUsage == usage; });
+        RAWINPUTDEVICE r = it != before.end() && it->hwndTarget && IsWindow(it->hwndTarget) ? *it : RAWINPUTDEVICE{0x01, usage, RIDEV_REMOVE, nullptr};
+        RegisterRawInputDevices(&r, 1, sizeof(RAWINPUTDEVICE));
+    }
     watchWnd_ = nullptr;
 }
 
