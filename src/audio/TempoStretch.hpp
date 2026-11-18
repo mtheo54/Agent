@@ -28,7 +28,7 @@ public:
         ola_.assign(static_cast<std::size_t>(n_), 0.f);
         Reset();
     }
-    void SetTempo(float t) noexcept { tempo_ = std::clamp(t, 0.8f, 1.6f); }
+    void SetTempo(float t) noexcept { tempo_ = std::clamp(t, 0.6f, 1.6f); }  // 0,6 : mot qui traîne (« alors… »)
     void SetMaxPause(float sec) noexcept { maxPause_ = static_cast<std::size_t>(sec * static_cast<float>(rate_)); }
     void Reset() noexcept {
         in_.clear();

@@ -797,9 +797,17 @@ struct VoiceEngine::Impl {
         const float waveDepth = 0.07f + 0.05f * NextRandom(vrng);
         const float estSeconds = std::max(1.0f, static_cast<float>(text.size()) / 15.f);  // ~15 caractères/s au débit brut
         std::size_t heard = 0;  // échantillons bruts déjà passés (horloge du contour)
+        // « … » : il reste sur la fin du mot avant la pause (débit ralenti ~0,3 s avant), puis repart normalement.
+        std::vector<float> holds;
+        for (std::size_t p = text.find("…"); p != std::string::npos; p = text.find("…", p + 1))
+            holds.push_back(static_cast<float>(p) / 15.f);
+        for (std::size_t p = text.find("..."); p != std::string::npos; p = text.find("...", p + 3))
+            holds.push_back(static_cast<float>(p) / 15.f);
         const auto paceAt = [&](std::size_t samples) {
             const float t = static_cast<float>(samples) / static_cast<float>(outputRate);
             float k = phrase * (1.f + waveDepth * std::sin(6.2832f * t / wavePeriod + wavePhase));
+            for (const float h : holds)
+                if (t > h - 0.35f && t < h + 0.05f) k *= 0.72f;
             if (t < 0.35f) k *= 0.95f;                    // attaque posée
             if (t > 0.82f * estSeconds) k *= 0.88f;       // fin de phrase : on ralentit
             tempo.SetTempo(baseTempo * k);

@@ -2,6 +2,7 @@
 
 #include "core/Log.hpp"
 #include "core/Persona.hpp"
+#include "core/Disfluency.hpp"
 #include "audio/NeuralVoice.hpp"
 
 #include <objbase.h>
@@ -2121,6 +2122,11 @@ std::string AgentOrchestrator::GenerateSpoken(const std::vector<ChatTurn>& messa
             React(expression);
             replyStyle = forcedReplyStyle_.value_or(ReplyStyle(expression, style_.load(), said));
             forcedReplyStyle_.reset();
+        }
+        // Il réfléchit en parlant : petites hésitations, bégaiements, auto-corrections, mots qui traînent.
+        if (!said.empty()) {
+            std::uint32_t r = rng_.fetch_add(0x9E3779B9u) * 2654435761u;
+            said = Humanize(said, cfg_.voiceQuirks, r, chatMode_ == ChatMode::Technical, !spoken);
         }
         spoken = true;
         if (!said.empty()) d_.voice.Speak(said, replyStyle);
