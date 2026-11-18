@@ -17,6 +17,8 @@
 
 #include "audio/DiscordBridge.hpp"
 #include "audio/OmnisAnalyzer.hpp"
+#include "audio/SpeakerId.hpp"
+#include "core/CallPeople.hpp"
 #include "audio/VoiceEngine.hpp"
 #include "audio/WasapiLoopback.hpp"
 #include "core/Config.hpp"
@@ -77,6 +79,7 @@ struct OrchestratorDeps {
     std::filesystem::path assetsDir;  // assets/ (lexique OMNIS…)
     std::function<HardwareInfo()> probe;  // mesure du matériel (VRAM libre en direct) pour choisir le cerveau en jeu
     DiscordBridge* discord = nullptr;     // Omnis dans tes calls, par ton micro (nullptr = désactivé)
+    HttpClient* http = nullptr;           // modèle de voix (premier call), page de résultats YouTube
 };
 
 class AgentOrchestrator {
@@ -91,7 +94,8 @@ public:
 
     void OnTranscript(std::string text, EmotionEstimate emotion = {});  // thread-safe
     void OnBargeIn();  // l'utilisateur lui coupe la parole : il s'arrête et écoute
-    void OnCallSpeech(std::string text);  // ce qu'un pote vient de dire dans le call Discord (thread-safe)
+    // Ce qu'un pote vient de dire dans le call Discord, avec sa phrase audio (16 kHz) pour savoir qui c'est.
+    void OnCallSpeech(std::string text, std::vector<float> pcm16k);  // thread-safe
     void UpdateConfig(const CompanionConfig& cfg);  // appliquée sur le thread de l'orchestrateur
     void SetOpenSettingsCallback(std::function<void()> cb) { onOpenSettings_ = std::move(cb); }
 
@@ -136,7 +140,8 @@ private:
                            const std::string& subject, std::stop_token stop);
     void EscalateCloud(const std::string& type, const std::string& subject, const std::string& question,
                        std::stop_token stop, const std::vector<std::uint8_t>* jpeg = nullptr);
-    void StartTraining(bool manual);
+    // silent : pas d'annonce, et le rapport est gardé pour ton retour (il s'entraîne pendant ton absence).
+    void StartTraining(bool manual, bool silent = false);
 
     std::string PersonaPrompt() const;
     std::string LiveContext(const std::string& question) const;
@@ -229,11 +234,37 @@ private:
     bool HandlePilot(const std::string& text, const std::string& lower, std::stop_token stop);
     // Call Discord (par ton micro) : rejoindre / quitter, réagir à ce que disent les autres
     bool HandleCallCommand(const std::string& lower, std::stop_token stop);
-    void HandleCallLine(const std::string& text, std::stop_token stop);
+    void HandleCallLine(const std::string& text, const std::vector<float>& pcm, std::stop_token stop);
     [[nodiscard]] std::string CallHint() const;
     [[nodiscard]] bool InCall() const { return d_.discord && d_.discord->InCall(); }
     std::deque<std::string> callLines_;  // derniers échanges du call (thread de l'orchestrateur)
     std::chrono::steady_clock::time_point lastCallBait_{}, callMutedUntil_{};
+    // Qui parle (empreintes de voix) et fiches par personne
+    SpeakerId speaker_;
+    CallPeople people_;
+    bool peopleLoaded_ = false;
+    std::jthread modelDownload_;
+    bool EnsureSpeakerModel();
+    std::string lastSpeakerId_;
+    std::set<std::string> protected_;    // personnes à ménager ce soir (sujet sensible entendu)
+    std::set<std::string> sessionAvoid_;  // « Léa : sa santé »
+    // Se faire entendre : gain qui monte quand on ne l'a pas entendu, redescend doucement sinon
+    float callGain_ = 0.9f;
+    int heardStreak_ = 0;
+    std::chrono::steady_clock::time_point lastSpokeInCall_{}, lastEarrape_{}, quietUntil_{}, lastCallLineAt_{};
+    std::string lastCallReply_;
+    bool PlayBaitSound(bool earrape);
+    void PrefetchCallSounds();
+    // « Prends ma place » : il garde ta place 60 min au plus, te résume tout à ton retour
+    bool subActive_ = false;
+    std::chrono::steady_clock::time_point subStart_{}, subUntil_{}, nextActivity_{};
+    std::vector<std::string> absenceLog_, shownLog_;
+    void StartSubstitute(const std::string& reason);
+    void EndSubstitute(bool userBack);
+    void CheckSubstitute();
+    void DoActivity(std::optional<std::string> request = std::nullopt);
+    bool OpenOnScreen1(const std::string& url);
+    void SeedRageBaitTraining();
     std::chrono::steady_clock::time_point lastAutoTraining_{};
     std::atomic<std::int64_t> listenUntilMs_{0};  // écoute du mix à la demande (hors FL Studio)
 };

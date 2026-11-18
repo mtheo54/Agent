@@ -339,7 +339,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     // Discord par ton micro : relais micro (+ sa voix) vers le câble virtuel, écoute du son de Discord.
     DiscordBridge discord;
     AgentOrchestrator orchestrator({cfg, governor, voice, db, brain, gate, web, claude, coach, system, loopback, analyzer, trainer,
-                                    phrases, soundboard, dataDir, root / L"assets", &ProbeHardware, &discord});
+                                    phrases, soundboard, dataDir, root / L"assets", &ProbeHardware, &discord, &http});
 
     std::atomic<SystemMode> mode{SystemMode::Interactive};
     governor.SetModeListener([&](SystemMode previous, SystemMode current) {
@@ -443,8 +443,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
         dc.cableDevice = log::Widen(cfg.discordCableDevice);
         dc.micDevice = log::Widen(cfg.discordMicDevice);
         // Phrases des autres -> Whisper (file du moteur de voix) -> orchestrateur.
+        // La phrase audio sert aussi à savoir QUI parle (empreinte de voix) : une copie suit la transcription.
         discord.Start(dc, [&voice, &orchestrator](std::vector<float> pcm) {
-            voice.TranscribeExternal(std::move(pcm), [&orchestrator](std::string text) { orchestrator.OnCallSpeech(std::move(text)); });
+            std::vector<float> copy = pcm;
+            voice.TranscribeExternal(std::move(pcm), [&orchestrator, copy = std::move(copy)](std::string text) mutable {
+                orchestrator.OnCallSpeech(std::move(text), std::move(copy));
+            });
         });
         voice.SetVoiceTap(&discord);  // sa voix (et ses bruitages) part dans le call quand il l'a rejoint
     }

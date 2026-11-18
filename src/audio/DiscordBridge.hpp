@@ -15,6 +15,7 @@
 #include "audio/VoiceEngine.hpp"  // VoiceTap
 #include "audio/WasapiLoopback.hpp"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstddef>
@@ -59,6 +60,17 @@ public:
     bool Join();   // sa voix part dans le call, il écoute les autres
     void Leave();
 
+    // Volume de sa voix dans le call (1 = normal ; monte s'il n'est pas entendu, plafonné à 2,2 soit +7 dB).
+    void SetVoiceGain(float g) noexcept { gain_.store(std::clamp(g, 0.3f, 2.2f)); }
+    [[nodiscard]] float VoiceGain() const noexcept { return gain_.load(); }
+    // « Earrape » de rage bait : saturation et basses écrasées sur sa voix / ses bruitages pendant au plus 1,5 s.
+    // Plafonné (crête -8 dBFS, ~ -10 dBFS efficaces) : très désagréable, sans danger pour les oreilles au casque.
+    void Earrape(int ms) noexcept;
+    // false = il parle en privé (toi seul l'entends, ex. le résumé quand tu reviens), le call n'entend rien.
+    void SetRouteVoice(bool on) noexcept { route_.store(on); }
+    // Quelqu'un parle en ce moment dans le call ?
+    [[nodiscard]] bool OthersTalking() const noexcept { return othersTalking_.load(); }
+
     void OnVoiceOut(const float* mono, std::size_t frames, int sampleRate) noexcept override;
 
 private:
@@ -69,7 +81,10 @@ private:
     DiscordBridgeConfig cfg_;
     CallSpeech onSpeech_;
     std::jthread supervisor_, relay_;
-    std::atomic<bool> cableFound_{false}, discordRunning_{false}, relaying_{false}, inCall_{false};
+    std::atomic<bool> cableFound_{false}, discordRunning_{false}, relaying_{false}, inCall_{false}, route_{true}, othersTalking_{false};
+    std::atomic<float> gain_{0.9f};
+    std::atomic<unsigned long long> earrapeUntil_{0};
+    float earLow_ = 0.f;  // filtre des basses de l'earrape (thread du relais)
     std::string problem_;       // protégé par mutex_
     mutable std::mutex mutex_;  // problem_, Join / Leave
     WasapiLoopback discordAudio_;

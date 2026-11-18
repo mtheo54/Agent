@@ -354,6 +354,48 @@ religion, la sexualité, le physique ou un handicap, et il lâche si quelqu'un e
 **N'importe qui dans le call** peut dire « Omnis, tais-toi » (il se calme 10 minutes) ou « Omnis, dégage »
 (il quitte le call). Toi : « quitte le call ».
 
+**Il sait qui parle.** Une empreinte de voix (CAM++, ~30 Mo téléchargés au premier call) le dit à chaque phrase :
+mesuré sur 37 voix françaises passées par le codec de Discord, la bonne personne est retrouvée 99 % du temps dans un
+call de 5, et quand il n'est pas sûr, il n'attribue rien. Chaque pote a sa **fiche** (sur ton PC seulement,
+`call_people.json`) : prénom (« moi c'est Karim », ou toi : « le dernier qui a parlé c'est Karim »), ses dernières
+phrases, ses moqueries envers Omnis, et les **sujets à éviter**. Il prévient en arrivant, et **« Omnis, oublie-moi »**
+efface la fiche de celui qui le dit. Aucun son n'est enregistré, juste des nombres.
+
+| Situation | Ce qu'il fait |
+|---|---|
+| Sujet sensible (deuil, santé, rupture, moral, argent, famille, agression) | Il n'en parle pas, même pas en blague, et ne vanne plus cette personne de la soirée. La fiche ne garde que la catégorie, jamais le détail. |
+| Quelqu'un se moque d'Omnis | Il sait qui (voix), le note dans sa fiche et riposte **précis**, avec ce qu'il sait de lui (ses fails, ses phrases). |
+| On ne l'a pas entendu (« quoi ? », « parle plus fort ») | Il remonte son volume de 30 % et répète (jusqu'à +7 dB), puis redescend doucement une fois bien entendu. |
+| Rage bait | Ciblé sur ce que la personne vient de dire (contre-pied, fausse stat, compliment empoisonné, rappel d'un fail). Une fois sur trois, un bruitage à la place (`callBaitSounds` : FAHHH, Pizza Nizar…), et de temps en temps en **earrape**. |
+| Quelqu'un rappe, fait une prod, stream sa DAW, ou de la musique joue | Mode discret 10 min : plus de vannes ni de bruitages, il répond bref seulement si on lui parle. |
+| On lui parle par-dessus | Il n'attend pas un silence pour répondre. |
+
+**Earrape plafonné** : saturation et basses écrasées pendant 1,5 s au plus, au plus toutes les 10 minutes, crête à
+-8 dBFS (~-10 dBFS efficaces, une dizaine de dB au-dessus d'une voix normale) : bien chiant, mais sans danger pour
+les oreilles au casque. `earrape: false` pour couper.
+
+### « Prends ma place » (toilettes, repas…)
+
+« Omnis, prends ma place, je vais manger » : il rejoint le call si besoin et garde ta place **60 minutes au plus**
+(`substituteMaxMinutes`, 10 à 60).
+
+- Il annonce que tu es parti et que **c'est lui, Omnis** : il ne se fait jamais passer pour toi.
+- Il répond aux questions, note ce qu'on te demande (« dis-lui de venir ce soir »).
+- Il refuse **toute demande d'info privée** : DM de n'importe quel réseau, messages, mails, comptes, mots de passe,
+  adresse.
+- Toutes les 6 à 10 minutes quand ça ne parle pas, ou à la demande d'un pote (« Omnis, mets-nous une vidéo de… »),
+  il ouvre **une vidéo YouTube, un TikTok, ou une recherche d'entraînement** sur l'**écran 1**. Les adresses sont
+  limitées à YouTube, TikTok, Wikipédia, DuckDuckGo et Google. Messagerie, compte, réglages et historique sont
+  bloqués.
+- Il ne pilote rien d'autre sur ton PC pendant ton absence.
+- **Partage d'écran** : lance toi-même ton partage de l'écran 1 avant de partir (Omnis ne clique pas dans
+  Discord, ce serait automatiser ton compte). Tes potes voient alors ce qu'il ouvre.
+- **À ton retour** (souris ou clavier touchés, ou « je suis revenu ») : il le dit au call, puis te fait le
+  résumé **à toi seul** (le call ne l'entend pas).
+- **Viré du call pendant ton absence** : il part s'entraîner, en recherches utiles. La première fois, il ajoute
+  à son programme l'art du rage bait (contre-pied, timing, chute, memes FR du moment, et la limite entre troll et
+  harcèlement). Le rapport t'attend à ton retour.
+
 Mets un casque : avec des haut-parleurs, ton micro reprendrait sa voix une deuxième fois.
 Ton micro par défaut dans Windows doit rester ton vrai micro (pas le câble) ; sinon règle `discordMicDevice`.
 

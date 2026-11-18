@@ -80,6 +80,9 @@ CompanionConfig LoadConfig(const std::filesystem::path& jsonFile) {
         cfg.discordCableDevice = j.value("discordCableDevice", cfg.discordCableDevice);
         cfg.discordMicDevice = j.value("discordMicDevice", cfg.discordMicDevice);
         cfg.callBaitChance = std::clamp(j.value("callBaitChance", cfg.callBaitChance), 0.f, 1.f);
+        if (j.contains("callBaitSounds") && j["callBaitSounds"].is_array()) cfg.callBaitSounds = j["callBaitSounds"].get<std::vector<std::string>>();
+        cfg.earrape = j.value("earrape", cfg.earrape);
+        cfg.substituteMaxMinutes = std::clamp(j.value("substituteMaxMinutes", cfg.substituteMaxMinutes), 10, 60);
         cfg.perfAutoAdjust = j.value("perfAutoAdjust", cfg.perfAutoAdjust);
         cfg.perfMaxFpsDropPct = std::clamp(j.value("perfMaxFpsDropPct", cfg.perfMaxFpsDropPct), 0.5, 50.0);
         cfg.perfMaxLowDropPct = std::clamp(j.value("perfMaxLowDropPct", cfg.perfMaxLowDropPct), 0.5, 80.0);

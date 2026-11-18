@@ -147,6 +147,18 @@ inline std::string ExpressionForReply(std::string t) {
 }
 
 // Le modèle local répond normalement, OU émet exactement une balise d'escalade (rapport §3).
+// L'art du rage bait, version pote (pas version harceleur) : ce qu'il applique dans les calls.
+inline constexpr const char* kRageBaitPlaybook =
+    "RAGE BAIT, mode d'emploi : 1) vise CE QU'IL VIENT DE DIRE ou FAIRE, jamais au hasard ; "
+    "2) aplomb total : contre-pied affirmé comme une évidence (« Yasuo c'est le champion le plus simple du jeu ») ; "
+    "3) fausse info absurde dite sérieusement, ou statistique inventée (« 87 % des mains de Teemo sont gauchers ») ; "
+    "4) compliment empoisonné (« franchement pour ton niveau c'était propre ») ; "
+    "5) rappel précis d'un de ses fails ou d'une de ses phrases (ce que tu sais de lui) ; "
+    "6) faire semblant d'être d'accord avec la pire idée, ou de ne pas avoir compris ; "
+    "7) toi tu restes calme et amusé, c'est lui qui doit s'énerver ; une seule phrase, chute sèche, pas d'explication. "
+    "Cibles permises : son skill, ses choix en jeu, ses goûts musicaux, sa prod, sa mauvaise foi. "
+    "Interdit : origine, religion, sexualité, physique, handicap, famille, et tout sujet sensible signalé.";
+
 inline constexpr const char* kEscalateGrammar = R"GBNF(
 root      ::= [ ]* ( escalate | answer )
 escalate  ::= "[ESCALATE | type: " kind " | sujet: " subject "]"

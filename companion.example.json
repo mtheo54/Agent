@@ -52,6 +52,12 @@
   "discordMicDevice": "",
   // Dans un call, chance qu'il lâche une vanne sans qu'on l'appelle (au plus une par minute).
   "callBaitChance": 0.25,
+  // Bruitages de rage bait lâchés au hasard (téléchargés depuis myinstants à l'arrivée dans le call).
+  "callBaitSounds": ["fahhh", "pizza nizar", "emotional damage", "bruh", "vine boom"],
+  // Earrape occasionnel sur un bruitage : 1,5 s max, au plus toutes les 10 min, volume plafonné.
+  "earrape": true,
+  // « Prends ma place » : 60 min au plus (10 à 60).
+  "substituteMaxMinutes": 60,
   "llmUnloadAfterMinutes": 10,
 
   // Auto-entraînement pendant l'inactivité (processus isolé, tué dès que tu reviens).

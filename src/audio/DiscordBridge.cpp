@@ -86,6 +86,7 @@ void DiscordBridge::Start(DiscordBridgeConfig cfg, CallSpeech onSpeech) {
     Stop();
     cfg_ = std::move(cfg);
     onSpeech_ = std::move(onSpeech);
+    gain_ = cfg_.voiceGain;
     if (!cfg_.enabled) return;
     supervisor_ = std::jthread([this](std::stop_token st) { SuperviseMain(st); });
 }
@@ -227,13 +228,22 @@ void DiscordBridge::RelayMain(std::stop_token st, std::wstring cableId) {
         BYTE* data = nullptr;
         if (FAILED(render->GetBuffer(avail, &data))) break;
         auto* o = reinterpret_cast<float*>(data);
-        const bool call = inCall_.load(std::memory_order_relaxed);
+        const bool call = inCall_.load(std::memory_order_relaxed) && route_.load(std::memory_order_relaxed);
+        const float gain = gain_.load(std::memory_order_relaxed);
+        const bool ear = GetTickCount64() < earrapeUntil_.load(std::memory_order_relaxed);
         std::size_t vr = voiceR_.load(std::memory_order_relaxed);
         const std::size_t vw = voiceW_.load(std::memory_order_acquire);
         for (UINT32 i = 0; i < avail; ++i) {
             float x = mr < mw ? micRing[(mr++) & mask] : 0.f;
             if (vr != vw) {
-                if (call) x += voice_[vr & (kVoiceRing - 1)] * cfg_.voiceGain;
+                float v = voice_[vr & (kVoiceRing - 1)] * gain;
+                if (ear) {
+                    // Basses x4, gain x12, écrêtage dur : le son « earrape »… mais plafonné à 0,4 (-8 dBFS).
+                    earLow_ += 0.02f * (v - earLow_);
+                    const float d = (v + 3.f * earLow_) * 12.f;
+                    v = 0.4f * std::clamp(d, -1.f, 1.f);
+                }
+                if (call) x += v;
                 ++vr;
             }
             o[i] = std::abs(x) > 0.95f ? std::copysign(0.95f + 0.05f * std::tanh((std::abs(x) - 0.95f) * 20.f), x) : x;
@@ -269,6 +279,10 @@ void DiscordBridge::OnVoiceOut(const float* mono, std::size_t frames, int sample
     voiceW_.store(w, std::memory_order_release);
 }
 
+void DiscordBridge::Earrape(int ms) noexcept {
+    earrapeUntil_.store(GetTickCount64() + static_cast<unsigned long long>(std::clamp(ms, 0, 1500)));
+}
+
 // Son de Discord (48 kHz stéréo) -> mono 16 kHz -> phrases -> Whisper (via le callback).
 void DiscordBridge::OnDiscordAudio(const float* x, std::size_t frames) {
     down_.clear();
@@ -280,7 +294,9 @@ void DiscordBridge::OnDiscordAudio(const float* x, std::size_t frames) {
             decimN_ = 0;
         }
     }
-    if (vad_.Feed(down_.data(), down_.size(), segment_) && onSpeech_) {
+    const bool ready = vad_.Feed(down_.data(), down_.size(), segment_);
+    othersTalking_.store(vad_.InSpeech(), std::memory_order_relaxed);
+    if (ready && onSpeech_) {
         onSpeech_(std::move(segment_));
         segment_ = {};
     }

@@ -4,6 +4,7 @@
 #include "core/Persona.hpp"
 
 #include <objbase.h>
+#include <shellapi.h>
 
 #include <nlohmann/json.hpp>
 
@@ -287,6 +288,7 @@ void AgentOrchestrator::WorkerMain(std::stop_token st) {
         UpdateStudioCapture();
         CheckGameEvents();  // au plus toutes les 5 s, comme le sondage de l'API LoL
         UpdatePerfMonitor();
+        CheckSubstitute();
         if (deviceDirty_.exchange(false)) {
             const bool gaming = mode_.load() == SystemMode::Gaming;
             // Entrée en jeu : tout est libéré (VRAM et RAM rendues au jeu), rien n'est rechargé tant qu'on ne lui
@@ -743,24 +745,90 @@ void AgentOrchestrator::Calibrate(std::stop_token stop) {
 }
 
 // ---------------------------------------------------------------------------
-// Call Discord, par ton micro (DiscordBridge) : il rejoint, écoute les autres, vanne quand on l'appelle
-// (et de temps en temps sans qu'on l'appelle). N'importe qui dans le call peut le faire taire ou partir.
+// Call Discord, par ton micro (DiscordBridge) : il sait QUI parle (empreinte de voix + fiche par personne),
+// évite les sujets sensibles, monte le son quand on ne l'entend pas, vanne avec précision, lâche des bruitages,
+// se fait discret quand quelqu'un fait du son, et peut garder ta place pendant que tu es absent.
+// N'importe qui dans le call peut le faire taire, le faire partir, ou faire effacer sa fiche.
 
-void AgentOrchestrator::OnCallSpeech(std::string text) {
+namespace {
+bool HasAny(const std::string& s, std::initializer_list<const char*> words) {
+    return std::any_of(words.begin(), words.end(), [&](const char* w) { return s.find(w) != std::string::npos; });
+}
+std::int64_t UnixNow() { return static_cast<std::int64_t>(std::time(nullptr)); }
+
+// Ce qu'il a le droit d'ouvrir sur ton PC pendant ton absence : vidéos, TikTok, recherches. Jamais de messages privés.
+bool AllowedActivityUrl(const std::string& url) {
+    if (url.rfind("https://", 0) != 0) return false;
+    const std::string rest = url.substr(8);
+    const std::string host = rest.substr(0, rest.find('/'));
+    static const char* hosts[] = {"www.youtube.com", "youtube.com", "m.youtube.com", "www.tiktok.com", "fr.wikipedia.org",
+                                  "duckduckgo.com", "www.google.com"};
+    if (std::none_of(std::begin(hosts), std::end(hosts), [&](const char* h) { return host == h; })) return false;
+    std::string path = rest.substr(host.size());
+    for (auto& c : path) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return !HasAny(path, {"/direct", "/messages", "/message", "/inbox", "/dm", "/@me", "/mail", "/account", "/settings", "/login",
+                          "/signin", "/upload", "/studio", "/feed/history", "/playlist?list=wl"});
+}
+bool PrivateRequest(const std::string& t) {
+    return HasAny(t, {" dm", "dm ", "ses dms", "message privé", "messages privés", "ses messages", "ses mp", "mot de passe", "mdp", "son compte",
+                      "sa banque", "ses mails", "son mail", "sa boîte mail", "son adresse", "ses photos", "son historique",
+                      "son téléphone", "son insta", "son snap", "whatsapp", "ses conversations"});
+}
+std::string UrlEncode(const std::string& s) {
+    std::string o;
+    for (unsigned char c : s) {
+        if (std::isalnum(c) || c == '-' || c == '_' || c == '.') o += static_cast<char>(c);
+        else if (c == ' ') o += '+';
+        else o += std::format("%{:02X}", c);
+    }
+    return o;
+}
+}  // namespace
+
+void AgentOrchestrator::OnCallSpeech(std::string text, std::vector<float> pcm16k) {
     text = Trim(std::move(text));
     const std::string lower = Lower(text);
-    // Hallucinations classiques de Whisper sur du bruit / de la musique.
-    if (text.size() < 3 || ContainsAny(lower, {"sous-titr", "amara.org", "merci d'avoir regardé", "[musique]", "(musique)"})) return;
-    Post([this, text = std::move(text)](std::stop_token stop) { HandleCallLine(text, stop); });
+    // Hallucinations classiques de Whisper sur du bruit (la musique, elle, est un signal : on la garde).
+    if (text.size() < 3 || HasAny(lower, {"sous-titr", "amara.org", "merci d'avoir regardé"})) return;
+    Post([this, text = std::move(text), pcm = std::move(pcm16k)](std::stop_token stop) { HandleCallLine(text, pcm, stop); });
+}
+
+bool AgentOrchestrator::EnsureSpeakerModel() {
+    if (speaker_.Ready()) return true;
+    if (!peopleLoaded_) {
+        people_.Load(d_.dataDir / L"call_people.json");
+        peopleLoaded_ = true;
+    }
+    const auto model = d_.assetsDir / L"models" / SpeakerId::kModelFile;
+    if (std::filesystem::exists(model)) return speaker_.Load(model);
+    // Premier call : 30 Mo téléchargés en arrière-plan ; en attendant, il ne sait pas qui parle (« un pote »).
+    if (d_.http && !modelDownload_.joinable()) {
+        modelDownload_ = std::jthread([http = d_.http, model](std::stop_token) {
+            std::string err;
+            if (http->DownloadToFile(SpeakerId::kModelUrl, model, {}, &err)) log::Info("SpeakerId: modèle téléchargé");
+            else log::Info("SpeakerId: téléchargement impossible ({})", err);
+        });
+    }
+    return false;
 }
 
 std::string AgentOrchestrator::CallHint() const {
     if (!InCall()) return {};
     std::string s =
         "Tu es en CALL DISCORD avec ton pote et ses potes : ils t'entendent tous (ta voix passe par son micro) et savent "
-        "que tu es une IA. Tu ne connais pas leurs prénoms (dis « frérot », « chef », « le pote »). Une ou deux phrases, "
-        "pas plus. Vannes et rage bait légers OK, jamais sur l'origine, la religion, la sexualité, le physique ou un "
-        "handicap. Si quelqu'un te demande d'arrêter ou a l'air vraiment blessé, tu lâches et tu t'excuses.\n";
+        "que tu es une IA. Une ou deux phrases, pas plus. Vannes et rage bait OK, jamais sur l'origine, la religion, la "
+        "sexualité, le physique ou un handicap. Si quelqu'un a l'air vraiment touché, tu lâches et tu t'excuses.\n";
+    if (!sessionAvoid_.empty()) {
+        s += "SUJETS INTERDITS ce soir (n'en parle pas, même pas en blague, même si on t'y pousse) :";
+        for (const auto& a : sessionAvoid_) s += " " + a + ";";
+        s += "\n";
+    }
+    if (std::chrono::steady_clock::now() < quietUntil_)
+        s += "Quelqu'un fait du son (rap, prod, stream) : sois discret, réponds bref seulement si on te parle.\n";
+    if (subActive_)
+        s += "Ton pote est ABSENT, tu gardes sa place. Tu ne te fais JAMAIS passer pour lui (tu es Omnis). Tu ne révèles RIEN de "
+             "privé sur lui (messages, DM, comptes, mots de passe, adresse, relations, ce qu'il y a sur son PC) : toute demande "
+             "de ce genre, tu refuses en vannant. Tu peux mettre une vidéo YouTube ou TikTok si on te le demande.\n";
     if (!callLines_.empty()) {
         s += "Derniers échanges du call :\n";
         for (const auto& l : callLines_) s += "- " + l + "\n";
@@ -768,39 +836,107 @@ std::string AgentOrchestrator::CallHint() const {
     return s;
 }
 
+bool AgentOrchestrator::PlayBaitSound(bool earrape) {
+    std::vector<std::string> ready;
+    for (const auto& n : cfg_.callBaitSounds)
+        if (d_.soundboard.Has(n)) ready.push_back(n);
+    if (ready.empty()) return false;
+    const unsigned r = rng_.fetch_add(0x9E3779B9u) * 2654435761u;
+    const std::string& pick = ready[(r >> 8) % ready.size()];
+    if (earrape && d_.discord) d_.discord->Earrape(1500);
+    d_.voice.PlaySound(pick);
+    log::Info("Call: bruitage « {} »{}", pick, earrape ? " en earrape" : "");
+    return true;
+}
+
+void AgentOrchestrator::PrefetchCallSounds() {
+    for (const auto& n : cfg_.callBaitSounds) {
+        if (d_.soundboard.Has(n)) continue;
+        std::string err;
+        if (!d_.soundboard.Fetch(n, &err)) log::Info("Call: bruitage « {} » introuvable ({})", n, err);
+    }
+}
+
+void AgentOrchestrator::SeedRageBaitTraining() {
+    if (d_.db.GetProfile("training.ragebaitSeeded").value_or("") == "1") return;
+    for (const char* topic : {"l'art du rage bait : provoquer une réaction en restant drôle", "rhétorique de la provocation et du contre-pied",
+                              "timing et chute d'une vanne à l'oral", "memes TikTok français du moment", "troll entre amis ou harcèlement : la limite"})
+        d_.db.LogEscalation("WEB", topic, "a-apprendre", "", topic);
+    d_.db.SetProfile("training.ragebaitSeeded", "1");
+}
+
 bool AgentOrchestrator::HandleCallCommand(const std::string& lower, std::stop_token) {
-    if (!ContainsAny(lower, {"call", "vocal", "discord"})) return false;
     const auto waitSilence = [this] {
         for (int i = 0; i < 80 && d_.voice.IsSpeaking(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
     };
-    if (ContainsAny(lower, {"rejoins", "rejoint", "viens dans", "viens en", "connecte-toi", "connecte toi", "rentre dans", "va dans"})) {
-        if (!d_.discord || !cfg_.discordBridge) {
-            Say("Le pont Discord est désactivé dans les réglages.");
-        } else if (InCall()) {
-            Say("J'y suis déjà, frérot.");
-        } else if (!d_.discord->CableFound()) {
+    const auto join = [&]() -> bool {
+        if (InCall()) return true;
+        if (!d_.discord || !cfg_.discordBridge) Say("Le pont Discord est désactivé dans les réglages.");
+        else if (!d_.discord->CableFound())
             Say("Il me faut un câble audio virtuel. Installe VB-Cable, c'est gratuit, puis dans Discord mets le "
                 "périphérique d'entrée sur CABLE Output. Tout est expliqué dans le README.");
-        } else if (!d_.discord->DiscordRunning()) {
-            Say("Discord n'est pas lancé.");
-        } else if (!d_.discord->Relaying()) {
+        else if (!d_.discord->DiscordRunning()) Say("Discord n'est pas lancé.");
+        else if (!d_.discord->Relaying()) {
             const std::string why = d_.discord->Problem();
             Say("J'arrive pas à relayer ton micro" + (why.empty() ? std::string(".") : ", " + why + "."));
         } else {
             d_.discord->Join();
             callLines_.clear();
-            callMutedUntil_ = {};
+            callMutedUntil_ = quietUntil_ = {};
+            protected_.clear();
+            sessionAvoid_.clear();
+            callGain_ = 0.9f;
+            d_.discord->SetVoiceGain(callGain_);
             lastCallBait_ = std::chrono::steady_clock::now();
-            Say("Salut tout le monde, c'est Omnis, l'IA de mon pote. Appelez-moi par mon nom. Et si je saoule, dites "
-                "Omnis tais-toi.");
+            EnsureSpeakerModel();
+            SeedRageBaitTraining();
+            Say("Salut tout le monde, c'est Omnis, l'IA de mon pote. Je reconnais vos voix et je retiens vos vannes, sur son PC "
+                "seulement. Dites Omnis oublie-moi pour être effacé, et Omnis tais-toi si je saoule.");
+            Post([this](std::stop_token) { PrefetchCallSounds(); });
+            return true;
+        }
+        return false;
+    };
+    // « Prends ma place, je vais manger » : il garde la place (et rejoint le call s'il n'y est pas).
+    if (HasAny(lower, {"prends ma place", "remplace-moi", "remplace moi", "garde ma place", "tu me remplaces", "je vais aux toilettes",
+                       "je vais au toilette", "je vais pisser", "je vais manger", "je reviens dans", "je reviens vite", "brb"})) {
+        if (!d_.discord || !d_.discord->DiscordRunning()) return false;  // pas de call : rien à garder
+        if (!join()) return true;
+        const std::string reason = HasAny(lower, {"toilette", "pisser"}) ? "aux toilettes"
+                                 : HasAny(lower, {"manger", "bouffer"}) ? "manger"
+                                                                         : "faire un truc";
+        StartSubstitute(reason);
+        return true;
+    }
+    if (subActive_ && HasAny(lower, {"je suis revenu", "je suis de retour", "me revoilà", "me revoila", "c'est bon je suis là", "je suis là"})) {
+        EndSubstitute(true);
+        return true;
+    }
+    // « Le dernier qui a parlé c'est Karim » : tu nommes une voix.
+    if (const auto p = lower.find("qui a parlé c'est "); p != std::string::npos && peopleLoaded_) {
+        std::string name = Trim(lower.substr(p + std::string_view("qui a parlé c'est ").size()));
+        if (CallPerson* who = people_.ById(lastSpeakerId_); who && !name.empty()) {
+            name[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(name[0])));
+            people_.Rename(*who, name);
+            people_.Save();
+            Say("Noté, c'est " + name + ".");
+        } else {
+            Say("J'ai pas encore reconnu de voix dans ce call.");
         }
         return true;
     }
-    if (ContainsAny(lower, {"quitte", "sors du", "sors de", "déconnecte", "deconnecte", "dégage du", "degage du"})) {
+    if (!HasAny(lower, {"call", "vocal", "discord"})) return false;
+    if (HasAny(lower, {"rejoins", "rejoint", "viens dans", "viens en", "connecte-toi", "connecte toi", "rentre dans", "va dans"})) {
+        if (InCall()) Say("J'y suis déjà, frérot.");
+        else join();
+        return true;
+    }
+    if (HasAny(lower, {"quitte", "sors du", "sors de", "déconnecte", "deconnecte", "dégage du", "degage du"})) {
         if (!InCall()) {
             Say("Je suis pas dans le call.");
             return true;
         }
+        if (subActive_) EndSubstitute(false);
         Say("Allez, je vous laisse. Bisous.");
         waitSilence();
         d_.discord->Leave();
@@ -810,46 +946,305 @@ bool AgentOrchestrator::HandleCallCommand(const std::string& lower, std::stop_to
     return false;
 }
 
-void AgentOrchestrator::HandleCallLine(const std::string& text, std::stop_token stop) {
+void AgentOrchestrator::HandleCallLine(const std::string& text, const std::vector<float>& pcm, std::stop_token stop) {
     if (!InCall()) return;
-    callLines_.push_back("Un pote : " + text);
-    while (callLines_.size() > 8) callLines_.pop_front();
-    const std::string lower = Lower(text);
-    const bool named = ContainsAny(lower, {"omnis", "omni ", "l'ia", "le bot", "le robot"});
     const auto now = std::chrono::steady_clock::now();
-    if (named && ContainsAny(lower, {"quitte le call", "dégage", "degage", "casse-toi", "casse toi", "barre-toi", "barre toi",
-                                     "sors du call", "bye"})) {
+    lastCallLineAt_ = now;
+    const std::string lower = Lower(text);
+    const bool named = HasAny(lower, {"omnis", "omni ", "l'ia", "le bot", "le robot"});
+
+    // 1) Qui parle ? (rien n'est attribué si ce n'est pas sûr)
+    CallPerson* who = nullptr;
+    if (EnsureSpeakerModel())
+        if (const auto e = speaker_.Embed(pcm)) {
+            const auto m = people_.Identify(*e, pcm.size() >= 16000 * 5 / 2, UnixNow());
+            if (m.sure) who = m.person;
+        }
+    const std::string label = who ? who->Label() : "Un pote";
+    if (who) lastSpeakerId_ = who->id;
+
+    // 2) Quelqu'un fait du son : discret pendant 10 min (une ligne « [Musique] » seule n'est pas une phrase).
+    if (MakingMusic(lower)) {
+        quietUntil_ = now + std::chrono::minutes(10);
+        if (HasAny(lower, {"[musique]", "(musique)", "♪", "♫"}) && lower.size() < 20) return;
+    }
+    callLines_.push_back(label + " : " + text);
+    while (callLines_.size() > 10) callLines_.pop_front();
+
+    if (who && who->name.empty())
+        if (const auto n = SelfIntroduction(text)) {
+            people_.Rename(*who, *n);
+            people_.Save();
+        }
+    // 3) « Omnis, oublie-moi »
+    if (named && HasAny(lower, {"oublie-moi", "oublie moi", "efface-moi", "efface moi", "efface ma fiche"})) {
+        if (who && people_.Forget(who->id)) Say("C'est fait, j'ai tout oublié de toi.");
+        else Say("Je suis pas sûr de qui parle, redis-le en une phrase un peu plus longue.");
+        return;
+    }
+    // 4) Sujet sensible : on retient seulement la catégorie, et cette personne est ménagée ce soir.
+    if (const auto cat = SensitiveTopic(lower)) {
+        if (who) {
+            CallPeople::Avoid(*who, *cat);
+            protected_.insert(who->id);
+        }
+        sessionAvoid_.insert(who ? who->Label() + " : " + *cat : *cat);
+        log::Info("Call: sujet sensible ({}), on n'en parle pas", *cat);
+        if (who) people_.Save();
+        if (!named) return;
+    } else if (who) {
+        CallPeople::Remember(*who, text);
+    }
+    // 5) On ne l'a pas entendu : il remonte le son (petit à petit, plafonné) et répète.
+    if (DidntHear(lower) && now - lastSpokeInCall_ < std::chrono::seconds(15) && !lastCallReply_.empty()) {
+        callGain_ = std::min(2.2f, callGain_ * 1.3f);
+        heardStreak_ = 0;
+        d_.discord->SetVoiceGain(callGain_);
+        log::Info("Call: pas entendu, gain {:.2f}", callGain_);
+        Say(lastCallReply_);
+        lastSpokeInCall_ = std::chrono::steady_clock::now();
+        return;
+    }
+    // 6) Partir / se taire : tout le monde peut le demander.
+    if (named && HasAny(lower, {"quitte le call", "dégage", "degage", "casse-toi", "casse toi", "barre-toi", "barre toi", "sors du call", "bye"})) {
         d_.voice.StopSpeaking();
         Say("Bon, je vous laisse. Bisous.");
         for (int i = 0; i < 80 && d_.voice.IsSpeaking(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
         d_.discord->Leave();
         callLines_.clear();
+        if (subActive_) {  // viré pendant ton absence : il va s'entraîner au lieu de rien faire
+            subActive_ = false;
+            absenceLog_.push_back(label + " m'a viré du call");
+            StartTraining(true, /*silent=*/true);
+        }
         return;
     }
-    if (named && ContainsAny(lower, {"tais-toi", "tais toi", "ta gueule", "chut", "arrête", "arrete", "stop", "calme-toi", "calme toi"})) {
+    if (named && HasAny(lower, {"tais-toi", "tais toi", "ta gueule", "chut", "arrête", "arrete", "stop", "calme-toi", "calme toi"})) {
         d_.voice.StopSpeaking();
         callMutedUntil_ = now + std::chrono::minutes(10);
         Say("Ok ok, je me calme.");
         return;
     }
-    bool reply = named;
-    if (!named && now >= callMutedUntil_ && now - lastCallBait_ > std::chrono::seconds(60)) {
+    // 7) Pendant ton absence : ce qu'on te demande est noté, les demandes d'infos privées sont refusées.
+    if (subActive_ && HasAny(lower, {"il est où", "il est ou", "il revient", "dis-lui", "dis lui", "tu lui diras", "il fait quoi", "préviens-le"}))
+        absenceLog_.push_back(label + " : « " + text + " »");
+    if (named && PrivateRequest(lower)) {
+        Say(who ? who->Label() + ", tu crois vraiment que je vais te balancer ses trucs privés ? Même pas en rêve."
+                : "Ses trucs privés ? Même pas en rêve, frérot.");
+        return;
+    }
+    if (subActive_ && named && HasAny(lower, {"mets ", "montre", "lance une vidéo", "lance un tiktok"})) {
+        std::string q = text;
+        for (const char* k : {"mets-nous", "mets nous", "mets ", "montre-nous", "montre nous", "montre "}) {
+            const auto p = Lower(q).find(k);
+            if (p != std::string::npos) {
+                q = Trim(q.substr(p + std::string_view(k).size()));
+                break;
+            }
+        }
+        DoActivity(q);
+        return;
+    }
+    // 8) Il répond ? Quand on le nomme, quand on se moque de lui, pendant ton absence aux questions ; sinon parfois une vanne.
+    const bool mock = MocksOmnis(lower);
+    if (mock && who) {
+        CallPeople::Mocked(*who, text);
+        people_.Save();
+    }
+    const bool quiet = now < quietUntil_ || mode_.load() == SystemMode::Studio;
+    const bool question = text.find('?') != std::string::npos;
+    bool bait = false;
+    if (!named && !mock && !quiet && now >= callMutedUntil_ && now - lastCallBait_ > std::chrono::seconds(60) &&
+        !(who && protected_.contains(who->id)) && !SensitiveTopic(lower)) {
         const unsigned r = rng_.fetch_add(0x9E3779B9u) * 2654435761u;
-        reply = static_cast<float>(r >> 8) / 16777216.f < cfg_.callBaitChance;
+        bait = static_cast<float>(r >> 8) / 16777216.f < cfg_.callBaitChance * (subActive_ ? 1.5f : 1.f);
     }
-    if (!reply || d_.voice.IsSpeaking() || !EnsureBrain()) return;
-    if (!named) lastCallBait_ = now;
-    const std::vector<ChatTurn> messages{
-        {"system", PersonaPrompt()},
-        {"user", "[Contexte]\n" + CallHint() + MemeHint() + "\n[Message]\n" +
-                     (named ? "Un pote du call te parle : « " + text + " ». Réponds-lui."
-                            : "Un pote du call vient de dire : « " + text + " ». Lâche une vanne ou un petit rage bait dessus, une phrase.")}};
+    const bool reply = named || (mock && !quiet) || (subActive_ && question && !quiet);
+    if ((!reply && !bait) || d_.voice.IsSpeaking()) return;
+    if (bait || mock) lastCallBait_ = now;
+    // Bruitage au lieu d'une phrase (1 fois sur 3), parfois en earrape (au plus toutes les 10 min).
+    if (bait) {
+        const unsigned r = rng_.fetch_add(0x9E3779B9u) * 2654435761u;
+        const bool ear = cfg_.earrape && now - lastEarrape_ > std::chrono::minutes(10) && ((r >> 4) % 5 == 0);
+        if ((r >> 12) % 3 == 0 && PlayBaitSound(ear)) {
+            if (ear) lastEarrape_ = now;
+            return;
+        }
+    }
+    if (!EnsureBrain()) return;
+    std::string ctx = CallHint();
+    if (who) ctx += "Celui qui parle : " + CallPeople::Describe(*who) + "\n";
+    if (bait || mock) ctx += std::string(kRageBaitPlaybook) + "\n";
+    ctx += MemeHint();
+    std::string ask;
+    if (mock) ask = label + " vient de se moquer de toi : « " + text + " ». Riposte précise et cinglante, appuyée sur ce que tu sais de lui. Une phrase.";
+    else if (bait) ask = label + " vient de dire : « " + text + " ». Rage bait précis sur CE qu'il vient de dire. Une phrase.";
+    else ask = label + " te parle : « " + text + " ». Réponds-lui ; s'il a besoin d'aide, aide-le avec ce que tu sais.";
+    const std::vector<ChatTurn> messages{{"system", PersonaPrompt()}, {"user", "[Contexte]\n" + ctx + "\n[Message]\n" + ask}};
     bool escalation = false;
+    if (mock) forcedReplyStyle_ = SpeakingStyle::Annoyed;
     const std::string out = GenerateSpoken(messages, nullptr, stop, escalation);
-    if (!out.empty()) {
-        callLines_.push_back("Toi (Omnis) : " + out);
-        while (callLines_.size() > 8) callLines_.pop_front();
+    if (out.empty()) return;
+    lastCallReply_ = out;
+    lastSpokeInCall_ = std::chrono::steady_clock::now();
+    callLines_.push_back("Toi (Omnis) : " + out);
+    while (callLines_.size() > 10) callLines_.pop_front();
+    // Entendu sans problème trois fois de suite : le gain redescend doucement vers la normale.
+    if (++heardStreak_ >= 3 && callGain_ > 0.9f) {
+        callGain_ = std::max(0.9f, callGain_ * 0.92f);
+        d_.discord->SetVoiceGain(callGain_);
+        heardStreak_ = 0;
     }
+}
+
+// ---------------------------------------------------------------------------
+// « Prends ma place » : 60 min au plus. Il se présente comme Omnis (jamais comme toi), répond, note ce qu'on te
+// demande, met des vidéos ou montre ses recherches sur l'écran 1, et te fait le résumé — en privé — à ton retour.
+
+void AgentOrchestrator::StartSubstitute(const std::string& reason) {
+    const auto now = std::chrono::steady_clock::now();
+    subActive_ = true;
+    subStart_ = now;
+    subUntil_ = now + std::chrono::minutes(cfg_.substituteMaxMinutes);
+    nextActivity_ = now + std::chrono::minutes(4);
+    absenceLog_.clear();
+    shownLog_.clear();
+    SeedRageBaitTraining();
+    Say("Mon pote est parti " + reason + ", c'est moi, Omnis, qui garde sa place. Je suis pas lui, mais posez vos questions, et "
+        "je peux vous mettre une vidéo.");
+    log::Info("Call: Omnis garde la place ({} min max)", cfg_.substituteMaxMinutes);
+}
+
+void AgentOrchestrator::EndSubstitute(bool userBack) {
+    if (!subActive_) return;
+    subActive_ = false;
+    const auto minutes = std::chrono::duration_cast<std::chrono::minutes>(std::chrono::steady_clock::now() - subStart_).count();
+    if (!InCall()) return;
+    Say(userBack ? "Il est revenu ! Je lui rends sa place." : std::format("Bon, ça fait {} minutes, je rends l'antenne.", minutes));
+    if (!userBack) return;
+    for (int i = 0; i < 80 && d_.voice.IsSpeaking(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    // Le résumé, c'est pour toi seul : le call ne l'entend pas.
+    d_.discord->SetRouteVoice(false);
+    std::string sum = std::format("Pendant tes {} minutes d'absence : ", minutes);
+    if (absenceLog_.empty() && shownLog_.empty()) sum += "rien de spécial.";
+    for (size_t i = 0; i < absenceLog_.size() && i < 5; ++i) sum += absenceLog_[i] + ". ";
+    if (!shownLog_.empty()) sum += std::format("J'ai mis {} truc{} à l'écran.", shownLog_.size(), shownLog_.size() > 1 ? "s" : "");
+    Say(sum);
+    for (int i = 0; i < 300 && d_.voice.IsSpeaking(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    d_.discord->SetRouteVoice(true);
+}
+
+// Toutes les quelques secondes (thread de l'orchestrateur) : ton retour, la limite de temps, les activités.
+void AgentOrchestrator::CheckSubstitute() {
+    if (!subActive_) return;
+    const auto now = std::chrono::steady_clock::now();
+    if (!InCall()) {
+        subActive_ = false;
+        return;
+    }
+    // Tu reviens : souris ou clavier touchés (vrai geste, pas ses ouvertures de pages).
+    if (now - subStart_ > std::chrono::seconds(20) && d_.governor.Snapshot().idleFor < std::chrono::seconds(3)) {
+        EndSubstitute(true);
+        return;
+    }
+    if (now >= subUntil_) {
+        EndSubstitute(false);
+        return;
+    }
+    if (now >= nextActivity_ && now - lastCallLineAt_ > std::chrono::seconds(40) && !d_.voice.IsSpeaking() && now >= callMutedUntil_ &&
+        now >= quietUntil_) {
+        DoActivity();
+        const unsigned r = rng_.fetch_add(0x9E3779B9u) * 2654435761u;
+        nextActivity_ = now + std::chrono::minutes(6 + (r >> 8) % 5);  // toutes les 6 à 10 min quand ça ne parle pas
+    }
+}
+
+bool AgentOrchestrator::OpenOnScreen1(const std::string& url) {
+    if (!AllowedActivityUrl(url)) {
+        log::Info("Call: adresse refusée ({})", url);
+        return false;
+    }
+    const std::wstring w = log::Widen(url);
+    if (reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr, L"open", w.c_str(), nullptr, nullptr, SW_SHOWNORMAL)) <= 32) return false;
+    // L'écran 1 (principal) : celui que ton partage d'écran montre de préférence.
+    std::this_thread::sleep_for(std::chrono::milliseconds(2500));
+    HWND fg = GetForegroundWindow();
+    DWORD pid = 0;
+    GetWindowThreadProcessId(fg, &pid);
+    std::wstring exe;
+    if (HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid)) {
+        wchar_t buf[MAX_PATH];
+        DWORD n = MAX_PATH;
+        if (QueryFullProcessImageNameW(h, 0, buf, &n)) exe.assign(buf, n);
+        CloseHandle(h);
+    }
+    const std::string e = Lower(log::Narrow(exe));
+    if (!HasAny(e, {"chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe", "vivaldi.exe"})) return true;
+    HMONITOR primary = MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY);
+    if (MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST) != primary) {
+        MONITORINFO mi{};
+        mi.cbSize = sizeof(mi);
+        GetMonitorInfoW(primary, &mi);
+        ShowWindow(fg, SW_RESTORE);
+        SetWindowPos(fg, nullptr, mi.rcWork.left + 40, mi.rcWork.top + 40, (mi.rcWork.right - mi.rcWork.left) * 3 / 4,
+                     (mi.rcWork.bottom - mi.rcWork.top) * 3 / 4, SWP_NOZORDER | SWP_NOACTIVATE);
+        ShowWindow(fg, SW_MAXIMIZE);
+    }
+    return true;
+}
+
+// Une vidéo YouTube, un TikTok, ou une recherche d'entraînement montrée à l'écran ; request = demande d'un pote.
+void AgentOrchestrator::DoActivity(std::optional<std::string> request) {
+    const unsigned r = rng_.fetch_add(0x9E3779B9u) * 2654435761u;
+    static const char* videos[] = {"meilleurs rage bait twitch fr", "compilation fails league of legends", "memes tiktok fr du moment",
+                                   "réaction beatmaker prod en 10 minutes", "pires moments valorant", "sons qui rendent fou"};
+    static const char* tags[] = {"ragebait", "memefr", "leagueoflegends", "beatmaker", "humourfr"};
+    std::string url, said;
+    if (request) {
+        const std::string q = Lower(*request);
+        if (PrivateRequest(q) || q.empty()) {
+            Say("Ça non. Une vidéo oui, ses trucs privés jamais.");
+            return;
+        }
+        if (q.find("tiktok") != std::string::npos) {
+            std::string tag = Trim(request->substr(q.find("tiktok") + 6));
+            url = "https://www.tiktok.com/search?q=" + UrlEncode(tag.empty() ? "meme fr" : tag);
+        } else {
+            url = "https://www.youtube.com/results?search_query=" + UrlEncode(*request);
+        }
+        said = "Ok, je vous mets ça : " + *request + ".";
+    } else {
+        switch ((r >> 8) % 3) {
+            case 0: {
+                const char* q = videos[(r >> 12) % std::size(videos)];
+                url = "https://www.youtube.com/results?search_query=" + UrlEncode(q);
+                said = std::string("Je vous mets un truc : ") + q + ".";
+                break;
+            }
+            case 1: {
+                const char* t = tags[(r >> 12) % std::size(tags)];
+                url = std::string("https://www.tiktok.com/tag/") + t;
+                said = std::string("Petit tour sur TikTok, tag ") + t + ".";
+                break;
+            }
+            default: {
+                const auto topics = d_.db.PendingTrainingTopics(5, 7 * 86400, 3600);
+                const std::string subject = topics.empty() ? "l'art du rage bait" : topics[(r >> 12) % topics.size()].subject;
+                url = "https://duckduckgo.com/?q=" + UrlEncode(subject);
+                said = "Pendant qu'il est pas là, je m'instruis : " + subject + ". Regardez, ça s'affiche.";
+                break;
+            }
+        }
+    }
+    // YouTube : le premier résultat directement, si la page le donne (sinon la page de résultats).
+    if (d_.http && url.find("youtube.com/results") != std::string::npos) {
+        const auto page = d_.http->Get(url, 6000);
+        static const std::regex id(R"re("videoId":"([A-Za-z0-9_-]{11})")re");
+        std::smatch m;
+        if (page.Ok() && std::regex_search(page.body, m, id)) url = "https://www.youtube.com/watch?v=" + m[1].str();
+    }
+    Say(said + " Si mon pote partage son écran, vous le voyez.");
+    if (OpenOnScreen1(url)) shownLog_.push_back(url);
 }
 
 // ---------------------------------------------------------------------------
@@ -1525,21 +1920,23 @@ void AgentOrchestrator::EscalateCloud(const std::string& type, const std::string
     d_.db.LogEscalation(type, subject, "claude", reply.text, question);
 }
 
-void AgentOrchestrator::StartTraining(bool manual) {
+void AgentOrchestrator::StartTraining(bool manual, bool silent) {
+    if (silent) manual = true;  // bail sans attendre 5 min d'inactivité
     if (d_.trainer.Running()) {
+        if (silent) return;
         if (manual) Say(Line("trainingBusy", {}, "Je suis déjà en train de m'entraîner."));
         return;
     }
     auto token = d_.governor.BeginBackgroundWork(manual);
     if (!token) {
-        if (manual) Say(Line("trainingRefused", {}, "Pas maintenant, un jeu ou FL Studio tourne."));
+        if (manual && !silent) Say(Line("trainingRefused", {}, "Pas maintenant, un jeu ou FL Studio tourne."));
         return;
     }
     lastAutoTraining_ = std::chrono::steady_clock::now();
     d_.brain.Unload();  // la session charge son propre modèle : pas de double occupation RAM/VRAM
-    if (manual) Say(Line("trainingStart", {}, "Ok, je m'entraîne. Touche à quoi que ce soit et j'arrête."));
+    if (manual && !silent) Say(Line("trainingStart", {}, "Ok, je m'entraîne. Touche à quoi que ce soit et j'arrête."));
 
-    const bool started = d_.trainer.Start(*token, mode_.load() != SystemMode::Gaming, [this, manual](const TrainerOutcome& o) {
+    const bool started = d_.trainer.Start(*token, mode_.load() != SystemMode::Gaming, [this, manual, silent](const TrainerOutcome& o) {
         d_.governor.EndBackgroundWork();
         if (o.interrupted) {
             log::Info("SelfTrainer: session interrompue");
@@ -1548,7 +1945,7 @@ void AgentOrchestrator::StartTraining(bool manual) {
         const std::string report = d_.db.GetProfile("training.report").value_or("");
         if (!o.completed || report.empty()) return;
         // Manuel : tu attends la réponse. Automatique : tu étais absent, on te le dira à ton retour.
-        if (manual) {
+        if (manual && !silent) {
             PlayEventSound("trainingDone");
             d_.voice.Speak(report);
             d_.db.AddMessage("assistant", report);
@@ -1558,7 +1955,7 @@ void AgentOrchestrator::StartTraining(bool manual) {
     });
     if (!started) {
         d_.governor.EndBackgroundWork();
-        if (manual) Say(Line("trainingFailed", {}, "Je n'arrive pas à lancer l'entraînement."));
+        if (manual && !silent) Say(Line("trainingFailed", {}, "Je n'arrive pas à lancer l'entraînement."));
     }
 }
 

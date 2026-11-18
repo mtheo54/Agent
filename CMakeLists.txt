@@ -149,6 +149,8 @@ add_executable(CompanionAI WIN32
     src/audio/Expressivity.cpp
     src/audio/VoiceColor.cpp
     src/audio/DiscordBridge.cpp
+    src/audio/SpeakerId.cpp
+    src/core/CallPeople.cpp
     src/modules/DesktopPilot.cpp
     src/audio/TextNormalizerFr.cpp
     src/render/OverlayWindow.cpp
