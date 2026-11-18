@@ -156,6 +156,9 @@ bool OverlayWindow::CreateSwapChainAndComposition() {
 }
 
 ID2D1DeviceContext* OverlayWindow::BeginFrame() {
+    if (!swapChain_ || !d2dContext_) {  // recréation précédente ratée : on réessaie
+        if (!RecoverDevice()) return nullptr;
+    }
     // Flip model : GetBuffer(0) désigne toujours le back buffer courant.
     ComPtr<IDXGISurface> surface;
     if (FAILED(swapChain_->GetBuffer(0, IID_PPV_ARGS(&surface)))) return nullptr;
@@ -170,12 +173,29 @@ ID2D1DeviceContext* OverlayWindow::BeginFrame() {
     return d2dContext_.Get();
 }
 
-void OverlayWindow::EndFrame() {
-    d2dContext_->EndDraw();
+bool OverlayWindow::EndFrame() {
+    const HRESULT draw = d2dContext_->EndDraw();
     d2dContext_->SetTarget(nullptr);
     // SyncInterval 0 : DWM compose de toute façon (pas de tearing) ; la cadence (24 ou 12 i/s)
     // est fixée par l'animation, pas par le taux de rafraîchissement du moniteur.
-    swapChain_->Present(0, 0);
+    const HRESULT present = swapChain_->Present(0, 0);
+    // Carte perdue : sans ça, l'avatar restait invisible pour toujours alors qu'Omnis tournait encore.
+    if (draw == D2DERR_RECREATE_TARGET || present == DXGI_ERROR_DEVICE_REMOVED || present == DXGI_ERROR_DEVICE_RESET) {
+        log::Info("Overlay: carte graphique perdue (0x{:08X} / 0x{:08X}), recréation", static_cast<unsigned>(draw),
+                  static_cast<unsigned>(present));
+        if (!RecoverDevice()) log::Info("Overlay: recréation impossible pour l'instant, nouvel essai à l'image suivante");
+        return false;
+    }
+    return true;
+}
+
+bool OverlayWindow::RecoverDevice() {
+    if (context_) context_->ClearState();
+    d2dContext_.Reset(); d2dDevice_.Reset(); d2dFactory_.Reset();
+    dcompVisual_.Reset(); dcompTarget_.Reset(); dcompDevice_.Reset();
+    swapChain_.Reset(); context_.Reset(); device_.Reset();
+    // Taille courante : CreateSwapChainAndComposition utilise pixelWidth_/pixelHeight_ (déjà à la bonne taille).
+    return CreateDevice() && CreateSwapChainAndComposition();
 }
 
 LRESULT CALLBACK OverlayWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {

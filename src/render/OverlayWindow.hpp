@@ -47,8 +47,9 @@ public:
 
     // Cible Direct2D = back buffer, effacée en transparent. Retourne le contexte de dessin.
     ID2D1DeviceContext* BeginFrame();
-    // Termine le dessin et présente (sans attente VSync bloquante).
-    void EndFrame();
+    // Termine le dessin et présente (sans attente VSync bloquante). Faux si la carte a été perdue (pilote
+    // réinitialisé par Windows, mise à jour du pilote…) : tout est recréé, l'appelant libère ses ressources Direct2D.
+    bool EndFrame();
 
     [[nodiscard]] HWND Hwnd() const noexcept { return hwnd_; }
     [[nodiscard]] ID3D11Device* Device() const noexcept { return device_.Get(); }
@@ -58,6 +59,7 @@ public:
 private:
     bool CreateDevice();
     bool CreateSwapChainAndComposition();
+    bool RecoverDevice();
 
     static LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 

@@ -36,6 +36,8 @@ enum class AvatarState : std::uint8_t {
 
 class CartoonAvatar {
 public:
+    // Carte graphique perdue puis recréée : pinceaux et styles refaits au prochain dessin.
+    void ReleaseDeviceResources() { brushCtx_ = nullptr; }
     bool Load(const std::filesystem::path& rigJson);
 
     void SetState(AvatarState s) noexcept { state_ = s; }

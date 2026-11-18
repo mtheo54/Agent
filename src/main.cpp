@@ -777,7 +777,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
         if (newFrame && overlay.IsVisible()) {
             if (ID2D1DeviceContext* ctx = overlay.BeginFrame()) {
                 avatar.Render(ctx, overlay.D2DFactory(), overlay.Scale());
-                overlay.EndFrame();
+                if (!overlay.EndFrame()) avatar.ReleaseDeviceResources();
             }
         }
     }
