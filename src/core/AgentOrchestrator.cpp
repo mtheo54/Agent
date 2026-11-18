@@ -401,6 +401,8 @@ std::string AgentOrchestrator::LiveContext(const std::string& question) const {
     if (auto lol = d_.coach.Latest()) ctx += lol->ToPromptSummary() + "\n";
     if (d_.loopback.Running()) {
         const auto mix = d_.analyzer.Snapshot();
+        ctx += mix.seconds >= 1.f && !mix.silent ? "[Studio] Tu entends en direct le son qui sort de FL Studio.\n"
+                                                 : "[Studio] FL Studio est ouvert, mais il ne joue rien en ce moment.\n";
         // Demande ciblée : le constat ciblé suffit (ajouté par HandleStudioQuestion).
         if (mix.seconds >= 1.f && !studioFocus_) ctx += mix.ToSummary() + "\n" + mix.Diagnosis() + "\n";
     }
@@ -2027,9 +2029,14 @@ void AgentOrchestrator::Handle(const std::string& text, std::stop_token stop) {
     if (HandleLevel0(text, stop)) return;
 
     const std::string lower = Lower(text);
+    // Vu sur le terrain : « écoute ce que j'ai fait », « t'as aimé le piano ? » ne lançaient pas l'écoute.
     const bool mixSubject = ContainsAny(lower, {"mix", "ma prod", "la prod", "mon son", "ce son", "le morceau",
-                                                "mon morceau", "le master", "mon master", "mon beat", "ce beat"});
-    const bool mixAsk = ContainsAny(lower, {"écoute", "ecoute", "avis", "pense", "comment", "sonne", "analyse", "trouve"});
+                                                "mon morceau", "le master", "mon master", "mon beat", "ce beat",
+                                                "ce que j'ai fait", "ce que je fais", "ce que je suis en train de faire", "ma musique",
+                                                "le piano", "mon piano", "la mélodie", "ma mélodie", "mon instru", "l'instru",
+                                                "fl studio", "mon daw", "ma mao", "ce que je joue", "ce que j'ai joué"});
+    const bool mixAsk = ContainsAny(lower, {"écoute", "ecoute", "avis", "pense", "comment", "sonne", "analyse", "trouve",
+                                            "entends", "aimé", "aime", "kiff", "t'en dis", "tu dis"});
     // Jargon de beatmaker (lexique d'OMNIS) : « la basse elle bave », « mon kick tape pas »…
     if ((mixSubject && mixAsk) || MixLexicon::IsMixRequest(lexicon_.Match(text), text)) {
         HandleStudioQuestion(text, history, stop);

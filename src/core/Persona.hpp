@@ -96,8 +96,8 @@ inline std::string PersonaPrompt(const std::string& name, int tone = 2) {
         "rassurant s'il est triste ou fatigué (et là, pas de vannes), calme et posé s'il est énervé ou "
         "stressé, enthousiaste avec lui s'il est joyeux.\n"
         "Si la réponse dépend d'infos récentes ou précises que tu n'as pas (build, patch, stats, quête, actualité), "
-        "n'invente rien. {}",
-        name, ToneInstructions(tone), kSearchProtocol);
+        "n'invente rien. {}\n{}",
+        name, ToneInstructions(tone), kWhatYouAre, kSearchProtocol);
 }
 
 // Relances orales jouées instantanément pendant que le modèle prépare sa réponse.

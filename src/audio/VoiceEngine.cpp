@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <cmath>
 #include <condition_variable>
 #include <cstdint>
@@ -653,6 +654,25 @@ struct VoiceEngine::Impl {
         CloseHandle(event);
     }
 
+    // Ce que Whisper « entend » dans de la musique ou du bruit : « [Musique] », « ♪ », « Sous-titrage… », « Fé. »…
+    // Vu sur le terrain : le son de FL Studio dans le micro donnait « [Musique] », et Omnis y répondait.
+    static bool NotSpeech(const std::string& raw) {
+        std::string t;
+        int depth = 0;
+        for (char c : raw) {  // sans ce qui est entre [] ou ()
+            if (c == '[' || c == '(') ++depth;
+            else if (c == ']' || c == ')') depth = std::max(0, depth - 1);
+            else if (!depth) t += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        int letters = 0;
+        for (unsigned char c : t) letters += std::isalpha(c) || c == 0xC3;  // lettres, accents français (pas ♪)
+        if (letters < 4) return true;  // vide, « Fé. », ponctuation, notes ♪
+        for (const char* h : {"sous-titr", "sous titr", "merci d'avoir regardé", "merci de votre attention", "abonnez-vous",
+                              "amara.org"})
+            if (t.find(h) != std::string::npos && letters < 40) return true;
+        return false;
+    }
+
     // Texte d'un segment 16 kHz mono (vide si rien de reconnu).
     std::string Whisper(std::vector<float> pcm) {
 #if COMPANION_WITH_WHISPER
@@ -670,6 +690,9 @@ struct VoiceEngine::Impl {
         wp.print_timestamps = false;
         wp.print_special = false;
         wp.suppress_blank = true;
+        // Vocabulaire attendu : Whisper l'orthographie juste (« FL Studio » et pas « fête studio »).
+        wp.initial_prompt = "Omnis, FL Studio, DAW, MAO, VST, 808, kick, snare, sidechain, mix, master, prod, beat, instru, "
+                            "League of Legends, LoL, Valorant, Yasuo, Jinx, Discord, AutoCAD Electrical.";
 
         if (whisper_full(whisper, wp, pcm.data(), static_cast<int>(pcm.size())) != 0) {
             log::Info("whisper: échec de transcription");
@@ -701,7 +724,10 @@ struct VoiceEngine::Impl {
         log::Info("Écoute : {:.1f} s de voix, transcription…", static_cast<double>(pcm.size()) / kSttSampleRate);
         std::string text = Whisper(std::move(pcm));
         log::Info("Écoute : « {} »", text);
-        if (text.empty()) return;
+        if (NotSpeech(text)) {
+            if (!text.empty()) log::Info("Écoute : ignoré (pas une phrase : musique, bruit ou hallucination de Whisper)");
+            return;
+        }
 
         TranscriptCallback cb;
         {

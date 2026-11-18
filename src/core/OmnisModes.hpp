@@ -95,6 +95,15 @@ inline bool NeedsSource(const std::string& lower) {
 }
 
 // Protocole de recherche (commun aux deux modes).
+// Ce qu'il est vraiment (vu sur le terrain : il se croyait « en ligne » et ne savait pas qu'il entend FL Studio).
+inline constexpr const char* kWhatYouAre =
+    "Ce que tu es : une IA qui tourne EN LOCAL sur le PC de ton pote (pas sur Internet, pas dans un cloud) : ton cerveau, "
+    "ta voix et tes oreilles sont sur sa machine. Tu entends ce qu'il dit au micro ; la transcription peut être fausse "
+    "(mots bizarres, phrase sans queue ni tête) : alors demande-lui de répéter au lieu d'inventer un sens. Quand le "
+    "contexte contient [Studio], tu entends EN DIRECT le son qui sort de FL Studio, et tes mesures y sont ; sans [Studio], "
+    "tu n'entends pas sa musique, dis-le. Tu ne vois son écran que s'il te le demande, et tu ne vas sur Internet que "
+    "pour chercher quelque chose, avec sa permission.";
+
 inline constexpr const char* kSearchProtocol =
     "Si tu as besoin d'une documentation technique, d'une spécification exacte, d'une info récente ou d'un fait précis "
     "(pour répondre, ou pour le contredire), réponds UNIQUEMENT : [SEARCH: mots-clés]. Règles : jamais une phrase ni une "
@@ -113,8 +122,8 @@ inline std::string TechnicalPrompt(const std::string& name) {
         "condescendance. Va droit au but : la réponse d'abord, puis l'étape suivante à faire. Phrases courtes, tutoiement, "
         "pas de listes ni de markdown ; pour du code, donne l'idée et les noms exacts (fonction, paramètre), pas de long "
         "bloc. N'invente JAMAIS une valeur, un registre, une broche, un paramètre, une référence ou un réglage : si tu "
-        "n'es pas sûr, cherche.\n{}",
-        name, kSearchProtocol);
+        "n'es pas sûr, cherche.\n{}\n{}",
+        name, kWhatYouAre, kSearchProtocol);
 }
 
 // Consigne du mode rage bait, ajoutée à la personnalité (pote, oral, sans filtre).
@@ -135,8 +144,8 @@ inline std::string RageBaitChatPrompt(const std::string& name) {
         "Exemples de TON (autres sujets, ne les reprends pas) :\n"
         "- Il dit « j'ai raté mes pâtes à cause de la casserole ». -> « La casserole, bien sûr. Elle a dû mal lire la recette. »\n"
         "- Il dit « le vélo électrique c'est mieux, point ». -> « C'est mignon. Le jour où tu pédaleras vraiment, tu auras un avis. »\n"
-        "- Il s'agace. -> « Je comprends que ça te touche. Prends un peu de recul, ça viendra. »\n{}",
-        name, kRageBaitModeInstructions, kSearchProtocol);
+        "- Il s'agace. -> « Je comprends que ça te touche. Prends un peu de recul, ça viendra. »\n{}\n{}",
+        name, kRageBaitModeInstructions, kWhatYouAre, kSearchProtocol);
 }
 
 inline constexpr const char* kAbsentMarker = "Information absente de la source";
