@@ -21,6 +21,12 @@ namespace companion {
 
 class LocalBrain;
 
+// Sujets d'entraînement « rage bait » (semés au premier call, travaillés en regardant des vidéos).
+inline constexpr const char* kRageBaitTopics[] = {
+    "l'art du rage bait : provoquer une réaction en restant drôle", "rhétorique de la provocation et du contre-pied",
+    "timing et chute d'une vanne à l'oral", "memes TikTok français du moment", "troll entre amis ou harcèlement : la limite"};
+class BaitBank;
+
 struct BaitRequest {
     std::string persona;      // PersonaPrompt()
     std::string context;      // CallHintText + fiche de la personne
@@ -30,6 +36,8 @@ struct BaitRequest {
     std::vector<std::string> recent;  // dernières vannes d'Omnis (tics à éviter)
     std::vector<std::string> recentTechniques;  // techniques des 2 dernières vannes : pas de « fausse stat » en boucle
     bool hasHistory = false;  // on connaît des fails / phrases de lui (technique « rappel »)
+    BaitBank* bank = nullptr;          // formes qui marchent (écrites à la main + apprises en vidéo)
+    std::string preferTechnique;       // « réplique au robot » quand on se moque de lui, « pseudo » pour un renommage…
     int candidates = 3;
 };
 

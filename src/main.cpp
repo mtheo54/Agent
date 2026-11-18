@@ -185,7 +185,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
         if (cfg.llmModel.is_relative()) cfg.llmModel = root / cfg.llmModel;
         if (cfg.loraAdapter.is_relative()) cfg.loraAdapter = root / cfg.loraAdapter;
         const bool gpu = std::wstring_view(cmdLine).find(L"--gpu") != std::wstring_view::npos;
-        const int code = RunTrainerSession(cfg, DataDir(), gpu);
+        const int code = RunTrainerSession(cfg, DataDir(), gpu, root / L"assets");
         CoUninitialize();
         return code;
     }

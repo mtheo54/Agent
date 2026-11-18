@@ -108,7 +108,11 @@ struct CompanionConfig {
     std::vector<std::string> callBaitSounds{"fahhh", "pizza nizar", "emotional damage", "bruh", "vine boom"};
     std::string discordMyName;     // ton pseudo Discord : ton propre cercle vert n'est pas pris pour un pote
     bool earrape = true;           // de temps en temps, un bruitage saturé (1,5 s max, volume plafonné)
-    int substituteMaxMinutes = 60; // « prends ma place » : 60 min au plus (10 à 60)
+    int substituteMaxMinutes = 60;
+    // Entraînement vidéo (YouTube, TikTok) : il étudie des vidéos de vannes / rage bait pendant ses séances.
+    bool videoStudy = true;
+    int videoStudyPerSession = 3;
+    std::vector<std::string> videoStudyQueries;  // vide = recherches par défaut // « prends ma place » : 60 min au plus (10 à 60)
     // En jeu : petit modèle sur CPU, chargé seulement si tu lui parles (VRAM laissée au jeu). Absent :
     // le modèle principal sur CPU (plus lent).
     std::filesystem::path llmGamingModel = L"auto";

@@ -409,6 +409,39 @@ efface la fiche de celui qui le dit. Aucun son n'est enregistré, juste des nomb
 -8 dBFS (~-10 dBFS efficaces, une dizaine de dB au-dessus d'une voix normale) : bien chiant, mais sans danger pour
 les oreilles au casque. `earrape: false` pour couper.
 
+### Comment il écrit une vanne
+
+D'après ce qui fait rire (surprise, vérité hyper précise sur la cible, rappel d'un fail, règle de trois, plusieurs
+chutes pour une même situation), chaque vanne est le résultat d'un petit concours :
+
+1. **Deux vannes à partir de formes qui marchent** (`assets/persona/baits.json`, 59 formes écrites à la main, et
+   celles apprises en vidéo). Il ne change que les [crochets] par SES mots ; s'il ne respecte pas la forme, elle est
+   rejetée.
+2. **Une vanne inventée** sur une technique tirée au hasard (jamais deux fois la même de suite).
+3. **Un tri** : il faut reprendre ses mots à lui, être court, sans tics (« mec », « l'aura »…), et sans franchir la
+   ligne (famille, physique, origine, religion, sexualité, genre, handicap, santé, argent, sujets sensibles du soir).
+   Sinon c'est rejeté. À égalité, le modèle choisit la plus surprenante.
+
+### Il s'entraîne en regardant des vidéos (YouTube, TikTok)
+
+Pendant ses séances d'auto-entraînement (PC inactif, tué dès que tu touches à quoi que ce soit), il regarde
+3 vidéos (`videoStudyPerSession`) :
+
+- **Quoi** : d'abord les liens que tu lui donnes, puis des recherches YouTube à tour de rôle (clashs, roasts,
+  punchlines, rage bait, trashtalk gaming…).
+  - Copie un lien YouTube ou TikTok et dis « **étudie le lien copié** », ou ajoute-le dans `to_watch.txt`.
+  - TikTok bloque la recherche automatique (l'extracteur de hashtags de yt-dlp est marqué cassé) : pour TikTok, ce
+    sont tes liens.
+- **Comprendre** :
+  - le titre ;
+  - les sous-titres, ou sinon l'audio, décodé par Windows et transcrit par Whisper sur ton PC ;
+  - les commentaires les plus likés (la réaction, c'est la moitié du rage bait).
+- **Retenir** : une leçon (la technique, pourquoi ça marche) et 1 à 4 **formes de vannes** réécrites par lui, avec des
+  trous, filtrées comme ses vannes, puis ajoutées à sa banque (300 au plus). Rien n'est gardé de la vidéo elle-même.
+- **Outils** : [yt-dlp](https://github.com/yt-dlp/yt-dlp) et [deno](https://github.com/denoland/deno) (exigé par
+  yt-dlp pour YouTube), téléchargés une fois depuis leurs pages officielles. Ils ne sont lancés que si leur empreinte
+  **SHA-256 correspond à celle publiée**. yt-dlp est repris tous les 30 jours (YouTube change souvent).
+
 ### « Prends ma place » (toilettes, repas…)
 
 « Omnis, prends ma place, je vais manger » : il rejoint le call si besoin et garde ta place **60 minutes au plus**

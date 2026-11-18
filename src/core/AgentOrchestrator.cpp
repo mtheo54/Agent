@@ -328,7 +328,7 @@ void AgentOrchestrator::WorkerMain(std::stop_token st) {
         if (cfg_.autoTraining && !d_.trainer.Running() &&
             std::chrono::steady_clock::now() - lastAutoTraining_ > std::chrono::minutes(cfg_.autoTrainingEveryMinutes) &&
             d_.governor.CanStartAutoTraining() &&
-            !d_.db.PendingTrainingTopics(1, cfg_.knowledgeMaxAgeDays * 86400LL, 86400).empty())
+            (cfg_.videoStudy || !d_.db.PendingTrainingTopics(1, cfg_.knowledgeMaxAgeDays * 86400LL, 86400).empty()))
             StartTraining(/*manual=*/false);
 
         // Budget RAM veille (< 80 Mo) : on décharge le modèle après une période sans conversation.
@@ -847,9 +847,7 @@ void AgentOrchestrator::PrefetchCallSounds() {
 
 void AgentOrchestrator::SeedRageBaitTraining() {
     if (d_.db.GetProfile("training.ragebaitSeeded").value_or("") == "1") return;
-    for (const char* topic : {"l'art du rage bait : provoquer une réaction en restant drôle", "rhétorique de la provocation et du contre-pied",
-                              "timing et chute d'une vanne à l'oral", "memes TikTok français du moment", "troll entre amis ou harcèlement : la limite"})
-        d_.db.LogEscalation("WEB", topic, "a-apprendre", "", topic);
+    for (const char* topic : kRageBaitTopics) d_.db.LogEscalation("WEB", topic, "a-apprendre", "", topic);
     d_.db.SetProfile("training.ragebaitSeeded", "1");
 }
 
@@ -1138,6 +1136,10 @@ void AgentOrchestrator::HandleCallLine(const std::string& text, const std::vecto
         br.recent.assign(recentBaits_.begin(), recentBaits_.end());
         br.recentTechniques.assign(recentTechniques_.begin(), recentTechniques_.end());
         br.hasHistory = who && (!who->said.empty() || !who->mocks.empty());
+        br.bank = &bank_;
+        br.preferTechnique = kind == CallAsk::Mock || kind == CallAsk::MockUnknown ? "réplique au robot"
+                           : kind == CallAsk::Rename || kind == CallAsk::Impostor  ? "pseudo"
+                                                                                    : std::string{};
         std::uint32_t r = rng_.fetch_add(0x9E3779B9u) * 2654435761u;
         const BaitResult res = WriteBait(d_.brain, br, r, stop);
         for (const auto& t : res.tried) log::Info("Call: {}", t);
@@ -1184,6 +1186,9 @@ void AgentOrchestrator::HandleCallLine(const std::string& text, const std::vecto
 // demande, met des vidéos ou montre ses recherches sur l'écran 1, et te fait le résumé — en privé — à ton retour.
 
 void AgentOrchestrator::JoinedCall() {
+    // Formes de vannes : écrites à la main + celles apprises en regardant des vidéos depuis le dernier call.
+    bank_.Load(d_.assetsDir / L"persona" / L"baits.json", d_.dataDir / L"learned_baits.json");
+    log::Info("Call: {} formes de vannes ({} apprises en vidéo)", bank_.Size(), bank_.LearnedCount());
     seeing_.Start([this] { return d_.discord && d_.discord->OthersTalking() && mode_.load() != SystemMode::Gaming; });
 }
 
@@ -1864,6 +1869,23 @@ bool AgentOrchestrator::HandleLevel0(const std::string& text, std::stop_token st
         return true;
     }
     if (HandleCallCommand(lower, stop)) return true;  // « rejoins le call », « quitte le call »
+    // « Étudie le lien que j'ai copié » / « regarde ce TikTok » : le lien du presse-papiers va dans sa file de vidéos.
+    if (ContainsAny(lower, {"étudie", "etudie", "regarde ce tiktok", "regarde cette vidéo", "regarde cette video", "apprends de"}) &&
+        ContainsAny(lower, {"lien", "tiktok", "vidéo", "video", "copié", "copie"})) {
+        std::string url;
+        if (OpenClipboard(nullptr)) {
+            if (HANDLE h = GetClipboardData(CF_UNICODETEXT))
+                if (const auto* w = static_cast<const wchar_t*>(GlobalLock(h))) {
+                    url = log::Narrow(w);
+                    GlobalUnlock(h);
+                }
+            CloseClipboard();
+        }
+        if (url.empty()) Say("Copie d'abord le lien de la vidéo, YouTube ou TikTok, et redis-moi.");
+        else if (VideoStudy::QueueLink(d_.dataDir, Trim(url))) Say("Noté, je la regarde à mon prochain entraînement et j'en tire des vannes.");
+        else Say("Ce lien-là, non : seulement YouTube ou TikTok.");
+        return true;
+    }
     if (HandlePerfCommand(lower, stop)) return true;  // « teste les perfs », « passe sur le processeur »…
     if (HandlePilot(text, lower, stop)) return true;  // « prends la main », AutoCAD, FL Studio
     if (HandleSystemCommand(text, lower, stop)) return true;  // volume d'abord : « monte le son » n'est pas un bruitage

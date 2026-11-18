@@ -20,6 +20,7 @@
 #include "audio/SpeakerId.hpp"
 #include "core/CallPeople.hpp"
 #include "core/CallPrompt.hpp"
+#include "core/BaitBank.hpp"
 #include "core/RageBait.hpp"
 #include "audio/VoiceEngine.hpp"
 #include "audio/WasapiLoopback.hpp"
@@ -36,6 +37,7 @@
 #include "core/ResourceGovernor.hpp"
 #include "modules/DesktopPilot.hpp"
 #include "modules/DiscordSpeaking.hpp"
+#include "modules/VideoStudy.hpp"
 #include "modules/GameCoach.hpp"
 #include "modules/SelfTrainer.hpp"
 #include "modules/SystemControl.hpp"
@@ -261,7 +263,8 @@ private:
     int heardStreak_ = 0;
     std::chrono::steady_clock::time_point lastSpokeInCall_{}, lastEarrape_{}, quietUntil_{}, lastCallLineAt_{};
     std::string lastCallReply_;
-    std::deque<std::string> recentBaits_, recentTechniques_;  // ses 4 dernières vannes : pas de redites, pas de tics
+    std::deque<std::string> recentBaits_, recentTechniques_;
+    BaitBank bank_;  // ses 4 dernières vannes : pas de redites, pas de tics
     bool PlayBaitSound(bool earrape);
     void PrefetchCallSounds();
     // « Prends ma place » : il garde ta place 60 min au plus, te résume tout à ton retour

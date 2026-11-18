@@ -67,6 +67,7 @@ private:
 
 // Point d'entrée du processus enfant (CompanionAI.exe --trainer [--gpu]). Retourne le code de sortie.
 // Portable (aucun appel Win32 direct) : testable hors Windows.
-int RunTrainerSession(const CompanionConfig& cfg, const std::filesystem::path& dataDir, bool useGpu);
+int RunTrainerSession(const CompanionConfig& cfg, const std::filesystem::path& dataDir, bool useGpu,
+                      const std::filesystem::path& assetsDir = {});
 
 }  // namespace companion

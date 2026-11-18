@@ -5,6 +5,8 @@
 #include "core/MemoryDB.hpp"
 #include "core/Persona.hpp"
 #include "modules/GameCoach.hpp"
+#include "modules/VideoStudy.hpp"
+#include "core/BaitBank.hpp"
 #include "network/HttpClient.hpp"
 #include "network/WebResearcher.hpp"
 
@@ -38,7 +40,7 @@ std::string JoinNames(const std::vector<std::string>& v) {
 
 }  // namespace
 
-int RunTrainerSession(const CompanionConfig& cfg, const std::filesystem::path& dataDir, bool useGpu) {
+int RunTrainerSession(const CompanionConfig& cfg, const std::filesystem::path& dataDir, bool useGpu, const std::filesystem::path& assetsDir) {
     using clock = std::chrono::system_clock;
     MemoryDB db;
     if (!db.Open(dataDir / L"companion.db")) return 2;
@@ -54,7 +56,7 @@ int RunTrainerSession(const CompanionConfig& cfg, const std::filesystem::path& d
     // 1) Sujets qui ont bloqué : non appris, ou appris il y a longtemps (patchs), ou échec d'hier.
     const auto topics = db.PendingTrainingTopics(12, cfg.knowledgeMaxAgeDays * 86400LL, 86400);
     log::Info("SelfTrainer: {} sujet(s) à travailler", topics.size());
-    if (topics.empty()) {
+    if (topics.empty() && !cfg.videoStudy) {
         db.SetProfile("training.report", "");
         return 0;
     }
@@ -68,6 +70,23 @@ int RunTrainerSession(const CompanionConfig& cfg, const std::filesystem::path& d
     bc.threads = cfg.llmThreads;
     brain.Configure(useGpu, cfg.llmThreads);
     if (!brain.Load(bc)) return 3;
+
+    // 1b) Vidéos : il regarde des vannes / du rage bait (YouTube, tes liens TikTok) et en tire des formes réutilisables.
+    std::string videoReport;
+    if (cfg.videoStudy) {
+        VideoStudyConfig vc;
+        vc.perSession = cfg.videoStudyPerSession;
+        if (!cfg.videoStudyQueries.empty()) vc.queries = cfg.videoStudyQueries;
+        for (const wchar_t* w : {L"ggml-base-q5_1.bin", L"ggml-tiny-q5_1.bin"})
+            if (!assetsDir.empty() && std::filesystem::exists(assetsDir / L"models" / w)) {
+                vc.whisperModel = assetsDir / L"models" / w;
+                break;
+            }
+        BaitBank bank;
+        bank.Load(assetsDir / L"persona" / L"baits.json", dataDir / L"learned_baits.json");
+        VideoStudy vs(http, dataDir, vc);
+        videoReport = vs.RunSession(brain, db, bank, {});
+    }
 
     std::error_code ec;
     std::filesystem::create_directories(dataDir / L"training", ec);
@@ -139,10 +158,11 @@ int RunTrainerSession(const CompanionConfig& cfg, const std::filesystem::path& d
         dataset.flush();
     }
 
-    const std::string report =
+    std::string report =
         learned.empty() ? std::string{}
                         : "Pendant ta pause, j'ai appris " + std::to_string(learned.size()) + " sujet" +
                               (learned.size() > 1 ? "s" : "") + " : " + JoinNames(learned) + ".";
+    if (!videoReport.empty()) report += (report.empty() ? "" : " ") + videoReport;
     db.SetProfile("training.report", report);
     db.SetProfile("training.last_ts",
                   std::to_string(std::chrono::duration_cast<std::chrono::seconds>(clock::now().time_since_epoch()).count()));

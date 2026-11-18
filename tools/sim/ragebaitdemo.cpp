@@ -8,6 +8,7 @@
 #include "core/MemeBank.hpp"
 #include "core/Persona.hpp"
 #include "core/RageBait.hpp"
+#include "core/BaitBank.hpp"
 #include <deque>
 #include <chrono>
 #include <cmath>
@@ -21,6 +22,7 @@ int main(int, char** argv) {
     LocalBrainConfig bc; bc.model = argv[1]; bc.contextTokens = 4096; bc.gpuLayers = 0; bc.threads = 4;
     if (!brain.Load(bc)) return 1;
     MemeBank memes; memes.Load(argv[3]);
+    BaitBank bank; bank.Load(argv[4], "");
     // Fiches comme après une soirée en mode écoute.
     CallPeople people;
     std::map<std::string, CallPerson> fiche;
@@ -100,6 +102,8 @@ int main(int, char** argv) {
             br.recent.assign(recentBaits.begin(), recentBaits.end());
             br.recentTechniques.assign(recentTech.begin(), recentTech.end());
             br.hasHistory = !who.said.empty() || !who.mocks.empty();
+            br.bank = &bank;
+            br.preferTechnique = kind == CallAsk::Mock ? "réplique au robot" : kind == CallAsk::Rename || kind == CallAsk::Impostor ? "pseudo" : "";
             const BaitResult res = WriteBait(brain, br, rng);
             for (const auto& t : res.tried) refused += "      " + t + "\n";
             r = res.text;

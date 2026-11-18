@@ -1,5 +1,6 @@
 #include "core/RageBait.hpp"
 
+#include "core/BaitBank.hpp"
 #include "core/CallPrompt.hpp"
 #include "core/LocalBrain.hpp"
 
@@ -32,6 +33,23 @@ std::vector<std::string> ContentWords(const std::string& s) {
         }
     }
     return out;
+}
+
+// Part des mots de la forme (hors [crochets]) retrouvés dans la vanne : a-t-il vraiment gardé la structure ?
+float FormAdherence(const std::string& form, const std::string& bait) {
+    std::string skeleton;
+    int depth = 0;
+    for (char c : form) {
+        if (c == '[') ++depth;
+        else if (c == ']') depth = std::max(0, depth - 1);
+        else if (!depth) skeleton += c;
+    }
+    const auto words = ContentWords(skeleton);
+    if (words.empty()) return 1.f;
+    const std::string b = Lower(bait);
+    int hit = 0;
+    for (const auto& w : words) hit += b.find(w) != std::string::npos;
+    return static_cast<float>(hit) / static_cast<float>(words.size());
 }
 
 int Words(const std::string& s) {
@@ -93,7 +111,7 @@ int ScoreBait(const std::string& bait, const std::string& targetLine, const std:
     // Tics : chaque tic coûte, plus cher s'il était déjà dans ses dernières vannes.
     for (const auto& t : BaitTics()) {
         if (b.find(" " + t) == std::string::npos) continue;
-        score -= 2;
+        score -= 4;  // testé : avec -2, « t'as l'aura d'un… » gagnait encore grâce aux mots repris
         for (const auto& r : recent)
             if (Lower(r).find(t) != std::string::npos) score -= 2;
     }
@@ -136,6 +154,41 @@ BaitResult WriteBait(LocalBrain& brain, const BaitRequest& req, std::uint32_t& r
         int score = 0;
     };
     std::vector<Cand> cands;
+    // Vannes à partir de FORMES qui marchent (banque) : la structure et la chute sont déjà bonnes, le modèle
+    // n'a qu'à y mettre SES mots. Deux formes de techniques différentes, la 1re dans la technique voulue.
+    if (req.bank) {
+        std::vector<std::string> usedTech;
+        for (int k = 0; k < 2 && !stop.stop_requested(); ++k) {
+            std::string want = k == 0 ? req.preferTechnique : std::string{};
+            auto form = req.bank->Pick(want, rng);
+            for (int retry = 0; form && retry < 4 && std::ranges::find(usedTech, form->technique) != usedTech.end(); ++retry)
+                form = req.bank->Pick({}, rng);
+            if (!form) break;
+            usedTech.push_back(form->technique);
+            const std::string user = "[Contexte]\n" + req.context + "\n[Message]\n" + req.ask + "\nFORME À ADAPTER (" + form->technique + ") : « " +
+                                     form->form + " »\nRemplace les [crochets] par SES mots à lui (sa phrase, son jeu, son objet), garde la "
+                                     "structure, les mots et la chute de la forme (ne change que les crochets), corrige la grammaire. Une seule phrase, rien d'autre.";
+            GenerateOptions o;
+            o.maxTokens = 48;
+            o.temperature = 0.4f;
+            o.stop = stop;
+            const auto out = brain.Generate({{"system", req.persona}, {"user", user}}, o);
+            if (!out) continue;
+            Cand c{CleanSpoken(*out), "forme : " + form->technique, 0};
+            if (const auto nl = c.text.find('\n'); nl != std::string::npos) c.text.resize(nl);
+            if (c.text.find('[') != std::string::npos) continue;  // crochets pas remplacés : raté
+            // Testé : le modèle ignore parfois la forme et ressort ses tics. Il doit en garder au moins la moitié des mots.
+            if (const float adh = FormAdherence(form->form, c.text); adh < 0.5f) {
+                res.tried.push_back(std::format("[{}] {} (forme pas respectée, {:.0f} %)", c.tech, c.text, adh * 100));
+                continue;
+            }
+            c.score = ScoreBait(c.text, req.targetLine, req.recent, req.avoid);
+            if (c.score > -1000) c.score += 2;  // structure écrite à la main : grammaticale et testée
+            res.tried.push_back(std::format("[{}] {} ({:+})", c.tech, c.text, c.score));
+            if (c.score > -1000) cands.push_back(std::move(c));
+        }
+        if (picks.size() > 1) picks.resize(1);  // + une vanne inventée librement, pour la surprise
+    }
     for (int tech : picks) {
         if (stop.stop_requested()) return res;
         const char* how = nullptr;

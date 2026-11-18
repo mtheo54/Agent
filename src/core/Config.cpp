@@ -83,6 +83,10 @@ CompanionConfig LoadConfig(const std::filesystem::path& jsonFile) {
         cfg.callBaitChance = std::clamp(j.value("callBaitChance", cfg.callBaitChance), 0.f, 1.f);
         if (j.contains("callBaitSounds") && j["callBaitSounds"].is_array()) cfg.callBaitSounds = j["callBaitSounds"].get<std::vector<std::string>>();
         cfg.earrape = j.value("earrape", cfg.earrape);
+        cfg.videoStudy = j.value("videoStudy", cfg.videoStudy);
+        cfg.videoStudyPerSession = std::clamp(j.value("videoStudyPerSession", cfg.videoStudyPerSession), 1, 10);
+        if (j.contains("videoStudyQueries") && j["videoStudyQueries"].is_array())
+            cfg.videoStudyQueries = j["videoStudyQueries"].get<std::vector<std::string>>();
         cfg.discordMyName = j.value("discordMyName", cfg.discordMyName);
         cfg.substituteMaxMinutes = std::clamp(j.value("substituteMaxMinutes", cfg.substituteMaxMinutes), 10, 60);
         cfg.perfAutoAdjust = j.value("perfAutoAdjust", cfg.perfAutoAdjust);

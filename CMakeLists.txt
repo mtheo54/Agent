@@ -152,8 +152,10 @@ add_executable(CompanionAI WIN32
     src/audio/SpeakerId.cpp
     src/core/CallPeople.cpp
     src/core/RageBait.cpp
+    src/core/BaitBank.cpp
     src/modules/DesktopPilot.cpp
     src/modules/DiscordSpeaking.cpp
+    src/modules/VideoStudy.cpp
     src/audio/TextNormalizerFr.cpp
     src/render/OverlayWindow.cpp
     src/render/CartoonAvatar.cpp
@@ -191,6 +193,7 @@ target_link_libraries(CompanionAI PRIVATE
     sqlite3
     d3d11 dxgi dcomp d2d1 dwrite
     ole32 oleaut32 uuid avrt pdh shell32 user32 windowscodecs winhttp advapi32
+    mfplat mfreadwrite mfuuid bcrypt
     $<$<BOOL:${COMPANION_WITH_LLAMA}>:llama>
     $<$<BOOL:${COMPANION_WITH_LLAMA}>:mtmd>
     $<$<BOOL:${COMPANION_WITH_WHISPER}>:whisper>

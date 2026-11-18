@@ -60,6 +60,10 @@
   "discordMyName": "",
   // Earrape occasionnel sur un bruitage : 1,5 s max, au plus toutes les 10 min, volume plafonné.
   "earrape": true,
+  // Entraînement vidéo : pendant ses séances, il regarde des vannes / du rage bait (YouTube, tes liens TikTok).
+  "videoStudy": true,
+  "videoStudyPerSession": 3,
+  "videoStudyQueries": [],
   // « Prends ma place » : 60 min au plus (10 à 60).
   "substituteMaxMinutes": 60,
   "llmUnloadAfterMinutes": 10,
