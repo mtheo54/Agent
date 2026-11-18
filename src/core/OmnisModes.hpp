@@ -66,6 +66,27 @@ inline ChatMode DetectChatMode(const std::string& lower) {
     return question ? ChatMode::Technical : ChatMode::RageBait;
 }
 
+// Mode technique : faut-il une source AVANT de répondre ? Testé avec le 9B : « comment je fais un sidechain dans FL
+// Studio » -> procédure récitée avec aplomb et FAUSSE (kick et basse inversés), sans demander de recherche ; avec la page
+// du manuel, réponse juste. Donc : une procédure dans un logiciel / sur un matériel précis, un réglage, une valeur, un
+// code d'erreur ou un voyant passent d'abord par le web. Les questions de concept (« c'est quoi un compresseur ») non.
+inline bool NeedsSource(const std::string& lower) {
+    using mode_detail::Count;
+    const std::string t = " " + lower + " ";
+    const bool procedure = Count(t, {" comment ", " où ", " ou se trouve", " ou est ", " quel réglage", " quels réglages", " quel paramètre",
+                                     " quelle valeur", " quel menu", " quel bouton", " étapes", " configurer", " paramétrer", " régler ",
+                                     " activer", " brancher", " câbler", " cabler", " installer", " je fais ", " on fait ", " faire un "}) > 0;
+    const bool precise = Count(t, {"fl studio", "fruity", "ableton", "serum", "vital", "kontakt", "pro tools", "cubase", "logic pro",
+                                   "autocad", "electrical", "tia portal", "siemens", "schneider", "murrelektronik", "profinet", "profibus",
+                                   "modbus", "visual studio", "cmake", "juce", " vst", "plugin", "datasheet", "manuel", "firmware",
+                                   " driver", "pilote", "bios", "windows", "discord", "obs ",
+                                   // électricité : une erreur de câblage est dangereuse, toujours une source
+                                   "contacteur", "disjoncteur", "différentiel", "differentiel", "variateur", "relais", "230v", "230 v",
+                                   "400v", "400 v", "triphas", "tableau électrique", "tableau electrique", "prise de terre"}) > 0;
+    const bool fault = Count(t, {" led ", "voyant", "code erreur", "code d'erreur", "error ", "erreur ", "défaut ", "defaut ", "clignot"}) > 0;
+    return (procedure && precise) || (fault && (precise || procedure));
+}
+
 // Protocole de recherche (commun aux deux modes).
 inline constexpr const char* kSearchProtocol =
     "Si tu as besoin d'une documentation technique, d'une spécification exacte, d'une info récente ou d'un fait précis "

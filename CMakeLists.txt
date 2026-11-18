@@ -22,7 +22,9 @@ set_property(CACHE COMPANION_CPU_TARGET PROPERTY STRINGS native zen4 avx2)
 set(ONNXRUNTIME_ROOT "${CMAKE_SOURCE_DIR}/external/onnxruntime" CACHE PATH "Package onnxruntime-win-x64-*")
 set(ESPEAK_NG_ROOT   "${CMAKE_SOURCE_DIR}/external/espeak-ng"   CACHE PATH "Install espeak-ng (include/, lib/, espeak-ng-data/)")
 
-set(CMAKE_CXX_STANDARD 20)
+# C++17 pour les dépendances (llama.cpp ne compile pas en C++20 sous MSVC : littéraux u8 -> char8_t) ;
+# Omnis lui-même est en C++20 (propriété de la cible plus bas).
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
@@ -71,9 +73,15 @@ else()
     if(COMPANION_CPU_TARGET STREQUAL "zen4")
         set(_zen4 ON)
     endif()
-    foreach(f AVX512 AVX512_VBMI AVX512_VNNI AVX512_BF16)
+    foreach(f AVX512 AVX512_VBMI AVX512_VNNI)
         set(GGML_${f} ${_zen4} CACHE BOOL "" FORCE)
     endforeach()
+    # BF16 : MSVC refuse les conversions __m512 -> __m512bh de ggml (sgemm) ; sans effet sur les modèles Q4_K_M.
+    if(MSVC)
+        set(GGML_AVX512_BF16 OFF CACHE BOOL "" FORCE)
+    else()
+        set(GGML_AVX512_BF16 ${_zen4} CACHE BOOL "" FORCE)
+    endif()
     set(GGML_AVX_VNNI OFF CACHE BOOL "" FORCE)
     set(GGML_AMX_TILE OFF CACHE BOOL "" FORCE)
     set(GGML_AMX_INT8 OFF CACHE BOOL "" FORCE)
@@ -204,6 +212,7 @@ add_executable(CompanionAI WIN32
 )
 
 target_include_directories(CompanionAI PRIVATE src)
+set_target_properties(CompanionAI PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
 target_compile_definitions(CompanionAI PRIVATE
     UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX

@@ -167,6 +167,12 @@ subject   ::= [^\]\n] [^\]\n]*
 answer    ::= [^\[ \n] [^\x00]*
 )GBNF";
 
+// Seulement des mots-clés de recherche (mode technique, question qui exige une source : voir NeedsSource).
+inline constexpr const char* kSearchOnlyGrammar = R"GBNF(
+root      ::= "[SEARCH: " subject "]"
+subject   ::= [^\]\n] [^\]\n]*
+)GBNF";
+
 // Balise d'escalade, crochets facultatifs (les petits modèles les omettent parfois), ou [SEARCH: mots-clés] (= WEB).
 inline const std::regex& EscalateTag() {
     static const std::regex tag(

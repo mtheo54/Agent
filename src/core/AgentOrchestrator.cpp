@@ -2155,6 +2155,22 @@ void AgentOrchestrator::HandleLevel1(const std::string& text, const std::vector<
                                 : LiveContext(text) + CallHint() + extraContext + OpenerHint() + MemeHint() + SoundHint() + RageBaitHint(text);
     messages.push_back({"user", ctx.empty() ? text : "[Contexte]\n" + ctx + "\n[Message]\n" + text});
 
+    // Procédure, réglage, code d'erreur : le modèle n'écrit que les mots-clés, la réponse viendra de la source.
+    if (chatMode_ == ChatMode::Technical && d_.http && NeedsSource(Lower(text))) {
+        GenerateOptions so;
+        so.grammar = kSearchOnlyGrammar;
+        so.maxTokens = 32;
+        so.temperature = 0.2f;
+        std::smatch m;
+        if (const auto kw = d_.brain.Generate(messages, so); kw && std::regex_search(*kw, m, EscalateTag())) {
+            std::string type, subject;
+            EscalationOf(m, type, subject);
+            log::Info("Orchestrator: source exigée, recherche « {} »", Trim(subject));
+            ResearchLocally(Trim(subject), text, stop);
+            return;
+        }
+    }
+
     bool escalation = false;
     // Rage bait : 2 à 3 phrases, sec ; technique : de quoi expliquer.
     const std::string out = GenerateSpoken(messages, kEscalateGrammar, stop, escalation, nullptr,
