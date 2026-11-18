@@ -465,7 +465,11 @@ bool AgentOrchestrator::EnsureBrain() {
     bc.threads = gaming ? cfg_.llmThreadsGaming : cfg_.llmThreads;
     bc.ubatch = ubatch;
     d_.brain.Configure(gpu, bc.threads);
-    return d_.brain.Load(bc);
+    log::Info("Cerveau : chargement de {} sur {} (lots de {})", log::Narrow(wanted.filename().wstring()),
+              gpu ? "la carte graphique" : "le processeur", ubatch);
+    const bool ok = d_.brain.Load(bc);
+    log::Info("Cerveau : {}", ok ? "prêt" : "échec du chargement");
+    return ok;
 }
 
 // ---------------------------------------------------------------------------

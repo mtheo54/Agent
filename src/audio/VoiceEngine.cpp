@@ -694,10 +694,13 @@ struct VoiceEngine::Impl {
         // Émotion : analysée sur la phrase brute (avant le remplissage de silence pour Whisper).
         EmotionEstimate emo;
         if (emotionEnabled.load()) {
+            log::Info("Écoute : analyse de l'émotion");
             std::scoped_lock lock(emotionMutex);
             emo = emotion.Analyze(pcm);
         }
+        log::Info("Écoute : {:.1f} s de voix, transcription…", static_cast<double>(pcm.size()) / kSttSampleRate);
         std::string text = Whisper(std::move(pcm));
+        log::Info("Écoute : « {} »", text);
         if (text.empty()) return;
 
         TranscriptCallback cb;

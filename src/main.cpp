@@ -61,6 +61,7 @@
 #include <atomic>
 #include <cctype>
 #include <csignal>
+#include <exception>
 #include <cstdint>
 #include <cstring>
 #include <chrono>
@@ -224,6 +225,7 @@ LONG WINAPI OnCrash(EXCEPTION_POINTERS* e) {
     std::error_code ec;
     std::filesystem::create_directories(DataDir(), ec);
     if (std::ofstream f(DataDir() / L"crash.txt", std::ios::binary | std::ios::app); f) f << line;
+    log::Raw("PLANTAGE " + line);
     return EXCEPTION_CONTINUE_SEARCH;  // Windows affiche/enregistre le plantage comme d'habitude
 }
 
@@ -330,6 +332,27 @@ int RunSelfTest() {
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     SetUnhandledExceptionFilter(OnCrash);
     std::signal(SIGABRT, OnAbort);
+    {
+        std::error_code ec;
+        std::filesystem::create_directories(DataDir(), ec);
+        const bool child = cmdLine && (std::wstring_view(cmdLine).find(L"--trainer") != std::wstring_view::npos ||
+                                       std::wstring_view(cmdLine).find(L"--selftest") != std::wstring_view::npos);
+        if (!child) log::OpenFile((DataDir() / L"omnis.log").wstring());  // le journal du compagnon, pas celui des tests
+        log::Info("Omnis démarre ({})", log::Narrow(GetCommandLineW()));
+    }
+    // Exception C++ jamais rattrapée : on écrit laquelle avant de quitter.
+    std::set_terminate([] {
+        std::string what = "exception inconnue";
+        try {
+            if (auto e = std::current_exception()) std::rethrow_exception(e);
+        } catch (const std::exception& e) {
+            what = e.what();
+        } catch (...) {
+        }
+        log::Info("PLANTAGE : exception C++ non rattrapée : {}", what);
+        if (std::ofstream f(DataDir() / L"crash.txt", std::ios::binary | std::ios::app); f) f << "exception C++ non rattrapée : " << what << "\n";
+        std::abort();
+    });
 #if defined(COMPANION_REQUIRES_AVX512)
     if (!CpuHasAvx512()) {
         if (cmdLine && std::wstring_view(cmdLine).find(L"--selftest") != std::wstring_view::npos) return 3;  // pas de fenêtre en test

@@ -22,7 +22,10 @@ namespace companion {
 
 namespace {
 void QuietLog(ggml_log_level level, const char* text, void*) {
-    if (level >= GGML_LOG_LEVEL_WARN) OutputDebugStringA(text);
+    if (level >= GGML_LOG_LEVEL_WARN) {
+        OutputDebugStringA(text);
+        log::Raw(std::string("[llama] ") + text);  // erreurs Vulkan, mémoire… dans omnis.log
+    }
 }
 }  // namespace
 
