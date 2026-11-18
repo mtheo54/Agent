@@ -93,6 +93,13 @@ inline std::string CrossesLine(const std::string& reply, const std::set<std::str
 
 // Ce qui sort du modèle -> ce qui se dit : sans guillemets autour, une ligne, deux phrases au plus.
 inline std::string CleanSpoken(std::string s) {
+    // Balises de contrôle ([SEARCH: …], [ESCALATE | …]) : jamais lues à voix haute (vu en démo : réponse dans un call
+    // terminée par « [SEARCH: Jinx build] »). Ici, pas de recherche : la phrase honnête qui précède suffit.
+    for (const char* tag : {"[SEARCH", "[ESCALATE"})
+        for (std::size_t p = s.find(tag); p != std::string::npos; p = s.find(tag, p)) {
+            const std::size_t e = s.find(']', p);
+            s.erase(p, e == std::string::npos ? std::string::npos : e - p + 1);
+        }
     for (auto& c : s)
         if (c == '\n' || c == '\r') c = ' ';
     const auto trim = [&] {
