@@ -95,6 +95,14 @@ struct CompanionConfig {
     bool perfAutoAdjust = true;      // ça bouffe trop -> preset plus léger pour ce jeu (retenu)
     double perfMaxFpsDropPct = 5.0;  // « trop » = FPS moyen en baisse de plus de 5 %…
     double perfMaxLowDropPct = 10.0; // …ou 1 % low (saccades) en baisse de plus de 10 %
+
+    // Prise en main du clavier et de la souris à la demande (« prends la main », AutoCAD, FL Studio…).
+    bool pilotEnabled = true;
+    // Discord, par ton micro : câble audio virtuel (VB-Cable). Dans Discord : périphérique d'entrée « CABLE Output ».
+    bool discordBridge = true;
+    std::string discordCableDevice = "CABLE Input";  // sortie du câble vue par Windows
+    std::string discordMicDevice;                    // vide = micro par défaut
+    float callBaitChance = 0.25f;  // dans un call, chance qu'il réagisse (vanne) sans qu'on l'appelle
     // En jeu : petit modèle sur CPU, chargé seulement si tu lui parles (VRAM laissée au jeu). Absent :
     // le modèle principal sur CPU (plus lent).
     std::filesystem::path llmGamingModel = L"auto";

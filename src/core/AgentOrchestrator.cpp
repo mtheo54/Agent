@@ -742,6 +742,225 @@ void AgentOrchestrator::Calibrate(std::stop_token stop) {
     Say(t);
 }
 
+// ---------------------------------------------------------------------------
+// Call Discord, par ton micro (DiscordBridge) : il rejoint, écoute les autres, vanne quand on l'appelle
+// (et de temps en temps sans qu'on l'appelle). N'importe qui dans le call peut le faire taire ou partir.
+
+void AgentOrchestrator::OnCallSpeech(std::string text) {
+    text = Trim(std::move(text));
+    const std::string lower = Lower(text);
+    // Hallucinations classiques de Whisper sur du bruit / de la musique.
+    if (text.size() < 3 || ContainsAny(lower, {"sous-titr", "amara.org", "merci d'avoir regardé", "[musique]", "(musique)"})) return;
+    Post([this, text = std::move(text)](std::stop_token stop) { HandleCallLine(text, stop); });
+}
+
+std::string AgentOrchestrator::CallHint() const {
+    if (!InCall()) return {};
+    std::string s =
+        "Tu es en CALL DISCORD avec ton pote et ses potes : ils t'entendent tous (ta voix passe par son micro) et savent "
+        "que tu es une IA. Tu ne connais pas leurs prénoms (dis « frérot », « chef », « le pote »). Une ou deux phrases, "
+        "pas plus. Vannes et rage bait légers OK, jamais sur l'origine, la religion, la sexualité, le physique ou un "
+        "handicap. Si quelqu'un te demande d'arrêter ou a l'air vraiment blessé, tu lâches et tu t'excuses.\n";
+    if (!callLines_.empty()) {
+        s += "Derniers échanges du call :\n";
+        for (const auto& l : callLines_) s += "- " + l + "\n";
+    }
+    return s;
+}
+
+bool AgentOrchestrator::HandleCallCommand(const std::string& lower, std::stop_token) {
+    if (!ContainsAny(lower, {"call", "vocal", "discord"})) return false;
+    const auto waitSilence = [this] {
+        for (int i = 0; i < 80 && d_.voice.IsSpeaking(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    };
+    if (ContainsAny(lower, {"rejoins", "rejoint", "viens dans", "viens en", "connecte-toi", "connecte toi", "rentre dans", "va dans"})) {
+        if (!d_.discord || !cfg_.discordBridge) {
+            Say("Le pont Discord est désactivé dans les réglages.");
+        } else if (InCall()) {
+            Say("J'y suis déjà, frérot.");
+        } else if (!d_.discord->CableFound()) {
+            Say("Il me faut un câble audio virtuel. Installe VB-Cable, c'est gratuit, puis dans Discord mets le "
+                "périphérique d'entrée sur CABLE Output. Tout est expliqué dans le README.");
+        } else if (!d_.discord->DiscordRunning()) {
+            Say("Discord n'est pas lancé.");
+        } else if (!d_.discord->Relaying()) {
+            const std::string why = d_.discord->Problem();
+            Say("J'arrive pas à relayer ton micro" + (why.empty() ? std::string(".") : ", " + why + "."));
+        } else {
+            d_.discord->Join();
+            callLines_.clear();
+            callMutedUntil_ = {};
+            lastCallBait_ = std::chrono::steady_clock::now();
+            Say("Salut tout le monde, c'est Omnis, l'IA de mon pote. Appelez-moi par mon nom. Et si je saoule, dites "
+                "Omnis tais-toi.");
+        }
+        return true;
+    }
+    if (ContainsAny(lower, {"quitte", "sors du", "sors de", "déconnecte", "deconnecte", "dégage du", "degage du"})) {
+        if (!InCall()) {
+            Say("Je suis pas dans le call.");
+            return true;
+        }
+        Say("Allez, je vous laisse. Bisous.");
+        waitSilence();
+        d_.discord->Leave();
+        callLines_.clear();
+        return true;
+    }
+    return false;
+}
+
+void AgentOrchestrator::HandleCallLine(const std::string& text, std::stop_token stop) {
+    if (!InCall()) return;
+    callLines_.push_back("Un pote : " + text);
+    while (callLines_.size() > 8) callLines_.pop_front();
+    const std::string lower = Lower(text);
+    const bool named = ContainsAny(lower, {"omnis", "omni ", "l'ia", "le bot", "le robot"});
+    const auto now = std::chrono::steady_clock::now();
+    if (named && ContainsAny(lower, {"quitte le call", "dégage", "degage", "casse-toi", "casse toi", "barre-toi", "barre toi",
+                                     "sors du call", "bye"})) {
+        d_.voice.StopSpeaking();
+        Say("Bon, je vous laisse. Bisous.");
+        for (int i = 0; i < 80 && d_.voice.IsSpeaking(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        d_.discord->Leave();
+        callLines_.clear();
+        return;
+    }
+    if (named && ContainsAny(lower, {"tais-toi", "tais toi", "ta gueule", "chut", "arrête", "arrete", "stop", "calme-toi", "calme toi"})) {
+        d_.voice.StopSpeaking();
+        callMutedUntil_ = now + std::chrono::minutes(10);
+        Say("Ok ok, je me calme.");
+        return;
+    }
+    bool reply = named;
+    if (!named && now >= callMutedUntil_ && now - lastCallBait_ > std::chrono::seconds(60)) {
+        const unsigned r = rng_.fetch_add(0x9E3779B9u) * 2654435761u;
+        reply = static_cast<float>(r >> 8) / 16777216.f < cfg_.callBaitChance;
+    }
+    if (!reply || d_.voice.IsSpeaking() || !EnsureBrain()) return;
+    if (!named) lastCallBait_ = now;
+    const std::vector<ChatTurn> messages{
+        {"system", PersonaPrompt()},
+        {"user", "[Contexte]\n" + CallHint() + MemeHint() + "\n[Message]\n" +
+                     (named ? "Un pote du call te parle : « " + text + " ». Réponds-lui."
+                            : "Un pote du call vient de dire : « " + text + " ». Lâche une vanne ou un petit rage bait dessus, une phrase.")}};
+    bool escalation = false;
+    const std::string out = GenerateSpoken(messages, nullptr, stop, escalation);
+    if (!out.empty()) {
+        callLines_.push_back("Toi (Omnis) : " + out);
+        while (callLines_.size() > 8) callLines_.pop_front();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Prise en main : il écrit un plan (grammaire stricte), l'annonce, puis l'exécute. Tu bouges, il s'arrête.
+
+bool AgentOrchestrator::HandlePilot(const std::string& text, const std::string& lower, std::stop_token stop) {
+    if (!cfg_.pilotEnabled) return false;
+    const bool asked = ContainsAny(lower, {"prends la main", "prends le contrôle", "prends le controle", "fais-le pour moi",
+                                           "fais le pour moi", "fais-le à ma place", "fais le à ma place", "clique sur",
+                                           "appuie sur", "contrôle ma souris", "controle ma souris", "prends ma souris", "prends mon clavier"});
+    PilotTarget t = DesktopPilot::Foreground();
+    const bool flAsk = t.app == PilotApp::FlStudio &&
+                       ContainsAny(lower, {"ouvre le mixer", "ouvre la playlist", "ouvre le piano roll", "ouvre le channel rack",
+                                           "ouvre le navigateur", "lance la lecture", "exporte le", "exporte en", "enregistre le projet",
+                                           "sauvegarde le projet"});
+    const bool acadAsk = t.app == PilotApp::AutoCad &&
+                         ContainsAny(lower, {"trace", "dessine", "insère", "insere", "place un", "place une", "ajoute un fil",
+                                             "ajoute un composant", "numérote", "numerote", "zoome", "annule la dernière", "annule la derniere"});
+    if (!asked && !flAsk && !acadAsk) return false;
+    if (mode_.load() == SystemMode::Gaming) {
+        Say("Pas en jeu : l'anti-triche prendrait mes clics pour de la triche, et c'est ton compte qui saute.");
+        return true;
+    }
+    if (!t.hwnd || t.pid == GetCurrentProcessId()) {
+        Say("Mets-toi d'abord sur la fenêtre où tu veux que je bosse, et redis-moi.");
+        return true;
+    }
+    if (!EnsureBrain()) {
+        Say("Il me faut mon cerveau local pour ça, et il n'est pas installé.");
+        return true;
+    }
+    const std::string appName = t.app == PilotApp::AutoCad ? "AutoCAD (Electrical)"
+                              : t.app == PilotApp::FlStudio ? "FL Studio"
+                                                            : log::Narrow(t.exe);
+    std::string tips;
+    std::vector<std::string> names;
+    if (t.app == PilotApp::FlStudio) {
+        tips = "FL Studio ne décrit pas ses boutons à Windows : n'utilise QUE des raccourcis (TOUCHE), jamais CLIC. "
+               "Raccourcis : f5 playlist, f6 channel rack, f7 piano roll, f8 navigateur de plugins, f9 mixer, f10 réglages MIDI, "
+               "f11 infos du projet, f12 ferme toutes les fenêtres, alt+f8 navigateur, espace lecture/stop, l bascule "
+               "pattern/chanson, ctrl+s enregistrer, ctrl+shift+s enregistrer sous, ctrl+r exporter en WAV, ctrl+shift+r "
+               "exporter en MP3, ctrl+z annuler.\n";
+    } else {
+        names = DesktopPilot::ClickableNames(t.hwnd, 60);
+        if (t.app == PilotApp::AutoCad)
+            tips = "AutoCAD : préfère COMMANDE, avec les noms ANGLAIS précédés de _ (marche avec un AutoCAD en français), "
+                   "points en x,y, et un espace final qui valide. Exemples : COMMANDE \"_LINE 0,0 100,0  \" (deux espaces "
+                   "pour finir la ligne), COMMANDE \"_CIRCLE 50,50 20 \", COMMANDE \"_RECTANG 0,0 200,100 \", COMMANDE "
+                   "\"_ZOOM _E \", COMMANDE \"_UNDO 1 \", COMMANDE \"_QSAVE \". AutoCAD Electrical : _AEWIRE (fil), "
+                   "_AECOMPONENT (insérer un composant), _AELADDER (échelle), _AEMULTIBUS (bus multiple), _AEWIRENO (numéros "
+                   "de fils), _AEPROJECT (gestionnaire de projet).\n";
+    }
+    std::string sys =
+        "Tu es " + cfg_.name + " et tu pilotes le clavier et la souris de ton pote dans " + appName + " (fenêtre « " + t.title +
+        " »). Écris UNIQUEMENT un plan d'actions, une par ligne, 10 au maximum :\n"
+        "DIRE \"phrase courte, ton style de pote, qui annonce ce que tu vas faire\"  (toujours en premier)\n"
+        "TOUCHE raccourci   (ex. ctrl+s, f9, espace, entree, echap)\n"
+        "TAPE \"texte à taper\"\n"
+        "CLIC \"nom exact d'un bouton de la liste\"\n"
+        "COMMANDE \"commande AutoCAD\"   (AutoCAD seulement)\n"
+        "ATTENDS millisecondes\n"
+        "Si c'est impossible ici, trop vague ou risqué : une seule ligne DIRE qui explique ou pose une question. "
+        "N'invente jamais un bouton absent de la liste.\n" + tips;
+    if (!names.empty()) {
+        sys += "Boutons visibles : ";
+        for (size_t i = 0; i < names.size(); ++i) sys += (i ? ", " : "") + names[i];
+        sys += "\n";
+    }
+    GenerateOptions o;
+    o.grammar = kPilotGrammar;
+    o.maxTokens = 260;
+    o.temperature = 0.2f;
+    o.stop = stop;
+    activity_ = AgentActivity::Thinking;
+    const auto out = d_.brain.Generate({{"system", sys}, {"user", text}}, o);
+    if (stop.stop_requested()) return true;
+    std::vector<PilotStep> steps = out ? ParsePilotPlan(*out) : std::vector<PilotStep>{};
+    log::Info("Pilot: {} → {} action(s)\n{}", appName, steps.size(), out ? *out : std::string("(rien)"));
+    if (steps.empty()) {
+        Say("Je vois pas comment faire ça ici, redis-le autrement.");
+        return true;
+    }
+    if (std::ranges::all_of(steps, [](const PilotStep& s) { return s.op == PilotOp::Say; })) {
+        for (const auto& s : steps) Say(s.arg);  // il explique ou pose une question : rien à exécuter
+        return true;
+    }
+    if (steps.front().op != PilotOp::Say) steps.insert(steps.begin(), PilotStep{PilotOp::Say, "Je m'en occupe.", 0});
+    // Ce qui peut faire perdre du travail : accord à voix haute avant de commencer (« toujours » = pour cette action).
+    for (const auto& s : steps) {
+        if (!IsRiskyStep(s)) continue;
+        const std::string what = s.op == PilotOp::Key ? "faire " + s.arg : s.op == PilotOp::Click ? "cliquer sur " + s.arg : "lancer " + s.arg;
+        if (!d_.gate.Request(PermissionScope::System, "pilot:" + s.arg, "Attention, je vais " + what + ". Je le fais ?",
+                             std::chrono::seconds(20), stop)) {
+            Say("Ok, je touche à rien.");
+            return true;
+        }
+    }
+    std::string error;
+    const auto result = pilot_.Run(t, steps, [this](const std::string& line) { Say(line); }, stop, error);
+    if (result == DesktopPilot::Result::Aborted) {
+        if (error == "tu as repris la main") {
+            d_.voice.StopSpeaking();
+            Say("Ok, je te rends la main.");
+        }
+    } else if (result == DesktopPilot::Result::Failed) {
+        Say("J'ai bloqué : " + error + ".");
+    }
+    log::Info("Pilot: {}", result == DesktopPilot::Result::Done ? "terminé" : error);
+    return true;
+}
+
 // Les 2-3 premiers mots de la réponse (« Ah ouais ? », « Carrément. »), ponctuation comprise.
 void AgentOrchestrator::RememberOpener(const std::string& reply) {
     std::string opener;
@@ -1153,7 +1372,9 @@ bool AgentOrchestrator::HandleLevel0(const std::string& text, std::stop_token st
         Say(Line("goodbye", {}, "À plus."));
         return true;
     }
+    if (HandleCallCommand(lower, stop)) return true;  // « rejoins le call », « quitte le call »
     if (HandlePerfCommand(lower, stop)) return true;  // « teste les perfs », « passe sur le processeur »…
+    if (HandlePilot(text, lower, stop)) return true;  // « prends la main », AutoCAD, FL Studio
     if (HandleSystemCommand(text, lower, stop)) return true;  // volume d'abord : « monte le son » n'est pas un bruitage
     if (HandleSoundboard(text, lower, stop)) return true;
 
@@ -1175,7 +1396,7 @@ void AgentOrchestrator::HandleLevel1(const std::string& text, const std::vector<
     }
     std::vector<ChatTurn> messages{{"system", PersonaPrompt()}};
     messages.insert(messages.end(), history.begin(), history.end());
-    const std::string ctx = LiveContext(text) + extraContext + OpenerHint() + MemeHint() + SoundHint() + RageBaitHint(text);
+    const std::string ctx = LiveContext(text) + CallHint() + extraContext + OpenerHint() + MemeHint() + SoundHint() + RageBaitHint(text);
     messages.push_back({"user", ctx.empty() ? text : "[Contexte]\n" + ctx + "\n[Message]\n" + text});
 
     bool escalation = false;

@@ -43,6 +43,15 @@
   "perfAutoAdjust": true,
   "perfMaxFpsDropPct": 5,
   "perfMaxLowDropPct": 10,
+
+  // « Prends la main » : clavier et souris à la demande (jamais en jeu). Tu bouges, il s'arrête.
+  "pilotEnabled": true,
+  // Discord par ton micro (VB-Cable). Dans Discord : périphérique d'entrée = « CABLE Output ».
+  "discordBridge": true,
+  "discordCableDevice": "CABLE Input",
+  "discordMicDevice": "",
+  // Dans un call, chance qu'il lâche une vanne sans qu'on l'appelle (au plus une par minute).
+  "callBaitChance": 0.25,
   "llmUnloadAfterMinutes": 10,
 
   // Auto-entraînement pendant l'inactivité (processus isolé, tué dès que tu reviens).

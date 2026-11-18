@@ -33,6 +33,7 @@ typedef struct AUDIOCLIENT_ACTIVATION_PARAMS {
 #define VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK L"VAD\\Process_Loopback"
 #endif
 
+#include <algorithm>
 #include <cwctype>
 #include <vector>
 
@@ -127,15 +128,15 @@ std::uint32_t WasapiLoopback::FindProcessId(const std::wstring& exeName) {
     if (snap == INVALID_HANDLE_VALUE) return 0;
     PROCESSENTRY32W pe{};
     pe.dwSize = sizeof(pe);
-    std::uint32_t pid = 0;
-    for (BOOL ok = Process32FirstW(snap, &pe); ok; ok = Process32NextW(snap, &pe)) {
-        if (_wcsicmp(pe.szExeFile, exeName.c_str()) == 0) {
-            pid = pe.th32ProcessID;
-            break;
-        }
-    }
+    // Applis multi-processus (Discord, navigateurs) : on prend la RACINE de l'arbre (son parent n'est pas un
+    // processus du même nom), la capture « arbre de processus » inclut alors tous ses enfants, dont celui qui joue le son.
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> found;  // pid, parent
+    for (BOOL ok = Process32FirstW(snap, &pe); ok; ok = Process32NextW(snap, &pe))
+        if (_wcsicmp(pe.szExeFile, exeName.c_str()) == 0) found.emplace_back(pe.th32ProcessID, pe.th32ParentProcessID);
     CloseHandle(snap);
-    return pid;
+    for (const auto& [pid, parent] : found)
+        if (std::ranges::none_of(found, [p = parent](const auto& f) { return f.first == p; })) return pid;
+    return found.empty() ? 0 : found.front().first;
 }
 
 bool WasapiLoopback::Start(const std::wstring& processName, Sink sink) {

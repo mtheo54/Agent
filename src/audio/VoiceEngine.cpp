@@ -372,6 +372,7 @@ struct VoiceEngine::Impl {
     RetroVoiceProcessor fx;
     SpscRing ring{1u << 20};  // ~43 s à 24 kHz
     std::atomic<float> rms{0.f};
+    std::atomic<VoiceTap*> tap{nullptr};
     static constexpr size_t kNoFlush = SIZE_MAX;
     std::atomic<size_t> flushMark{kNoFlush};
     std::atomic<bool> rendering{false};
@@ -539,6 +540,7 @@ struct VoiceEngine::Impl {
             std::fill(out + got, out + avail, 0.f);
             const float blockRms = fx.Process({out, avail});  // la queue des filtres se termine proprement
             rms.store(got > 0 ? blockRms : 0.f, std::memory_order_relaxed);
+            if (VoiceTap* t = tap.load(std::memory_order_acquire)) t->OnVoiceOut(out, avail, static_cast<int>(outputRate));
             render->ReleaseBuffer(avail, 0);
 
             const ULONGLONG now = GetTickCount64();
@@ -639,15 +641,10 @@ struct VoiceEngine::Impl {
         CloseHandle(event);
     }
 
-    void Transcribe(std::vector<float> pcm) {
+    // Texte d'un segment 16 kHz mono (vide si rien de reconnu).
+    std::string Whisper(std::vector<float> pcm) {
 #if COMPANION_WITH_WHISPER
-        if (!whisper || pcm.size() < kSttSampleRate / 4) return;  // < 250 ms : ignoré
-        // Émotion : analysée sur la phrase brute (avant le remplissage de silence pour Whisper).
-        EmotionEstimate emo;
-        if (emotionEnabled.load()) {
-            std::scoped_lock lock(emotionMutex);
-            emo = emotion.Analyze(pcm);
-        }
+        if (!whisper || pcm.size() < kSttSampleRate / 4) return {};  // < 250 ms : ignoré
         if (pcm.size() < kSttSampleRate + kSttSampleRate / 10) pcm.resize(kSttSampleRate + kSttSampleRate / 10, 0.f);
 
         whisper_full_params wp = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
@@ -664,14 +661,32 @@ struct VoiceEngine::Impl {
 
         if (whisper_full(whisper, wp, pcm.data(), static_cast<int>(pcm.size())) != 0) {
             log::Info("whisper: échec de transcription");
-            return;
+            return {};
         }
         std::string text;
         const int n = whisper_full_n_segments(whisper);
         for (int i = 0; i < n; ++i) text += whisper_full_get_segment_text(whisper, i);
         const auto first = text.find_first_not_of(' ');
-        if (first == std::string::npos) return;
+        if (first == std::string::npos) return {};
         text.erase(0, first);
+        return text;
+#else
+        (void)pcm;
+        return {};
+#endif
+    }
+
+    void Transcribe(std::vector<float> pcm) {
+#if COMPANION_WITH_WHISPER
+        if (!whisper || pcm.size() < kSttSampleRate / 4) return;  // < 250 ms : ignoré
+        // Émotion : analysée sur la phrase brute (avant le remplissage de silence pour Whisper).
+        EmotionEstimate emo;
+        if (emotionEnabled.load()) {
+            std::scoped_lock lock(emotionMutex);
+            emo = emotion.Analyze(pcm);
+        }
+        std::string text = Whisper(std::move(pcm));
+        if (text.empty()) return;
 
         TranscriptCallback cb;
         {
@@ -965,6 +980,16 @@ void VoiceEngine::EndListening() {
         pcm.swap(d.captured);
     }
     d.Post([&d, pcm = std::move(pcm)]() mutable { d.Transcribe(std::move(pcm)); });
+}
+
+void VoiceEngine::SetVoiceTap(VoiceTap* tap) noexcept { impl_->tap.store(tap, std::memory_order_release); }
+
+void VoiceEngine::TranscribeExternal(std::vector<float> pcm16k, std::function<void(std::string)> done) {
+    Impl& d = *impl_;
+    d.Post([&d, pcm = std::move(pcm16k), done = std::move(done)]() mutable {
+        std::string text = d.Whisper(std::move(pcm));
+        if (!text.empty() && done) done(std::move(text));
+    });
 }
 
 bool VoiceEngine::IsListening() const noexcept { return impl_->listening.load() || impl_->vadInSpeech.load(); }

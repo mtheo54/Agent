@@ -46,6 +46,14 @@ enum class ListenMode : std::uint8_t {
     VoiceActivity,  // micro ouvert en continu, segments de parole détectés automatiquement
 };
 
+// Robinet sur la voix telle qu'on l'entend (après effets) : le pont Discord la mêle à ton micro.
+// Appelé sur le thread de rendu audio (temps réel) : ne doit ni bloquer ni allouer.
+class VoiceTap {
+public:
+    virtual ~VoiceTap() = default;
+    virtual void OnVoiceOut(const float* mono, std::size_t frames, int sampleRate) noexcept = 0;
+};
+
 class VoiceEngine {
 public:
     // Texte reconnu + émotion perçue dans la voix (ton, intonation, énergie, débit).
@@ -105,6 +113,10 @@ public:
     void SetMicEffect(float amount01) noexcept;  // « vrai micro » : proximité, présence, compresseur, pièce
     void SetPitchLife(float amount01) noexcept;  // hauteur qui dérive et vire un peu (0 = voix droite)  // charge CPU 0 … 1 (plus de bugs quand le PC rame)
     [[nodiscard]] bool HasNeuralVoice() const noexcept;  // voix neuronale chargée
+
+    // Pont Discord : sortie de la voix (nullptr = aucun) et transcription de l'audio des autres (16 kHz mono).
+    void SetVoiceTap(VoiceTap* tap) noexcept;
+    void TranscribeExternal(std::vector<float> pcm16k, std::function<void(std::string)> done);
 
     [[nodiscard]] bool HasStt() const noexcept;
     [[nodiscard]] bool HasTts() const noexcept;

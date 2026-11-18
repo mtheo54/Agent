@@ -15,6 +15,7 @@
 //
 // Tout le travail tourne sur un thread dédié en priorité basse ; "pause" interrompt immédiatement.
 
+#include "audio/DiscordBridge.hpp"
 #include "audio/OmnisAnalyzer.hpp"
 #include "audio/VoiceEngine.hpp"
 #include "audio/WasapiLoopback.hpp"
@@ -29,6 +30,7 @@
 #include "core/MemoryDB.hpp"
 #include "core/PermissionGate.hpp"
 #include "core/ResourceGovernor.hpp"
+#include "modules/DesktopPilot.hpp"
 #include "modules/GameCoach.hpp"
 #include "modules/SelfTrainer.hpp"
 #include "modules/SystemControl.hpp"
@@ -74,6 +76,7 @@ struct OrchestratorDeps {
     std::filesystem::path dataDir;  // %LOCALAPPDATA%\CompanionAI (cache Data Dragon…)
     std::filesystem::path assetsDir;  // assets/ (lexique OMNIS…)
     std::function<HardwareInfo()> probe;  // mesure du matériel (VRAM libre en direct) pour choisir le cerveau en jeu
+    DiscordBridge* discord = nullptr;     // Omnis dans tes calls, par ton micro (nullptr = désactivé)
 };
 
 class AgentOrchestrator {
@@ -88,6 +91,7 @@ public:
 
     void OnTranscript(std::string text, EmotionEstimate emotion = {});  // thread-safe
     void OnBargeIn();  // l'utilisateur lui coupe la parole : il s'arrête et écoute
+    void OnCallSpeech(std::string text);  // ce qu'un pote vient de dire dans le call Discord (thread-safe)
     void UpdateConfig(const CompanionConfig& cfg);  // appliquée sur le thread de l'orchestrateur
     void SetOpenSettingsCallback(std::function<void()> cb) { onOpenSettings_ = std::move(cb); }
 
@@ -219,6 +223,17 @@ private:
     bool HandlePerfCommand(const std::string& lower, std::stop_token stop);
     void Calibrate(std::stop_token stop);
     void SayPerfReport();
+
+    // Prise en main du clavier / de la souris (« prends la main », AutoCAD, FL Studio)
+    DesktopPilot pilot_;
+    bool HandlePilot(const std::string& text, const std::string& lower, std::stop_token stop);
+    // Call Discord (par ton micro) : rejoindre / quitter, réagir à ce que disent les autres
+    bool HandleCallCommand(const std::string& lower, std::stop_token stop);
+    void HandleCallLine(const std::string& text, std::stop_token stop);
+    [[nodiscard]] std::string CallHint() const;
+    [[nodiscard]] bool InCall() const { return d_.discord && d_.discord->InCall(); }
+    std::deque<std::string> callLines_;  // derniers échanges du call (thread de l'orchestrateur)
+    std::chrono::steady_clock::time_point lastCallBait_{}, callMutedUntil_{};
     std::chrono::steady_clock::time_point lastAutoTraining_{};
     std::atomic<std::int64_t> listenUntilMs_{0};  // écoute du mix à la demande (hors FL Studio)
 };

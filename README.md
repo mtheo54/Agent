@@ -312,6 +312,51 @@ voix Piper `fr_FR-siwis-medium`, voix neuronale Qwen3-TTS 0.6B (`Serveurperso/Qw
 Imposer un modèle : un chemin dans `llmModel` / `llmGamingModel` (`companion.json`) au lieu de `"auto"`.
 Vision locale (optionnelle) : `mmproj-F16.gguf` du même dépôt que le cerveau, dans `llmMmproj`.
 
+## Il prend la main (clavier et souris)
+
+Dans l'appli au premier plan, à ta demande : **« prends la main et ouvre le mixer »**, **« clique sur
+Enregistrer »**, **« trace une ligne de 0,0 à 100,0 »** (AutoCAD), **« ouvre le piano roll »** (FL Studio)…
+
+1. Il écrit un plan court (au plus 10 actions, format imposé : il ne peut rien faire d'autre), puis l'**annonce**
+   (« J'ouvre le mixer et je te mets le kick en solo »).
+2. Ce qui peut faire perdre du travail (fermer, supprimer, enregistrer sous, `_ERASE`, `_PURGE`…) attend ton
+   **« oui »** à voix haute.
+3. Il exécute. **Tu bouges la souris ou tu touches une touche : il s'arrête net** et te rend la main (il distingue
+   tes gestes des siens). Il n'agit que dans la fenêtre où tu étais : si elle change, il s'arrête au lieu de taper
+   ailleurs.
+
+| Appli | Comment il agit |
+|---|---|
+| **AutoCAD / AutoCAD Electrical** | Commandes envoyées directement à AutoCAD (automatisation COM), noms anglais `_LINE`, `_AEWIRE`, `_AECOMPONENT`… qui marchent aussi sur un AutoCAD en français. Repli : tapées dans la ligne de commande. |
+| **FL Studio** | Raccourcis seulement (F5 playlist, F6 channel rack, F7 piano roll, F9 mixer, Ctrl+R export WAV…) : FL ne décrit pas ses boutons à Windows. |
+| **Autres applis** | Boutons, menus et onglets trouvés **par leur nom** (accessibilité de Windows) : il les invoque sans bouger ta souris quand c'est possible, sinon il clique au centre puis remet la souris où elle était. |
+
+**Jamais en jeu** : l'injection de clavier et de souris, c'est exactement ce que traquent Vanguard et VAC.
+Windows interdit aussi de piloter une appli lancée en administrateur depuis une appli qui ne l'est pas.
+`pilotEnabled: false` pour couper la fonction.
+
+## Dans tes calls Discord (par ton micro)
+
+Omnis ne pilote **pas** ton compte Discord : c'est interdit par Discord et ça peut te faire bannir. Sa voix passe
+**par ton micro**, grâce à un câble audio virtuel :
+
+1. Installe **VB-Cable** (gratuit, vb-audio.com), une seule fois.
+2. Dans Discord : *Paramètres → Voix et vidéo → Périphérique d'entrée* = **CABLE Output**.
+3. Omnis relaie ton vrai micro vers le câble dès que Discord tourne (10 ms de latence, ~0,1 % d'un cœur) :
+   tes potes t'entendent comme avant.
+4. **« Omnis, rejoins le call »** : il se présente (« c'est Omnis, l'IA de mon pote »), sa voix et ses bruitages
+   passent dans le call, et il **écoute le son de Discord** (seulement Discord, jamais le reste du PC) pour
+   comprendre ce que disent les autres.
+
+Dans le call, il répond quand on dit son nom, et lâche de temps en temps une vanne ou un petit rage bait sans
+qu'on l'appelle (`callBaitChance`, au plus une par minute). Mêmes règles qu'avec toi : jamais sur l'origine, la
+religion, la sexualité, le physique ou un handicap, et il lâche si quelqu'un est vraiment blessé.
+**N'importe qui dans le call** peut dire « Omnis, tais-toi » (il se calme 10 minutes) ou « Omnis, dégage »
+(il quitte le call). Toi : « quitte le call ».
+
+Mets un casque : avec des haut-parleurs, ton micro reprendrait sa voix une deuxième fois.
+Ton micro par défaut dans Windows doit rester ton vrai micro (pas le câble) ; sinon règle `discordMicDevice`.
+
 ## Build (Visual Studio 2022, x64)
 
 ```bash

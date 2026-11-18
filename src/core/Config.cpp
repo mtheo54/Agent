@@ -75,6 +75,11 @@ CompanionConfig LoadConfig(const std::filesystem::path& jsonFile) {
                     cfg.gamePresets[key] = v.get<std::string>();
                 }
         cfg.perfMonitor = j.value("perfMonitor", cfg.perfMonitor);
+        cfg.pilotEnabled = j.value("pilotEnabled", cfg.pilotEnabled);
+        cfg.discordBridge = j.value("discordBridge", cfg.discordBridge);
+        cfg.discordCableDevice = j.value("discordCableDevice", cfg.discordCableDevice);
+        cfg.discordMicDevice = j.value("discordMicDevice", cfg.discordMicDevice);
+        cfg.callBaitChance = std::clamp(j.value("callBaitChance", cfg.callBaitChance), 0.f, 1.f);
         cfg.perfAutoAdjust = j.value("perfAutoAdjust", cfg.perfAutoAdjust);
         cfg.perfMaxFpsDropPct = std::clamp(j.value("perfMaxFpsDropPct", cfg.perfMaxFpsDropPct), 0.5, 50.0);
         cfg.perfMaxLowDropPct = std::clamp(j.value("perfMaxLowDropPct", cfg.perfMaxLowDropPct), 0.5, 80.0);

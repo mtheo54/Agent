@@ -14,6 +14,7 @@
 //   Ctrl+Alt+O : réglages du personnage (aussi : « ouvre les réglages »)
 //   Ctrl+Alt+Q : quitter
 
+#include "audio/DiscordBridge.hpp"
 #include "audio/OmnisAnalyzer.hpp"
 #include "audio/VoiceEngine.hpp"
 #include "audio/WasapiLoopback.hpp"
@@ -335,8 +336,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     WasapiLoopback loopback;
     OmnisAnalyzer analyzer;
     SelfTrainer trainer(cfg, dataDir);
-    AgentOrchestrator orchestrator(
-        {cfg, governor, voice, db, brain, gate, web, claude, coach, system, loopback, analyzer, trainer, phrases, soundboard, dataDir, root / L"assets", &ProbeHardware});
+    // Discord par ton micro : relais micro (+ sa voix) vers le câble virtuel, écoute du son de Discord.
+    DiscordBridge discord;
+    AgentOrchestrator orchestrator({cfg, governor, voice, db, brain, gate, web, claude, coach, system, loopback, analyzer, trainer,
+                                    phrases, soundboard, dataDir, root / L"assets", &ProbeHardware, &discord});
 
     std::atomic<SystemMode> mode{SystemMode::Interactive};
     governor.SetModeListener([&](SystemMode previous, SystemMode current) {
@@ -435,6 +438,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     });
 
     orchestrator.Start();
+    if (cfg.discordBridge) {
+        DiscordBridgeConfig dc;
+        dc.cableDevice = log::Widen(cfg.discordCableDevice);
+        dc.micDevice = log::Widen(cfg.discordMicDevice);
+        // Phrases des autres -> Whisper (file du moteur de voix) -> orchestrateur.
+        discord.Start(dc, [&voice, &orchestrator](std::vector<float> pcm) {
+            voice.TranscribeExternal(std::move(pcm), [&orchestrator](std::string text) { orchestrator.OnCallSpeech(std::move(text)); });
+        });
+        voice.SetVoiceTap(&discord);  // sa voix (et ses bruitages) part dans le call quand il l'a rejoint
+    }
     coach.Start();
     governor.Start();
 
@@ -569,6 +582,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     settings.Close();
     governor.Stop();      // révoque un éventuel bail d'entraînement
     orchestrator.Stop();  // interrompt la génération en cours
+    voice.SetVoiceTap(nullptr);
+    discord.Stop();
     coach.Stop();
     voice.Shutdown();
     brain.Unload();

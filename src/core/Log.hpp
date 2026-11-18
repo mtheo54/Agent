@@ -31,4 +31,11 @@ inline std::string Narrow(std::wstring_view w) {
     return s;
 }
 
+inline std::wstring Widen(std::string_view s) {
+    const int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), nullptr, 0);
+    std::wstring w(static_cast<size_t>(n), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), w.data(), n);
+    return w;
+}
+
 }  // namespace companion::log
