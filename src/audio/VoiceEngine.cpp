@@ -259,8 +259,17 @@ public:
             return false;
         }
 
-        const std::string dataPath = log::Narrow(espeakData.wstring());
-        if (espeak_Initialize(AUDIO_OUTPUT_SYNCHRONOUS, 0, dataPath.c_str(), 0) < 0 ||
+        // espeak-ng ouvre ses fichiers avec fopen (page de code ANSI), pas en UTF-8 : un accent dans le chemin
+        // (C:\Users\Théo\...) le rendrait muet. Chemin court 8.3 (ASCII) ; sinon nullptr = espeak cherche
+        // espeak-ng-data à côté de l'exe, lui-même en ANSI (cohérent).
+        std::string dataPath;
+        {
+            wchar_t shortPath[MAX_PATH];
+            const DWORD n = GetShortPathNameW(espeakData.c_str(), shortPath, MAX_PATH);
+            const std::wstring w = n && n < MAX_PATH ? std::wstring(shortPath, n) : espeakData.wstring();
+            if (std::ranges::all_of(w, [](wchar_t c) { return c < 128; })) dataPath = log::Narrow(w);
+        }
+        if (espeak_Initialize(AUDIO_OUTPUT_SYNCHRONOUS, 0, dataPath.empty() ? nullptr : dataPath.c_str(), 0) < 0 ||
             espeak_SetVoiceByName(voice_.c_str()) != EE_OK) {
             log::Info("espeak-ng: initialisation impossible (données: {})", dataPath);
             return false;

@@ -37,6 +37,18 @@
 #include "network/WebResearcher.hpp"
 #include "render/OverlayWindow.hpp"
 #include "core/Persona.hpp"
+#include "core/BaitBank.hpp"
+#if defined(_MSC_VER)
+#include <intrin.h>
+#else
+#include <cpuid.h>
+#endif
+#if COMPANION_WITH_LLAMA
+#include "llama.h"
+#endif
+#if COMPANION_WITH_ESPEAK
+#include <espeak-ng/speak_lib.h>
+#endif
 #include "render/CartoonAvatar.hpp"
 #include "ui/ConfigWindow.hpp"
 
@@ -51,6 +63,8 @@
 #include <chrono>
 #include <filesystem>
 #include <format>
+#include <fstream>
+#include <ranges>
 #include <mutex>
 #include <vector>
 #include <string>
@@ -169,9 +183,123 @@ void SetGameIsolation(bool on) {
         setGpuClass(GetCurrentProcess(), on ? 1 /*BELOW_NORMAL*/ : 2 /*NORMAL*/);
 }
 
+// Build « zen4 » (l'installateur) : le cerveau utilise AVX-512. Sur un processeur sans, on prévient au lieu de planter.
+[[maybe_unused]] bool CpuHasAvx512() {
+#if defined(_MSC_VER)
+    int r[4]{};
+    __cpuidex(r, 7, 0);
+    const bool cpu = (r[1] >> 16) & 1;  // AVX512F
+    __cpuid(r, 1);
+    const bool osx = (r[2] >> 27) & 1;  // OSXSAVE
+    return cpu && osx && (_xgetbv(0) & 0xE6) == 0xE6;  // registres zmm sauvegardés par Windows
+#else
+    unsigned a = 0, b = 0, c = 0, d = 0;
+    if (!__get_cpuid_count(7, 0, &a, &b, &c, &d) || !((b >> 16) & 1)) return false;
+    __get_cpuid(1, &a, &b, &c, &d);
+    if (!((c >> 27) & 1)) return false;
+    unsigned lo = 0, hi = 0;
+    __asm__ volatile("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0));
+    return (lo & 0xE6) == 0xE6;
+#endif
+}
+
+// --selftest : vérifie que tout ce qui est livré marche sur CE PC, sans modèle et sans rien télécharger.
+// Rapport dans %LOCALAPPDATA%\CompanionAI\selftest.txt (et dans la console qui l'a lancé). Code 0 = tout va bien.
+int RunSelfTest() {
+    const auto root = ExeDir();
+    std::string report = "Omnis — auto-test\n";
+    int failures = 0;
+    auto check = [&](bool ok, bool critical, const std::string& what) {
+        report += (ok ? "  OK    " : critical ? "  ÉCHEC " : "  (info) ") + what + "\n";
+        if (!ok && critical) ++failures;
+    };
+    namespace fs = std::filesystem;
+    check(fs::exists(root / L"assets" / L"avatar" / L"rig.json"), true, "personnage (assets/avatar/rig.json)");
+    check(fs::exists(root / L"espeak-ng-data" / L"phondata") && fs::exists(root / L"espeak-ng-data" / L"fr_dict"), true,
+          "données de phonèmes (espeak-ng-data, français)");
+    const CompanionConfig cfg = LoadConfig(root / L"companion.json");
+    check(true, false, "réglages : " + std::string(fs::exists(root / L"companion.json") ? "companion.json" : "par défaut"));
+
+    BaitBank bank;
+    const bool baits = bank.Load(root / L"assets" / L"persona" / L"baits.json", DataDir() / L"baits_learned.json");
+    check(baits && bank.Size() > 0, true, std::format("banque de vannes ({} formes)", bank.Size()));
+
+    const HardwareInfo hw = ProbeHardware();
+    check(!hw.gpuName.empty(), false, std::format("carte graphique : {} ({:.1f} Go), RAM {:.0f} Go", hw.gpuName, hw.vramGiB, hw.ramGiB));
+    const VoicePlan vplan = ModelPlanner::PlanVoice(hw, cfg.neuralVoice);
+    const BrainChoice normal = ModelPlanner::PlanNormal(hw, vplan.neural);
+    check(normal.model != nullptr, true, "plan des modèles : " + normal.why);
+    std::uint64_t total = 0;
+    for (const auto& dl : ModelPlanner::Required(hw, cfg.neuralVoice && vplan.neural)) total += dl.bytes;
+    check(true, false, std::format("à télécharger au 1er lancement : {:.1f} Go", static_cast<double>(total) / 1e9));
+
+#if COMPANION_WITH_ESPEAK
+    const bool esp = espeak_Initialize(AUDIO_OUTPUT_SYNCHRONOUS, 0, nullptr, 0) > 0 && espeak_SetVoiceByName("fr") == EE_OK;
+    check(esp, true, "espeak-ng (voix Piper) : français chargé");
+    if (esp) espeak_Terminate();
+#endif
+#if COMPANION_WITH_QWENTTS
+    HMODULE qwen = LoadLibraryW((root / L"qwen.dll").c_str());
+    if (!qwen) qwen = LoadLibraryW((root / L"libqwen.dll").c_str());
+    check(qwen && GetProcAddress(qwen, "qt_init"), false,
+          std::format("voix neuronale (qwen.dll){}", qwen ? "" : std::format(" : erreur {}", GetLastError())));
+    if (qwen) FreeLibrary(qwen);
+#endif
+    {
+        const fs::path tmp = fs::temp_directory_path() / L"omnis-selftest.db";
+        {
+            MemoryDB db;
+            check(db.Open(tmp), true, "mémoire (SQLite + FTS5)");
+        }
+        std::error_code ec;
+        for (const wchar_t* ext : {L"", L"-wal", L"-shm"}) fs::remove(fs::path(tmp.wstring() + ext), ec);
+    }
+#if COMPANION_WITH_LLAMA
+    llama_backend_init();
+    std::string devices;
+    for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+        ggml_backend_dev_t d = ggml_backend_dev_get(i);
+        devices += std::format("{}{} ({})", devices.empty() ? "" : ", ", ggml_backend_dev_name(d), ggml_backend_dev_description(d));
+    }
+    const bool gpuBrain = std::ranges::any_of(std::views::iota(size_t{0}, ggml_backend_dev_count()), [](size_t i) {
+        return ggml_backend_dev_type(ggml_backend_dev_get(i)) == GGML_BACKEND_DEVICE_TYPE_GPU;
+    });
+    check(!devices.empty(), true, "cerveau (llama.cpp) : " + devices);
+    check(gpuBrain, false, gpuBrain ? "cerveau sur la carte graphique possible (Vulkan)" : "pas de carte Vulkan vue : cerveau sur le processeur");
+    llama_backend_free();
+#endif
+    report += failures ? std::format("{} problème(s).\n", failures) : "Tout est prêt.\n";
+
+    std::error_code ec;
+    fs::create_directories(DataDir(), ec);
+    if (std::ofstream f(DataDir() / L"selftest.txt", std::ios::binary); f) f << report;
+    if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+        const std::wstring w = log::Widen(report);
+        DWORD written = 0;
+        WriteConsoleW(GetStdHandle(STD_OUTPUT_HANDLE), w.c_str(), static_cast<DWORD>(w.size()), &written, nullptr);
+    }
+    return failures ? 2 : 0;
+}
+
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
+#if defined(COMPANION_REQUIRES_AVX512)
+    if (!CpuHasAvx512()) {
+        if (cmdLine && std::wstring_view(cmdLine).find(L"--selftest") != std::wstring_view::npos) return 3;  // pas de fenêtre en test
+        MessageBoxW(nullptr,
+                    L"Cette version d'Omnis est optimisée pour les processeurs Ryzen 7000/9000 (AVX-512).\n"
+                    L"Ton processeur ne les a pas : installe la version « avx2 ».",
+                    L"Omnis", MB_ICONWARNING);
+        return 1;
+    }
+#endif
+    if (cmdLine && std::wstring_view(cmdLine).find(L"--selftest") != std::wstring_view::npos) {
+        if (FAILED(CoInitializeEx(nullptr, COINIT_MULTITHREADED))) return 1;
+        const int code = RunSelfTest();
+        CoUninitialize();
+        return code;
+    }
     // Processus enfant d'auto-entraînement (lancé par SelfTrainer dans un Job Object, priorité IDLE).
     if (cmdLine && std::wstring_view(cmdLine).find(L"--trainer") != std::wstring_view::npos) {
         SetPriorityClass(GetCurrentProcess(), PROCESS_MODE_BACKGROUND_BEGIN);  // E/S et mémoire basses

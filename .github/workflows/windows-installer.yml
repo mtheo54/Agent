@@ -1,0 +1,134 @@
+# Build Windows de référence (MSVC + Vulkan pour la RX 9060 XT) et installateur Omnis.
+# Résultat : OmnisSetup-<version>-zen4.exe dans la release « omnis-latest » du dépôt (et en artefact).
+name: Installateur Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths: ["src/**", "assets/**", "installer/**", "CMakeLists.txt", ".github/workflows/windows-installer.yml"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-installer-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Versions figées (mêmes que celles testées) : llama.cpp et whisper.cpp doivent partager la même époque de ggml.
+  LLAMA_REF: 5cb95167983f7484febb0e97c7b00887e265ebcf
+  WHISPER_REF: aba02defd6bb6ff5de63721c21e3456645c153e2
+  QWENTTS_REF: 2edb35f87b709a070b2d5379f77e5c52a1daa585
+  ESPEAK_REF: 688cb60368d6e0998f3632af8d1c3c2ad4191fc2
+  ORT_VERSION: 1.20.1
+  VULKAN_VERSION: 1.4.313.2
+  OMNIS_VERSION: 0.2.0
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        cpu: [zen4, avx2]   # zen4 = Ryzen 7000/9000 (AVX-512) ; avx2 = tout PC récent
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dépendances (sources figées)
+        run: |
+          function Clone($url, $dir, $ref, $sub) {
+            git init -q $dir; git -C $dir remote add origin $url
+            git -C $dir fetch -q --depth 1 origin $ref; git -C $dir checkout -q FETCH_HEAD
+            if ($sub) { git -C $dir submodule update -q --init --recursive --depth 1 }
+          }
+          Clone https://github.com/ggml-org/llama.cpp external/llama.cpp $env:LLAMA_REF $false
+          Clone https://github.com/ggml-org/whisper.cpp external/whisper.cpp $env:WHISPER_REF $false
+          Clone https://github.com/ServeurpersoCom/qwentts.cpp external/qwentts.cpp $env:QWENTTS_REF $true
+          Clone https://github.com/espeak-ng/espeak-ng $env:RUNNER_TEMP/espeak-src $env:ESPEAK_REF $false
+
+      - name: ONNX Runtime (NuGet officiel)
+        run: |
+          Invoke-WebRequest "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/$env:ORT_VERSION/microsoft.ml.onnxruntime.$env:ORT_VERSION.nupkg" -OutFile ort.zip
+          Expand-Archive ort.zip $env:RUNNER_TEMP/ort
+          New-Item -ItemType Directory -Force external/onnxruntime/include, external/onnxruntime/lib | Out-Null
+          Copy-Item $env:RUNNER_TEMP/ort/build/native/include/* external/onnxruntime/include/
+          Copy-Item $env:RUNNER_TEMP/ort/runtimes/win-x64/native/onnxruntime.* external/onnxruntime/lib/
+
+      - name: espeak-ng (phonèmes de la voix Piper)
+        run: |
+          $src = "$env:RUNNER_TEMP/espeak-src"
+          cmake -S $src -B $env:RUNNER_TEMP/espeak-build -A x64 -DBUILD_SHARED_LIBS=ON -DENABLE_TESTS=OFF `
+            -DUSE_MBROLA=OFF -DUSE_LIBSONIC=OFF -DUSE_LIBPCAUDIO=OFF -DUSE_ASYNC=OFF -DESPEAK_BUILD_MANPAGES=OFF `
+            -DCMAKE_INSTALL_PREFIX="$PWD/external/espeak-ng"
+          cmake --build $env:RUNNER_TEMP/espeak-build --config Release --parallel
+          cmake --install $env:RUNNER_TEMP/espeak-build --config Release
+          $e = "external/espeak-ng"
+          if (-not (Test-Path "$e/espeak-ng-data") -and (Test-Path "$e/share/espeak-ng-data")) { Move-Item "$e/share/espeak-ng-data" "$e/espeak-ng-data" }
+          # Français + anglais seulement (le reste des langues : ~30 Mo inutiles).
+          Get-ChildItem "$e/espeak-ng-data" -Filter *_dict | Where-Object { $_.Name -notin 'fr_dict','en_dict' } | Remove-Item
+          Get-ChildItem -Recurse $e -Include *.dll,*.lib,speak_lib.h | ForEach-Object { $_.FullName }
+
+      - name: Vulkan SDK (cerveau sur la carte graphique)
+        run: |
+          Invoke-WebRequest "https://sdk.lunarg.com/sdk/download/$env:VULKAN_VERSION/windows/vulkansdk-windows-X64-$env:VULKAN_VERSION.exe" -OutFile "$env:RUNNER_TEMP/vk.exe"
+          & "$env:RUNNER_TEMP/vk.exe" --root C:\VulkanSDK --accept-licenses --default-answer --confirm-command install
+          "VULKAN_SDK=C:\VulkanSDK" >> $env:GITHUB_ENV
+          "C:\VulkanSDK\Bin" >> $env:GITHUB_PATH
+
+      - name: Compilation (Release, LTO)
+        run: |
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCOMPANION_CPU_TARGET=${{ matrix.cpu }} `
+            -DONNXRUNTIME_ROOT="$PWD/external/onnxruntime" -DESPEAK_NG_ROOT="$PWD/external/espeak-ng"
+          cmake --build build --config Release --parallel 2>&1 | Tee-Object build.log
+          if ($LASTEXITCODE -ne 0) {
+            # Erreurs remontées en annotations (lisibles sans ouvrir les logs).
+            Select-String -Path build.log -Pattern ': (fatal )?error ' | Select-Object -First 40 | ForEach-Object { "::error::$($_.Line.Trim())" }
+            exit 1
+          }
+
+      - name: Dossier d'installation
+        run: |
+          cmake --install build --config Release --prefix stage
+          $esp = Get-ChildItem -Recurse external/espeak-ng -Filter *.dll | Select-Object -First 1
+          if ($esp) { Copy-Item $esp.FullName stage/ }
+          if (-not (Test-Path stage/espeak-ng-data/phondata)) { "::error::espeak-ng-data manquant"; exit 1 }
+          foreach ($f in 'CompanionAI.exe','onnxruntime.dll','qwen.dll') { if (-not (Test-Path "stage/$f")) { "::error::$f manquant"; exit 1 } }
+          Invoke-WebRequest https://aka.ms/vs/17/release/vc_redist.x64.exe -OutFile "$env:RUNNER_TEMP/vc_redist.x64.exe"
+          Get-ChildItem -Recurse stage | Measure-Object -Sum Length | ForEach-Object { "stage : {0:N1} Mo" -f ($_.Sum / 1MB) }
+
+      - name: Test de démarrage (sans modèles, sans écran)
+        run: |
+          # --selftest : charge la config, sonde le matériel, initialise la voix et sort. Ne télécharge rien.
+          $p = Start-Process stage/CompanionAI.exe -ArgumentList '--selftest' -PassThru -Wait -WorkingDirectory stage
+          if ($p.ExitCode -eq 3) { "::warning::processeur du serveur sans AVX-512 : auto-test du build zen4 sauté"; exit 0 }
+          if ($p.ExitCode -ne 0) { "::error::selftest code $($p.ExitCode)"; Get-Content "$env:LOCALAPPDATA/CompanionAI/selftest.txt" -ErrorAction SilentlyContinue; exit 1 }
+          Get-Content "$env:LOCALAPPDATA/CompanionAI/selftest.txt"
+
+      - name: Installateur
+        run: |
+          choco install innosetup -y --no-progress | Out-Null
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Q "/DStage=$PWD\stage" "/DVersion=$env:OMNIS_VERSION" `
+            "/DCpuTarget=${{ matrix.cpu }}" "/DVcRedist=$env:RUNNER_TEMP\vc_redist.x64.exe" installer\omnis.iss
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Get-ChildItem dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OmnisSetup-${{ matrix.cpu }}
+          path: dist/*.exe
+
+      - name: Release « omnis-latest »
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view omnis-latest 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create omnis-latest --title "Omnis (dernier build)" --notes "Installateurs construits automatiquement depuis main. zen4 = Ryzen 7000/9000 ; avx2 = autres PC." --prerelease
+          }
+          gh release upload omnis-latest (Get-ChildItem dist/*.exe).FullName --clobber

@@ -36,7 +36,9 @@ std::wstring FriendlyName(IMMDevice* dev) {
     PROPVARIANT v;
     PropVariantInit(&v);
     std::wstring name;
-    if (SUCCEEDED(props->GetValue(PKEY_Device_FriendlyName, &v)) && v.vt == VT_LPWSTR) name = v.pwszVal;
+    // PKEY_Device_FriendlyName, défini ici : la clé de l'en-tête n'est qu'une déclaration (sans initguid.h, lien impossible).
+    static constexpr PROPERTYKEY kFriendlyName = {{0xa45c254e, 0xdf1c, 0x4efd, {0x80, 0x20, 0x67, 0xd1, 0x46, 0xa8, 0x50, 0xe0}}, 14};
+    if (SUCCEEDED(props->GetValue(kFriendlyName, &v)) && v.vt == VT_LPWSTR) name = v.pwszVal;
     PropVariantClear(&v);
     return name;
 }

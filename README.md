@@ -545,15 +545,37 @@ le build de Jinx » n'ouvre pas le surf pour la nuit.
 Mets un casque : avec des haut-parleurs, ton micro reprendrait sa voix une deuxième fois.
 Ton micro par défaut dans Windows doit rester ton vrai micro (pas le câble) ; sinon règle `discordMicDevice`.
 
+## Installer Omnis
+
+Le plus simple : **`OmnisSetup-<version>-zen4.exe`** dans la release « omnis-latest » du dépôt (construit
+automatiquement par `.github/workflows/windows-installer.yml` : MSVC, Vulkan, LTO).
+
+- `zen4` : Ryzen 7000/9000 (AVX-512, le plus rapide sur un 7500F) ; `avx2` : n'importe quel autre PC récent.
+- Installé pour ton compte seulement, sans droits admin, dans `%LOCALAPPDATA%\Programs\Omnis`.
+- Inclus : Omnis, ONNX Runtime, espeak-ng (fr/en), voix neuronale, personnage, banque de vannes, runtime
+  Visual C++ (installé seulement s'il manque). **Pas inclus** : les modèles (11,6 Go sur une RX 9060 XT),
+  téléchargés au premier lancement selon ton PC, et VB-Cable (case à cocher : ouvre sa page).
+- Options : raccourci Bureau, lancement au démarrage de Windows.
+- Désinstallation : il demande s'il faut aussi effacer les modèles, la mémoire et les fiches de voix.
+
+Vérifier une installation : `CompanionAI.exe --selftest` (rapport dans `%LOCALAPPDATA%\CompanionAI\selftest.txt`).
+
 ## Build (Visual Studio 2022, x64)
 
 ```bash
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCOMPANION_CPU_TARGET=zen4
 ```
 
 ```bash
 cmake --build build --config Release
 ```
+
+```bash
+cmake --install build --config Release --prefix stage
+```
+
+`COMPANION_CPU_TARGET` : `native` (défaut, la machine qui compile), `zen4` ou `avx2` (builds distribuables).
+L'installateur : `iscc /DStage=<stage> /DVcRedist=<vc_redist.x64.exe> installer\omnis.iss` (Inno Setup 6).
 
 ## Raccourcis
 

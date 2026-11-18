@@ -1,0 +1,20 @@
+Omnis embarque ces composants libres. Merci à leurs auteurs.
+
+llama.cpp / ggml        MIT          https://github.com/ggml-org/llama.cpp
+whisper.cpp             MIT          https://github.com/ggml-org/whisper.cpp
+qwentts.cpp             MIT          https://github.com/ServeurpersoCom/qwentts.cpp
+ONNX Runtime            MIT          https://github.com/microsoft/onnxruntime
+espeak-ng               GPL v3       https://github.com/espeak-ng/espeak-ng
+                        (bibliothèque libespeak-ng.dll et espeak-ng-data, non modifiées ; le code source
+                        exact est celui du commit 688cb60368d6e0998f3632af8d1c3c2ad4191fc2 du dépôt ci-dessus)
+SQLite                  domaine public  https://sqlite.org
+nlohmann/json           MIT          https://github.com/nlohmann/json
+
+Téléchargés au premier lancement (pas inclus dans l'installateur), selon ton PC :
+Qwen3.5 (cerveau, mmproj)     Apache 2.0   https://huggingface.co/unsloth
+Qwen3-TTS (voix neuronale)    Apache 2.0   https://huggingface.co/Serveurperso/Qwen3-TTS-GGUF
+Whisper (reconnaissance)      MIT          https://huggingface.co/ggerganov/whisper.cpp
+Piper fr_FR-siwis-medium      voir la fiche du modèle  https://huggingface.co/rhasspy/piper-voices
+yt-dlp, deno (entraînement vidéo, à la demande, empreinte SHA-256 vérifiée)  Unlicense / MIT
+
+Outils d'autres éditeurs, jamais inclus : VB-Cable (VB-Audio, à installer soi-même pour parler dans Discord).

@@ -14,6 +14,11 @@ option(COMPANION_WITH_WHISPER "STT via whisper.cpp (external/whisper.cpp)"      
 option(COMPANION_WITH_ONNX    "TTS Piper via ONNX Runtime (prebuilt, ONNXRUNTIME_ROOT)" ON)
 option(COMPANION_WITH_ESPEAK  "Phonemisation espeak-ng pour Piper (ESPEAK_NG_ROOT)"  ON)
 option(COMPANION_WITH_QWENTTS "Voix neuronale Qwen3-TTS via qwentts.cpp (external/qwentts.cpp)" ON)
+# Processeur visé par les calculs du cerveau (ggml) :
+#   native : la machine qui compile (build perso) ; zen4 : Ryzen 7000/9000 (AVX-512, l'installateur) ;
+#   avx2 : n'importe quel PC x64 depuis ~2015.
+set(COMPANION_CPU_TARGET "native" CACHE STRING "native | zen4 | avx2")
+set_property(CACHE COMPANION_CPU_TARGET PROPERTY STRINGS native zen4 avx2)
 set(ONNXRUNTIME_ROOT "${CMAKE_SOURCE_DIR}/external/onnxruntime" CACHE PATH "Package onnxruntime-win-x64-*")
 set(ESPEAK_NG_ROOT   "${CMAKE_SOURCE_DIR}/external/espeak-ng"   CACHE PATH "Install espeak-ng (include/, lib/, espeak-ng-data/)")
 
@@ -29,6 +34,11 @@ endif()
 # ----------------------------------------------------------------------------
 # Dépendances
 # ----------------------------------------------------------------------------
+if(MINGW)
+    # MinGW vise Windows XP par défaut : ggml a besoin des API de Windows 10 (THREAD_POWER_THROTTLING…).
+    add_compile_definitions(_WIN32_WINNT=0x0A00 WINVER=0x0A00)
+endif()
+
 include(FetchContent)
 FetchContent_Declare(nlohmann_json
     URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
@@ -49,10 +59,32 @@ target_compile_definitions(sqlite3 PRIVATE SQLITE_ENABLE_FTS5 SQLITE_THREADSAFE=
 # llama.cpp est ajouté en premier ; whisper.cpp réutilise la cible ggml existante.
 # Garde des versions de llama.cpp et whisper.cpp proches (même époque de ggml).
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-set(GGML_NATIVE ON  CACHE BOOL "" FORCE)   # Zen 4 : AVX-512
+if(COMPANION_CPU_TARGET STREQUAL "native")
+    set(GGML_NATIVE ON CACHE BOOL "" FORCE)
+else()
+    # Build distribuable : jeu d'instructions fixé (jamais celui de la machine de build, ex. AMX d'un serveur).
+    set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
+    foreach(f AVX AVX2 FMA F16C BMI2)
+        set(GGML_${f} ON CACHE BOOL "" FORCE)
+    endforeach()
+    set(_zen4 OFF)
+    if(COMPANION_CPU_TARGET STREQUAL "zen4")
+        set(_zen4 ON)
+    endif()
+    foreach(f AVX512 AVX512_VBMI AVX512_VNNI AVX512_BF16)
+        set(GGML_${f} ${_zen4} CACHE BOOL "" FORCE)
+    endforeach()
+    set(GGML_AVX_VNNI OFF CACHE BOOL "" FORCE)
+    set(GGML_AMX_TILE OFF CACHE BOOL "" FORCE)
+    set(GGML_AMX_INT8 OFF CACHE BOOL "" FORCE)
+    set(GGML_AMX_BF16 OFF CACHE BOOL "" FORCE)
+endif()
 set(GGML_CUDA   OFF CACHE BOOL "" FORCE)
 set(GGML_HIP    OFF CACHE BOOL "" FORCE)
 set(GGML_VULKAN ${COMPANION_LLM_VULKAN} CACHE BOOL "" FORCE)  # RX 9060 XT ; whisper reste sur CPU
+if(MINGW)
+    set(GGML_OPENMP OFF CACHE BOOL "" FORCE)  # pool de threads de ggml : pas de libgomp-1.dll à livrer
+endif()
 
 if(COMPANION_WITH_LLAMA)
     if(NOT EXISTS "${CMAKE_SOURCE_DIR}/external/llama.cpp/CMakeLists.txt")
@@ -110,7 +142,13 @@ if(COMPANION_WITH_QWENTTS)
         SOURCE_DIR "${CMAKE_SOURCE_DIR}/external/qwentts.cpp"
         BINARY_DIR "${CMAKE_BINARY_DIR}/qwentts"
         CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release -DQWEN_SHARED=ON -DBUILD_SHARED_LIBS=OFF
-                   -DGGML_VULKAN=${COMPANION_LLM_VULKAN}
+                   -DGGML_VULKAN=${COMPANION_LLM_VULKAN} -DGGML_NATIVE=${GGML_NATIVE}
+                   # Son ggml (fork) ne compile pas en AVX-512 ; la voix tourne sur la carte, AVX2 suffit en repli.
+                   -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON -DGGML_BMI2=ON
+                   -DGGML_AVX512=OFF -DGGML_AVX512_VBMI=OFF -DGGML_AVX512_VNNI=OFF -DGGML_AVX512_BF16=OFF
+                   $<$<BOOL:${MINGW}>:-DGGML_OPENMP=OFF>
+                   $<$<BOOL:${CMAKE_TOOLCHAIN_FILE}>:-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}>
+                   $<$<BOOL:${MINGW}>:-DCMAKE_SHARED_LINKER_FLAGS=-static>
         BUILD_COMMAND ${CMAKE_COMMAND} --build . --config Release --target qwen
         INSTALL_COMMAND ""
         BUILD_ALWAYS OFF)
@@ -176,6 +214,7 @@ target_compile_definitions(CompanionAI PRIVATE
     $<$<BOOL:${COMPANION_WITH_ONNX}>:COMPANION_WITH_ONNX=1>
     $<$<AND:$<BOOL:${COMPANION_WITH_ONNX}>,$<BOOL:${COMPANION_WITH_ESPEAK}>>:COMPANION_WITH_ESPEAK=1>
     $<$<BOOL:${COMPANION_WITH_QWENTTS}>:COMPANION_WITH_QWENTTS=1>
+    $<$<STREQUAL:${COMPANION_CPU_TARGET},zen4>:COMPANION_REQUIRES_AVX512=1>
 )
 if(COMPANION_WITH_QWENTTS)
     target_include_directories(CompanionAI PRIVATE "${CMAKE_SOURCE_DIR}/external/qwentts.cpp/src")  # types seulement
@@ -188,6 +227,10 @@ if(MSVC)
     set_property(TARGET CompanionAI PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
 else()
     target_compile_options(CompanionAI PRIVATE -Wall -Wextra -Wno-unknown-pragmas)
+endif()
+if(MINGW)
+    # wWinMain + runtime C++ embarqué (aucune DLL de GCC à livrer).
+    target_link_options(CompanionAI PRIVATE -municode -static -static-libgcc -static-libstdc++)
 endif()
 
 target_link_libraries(CompanionAI PRIVATE
@@ -227,6 +270,36 @@ endif()
 if(COMPANION_WITH_QWENTTS)
     add_custom_command(TARGET CompanionAI POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${CMAKE_BINARY_DIR}/qwentts/$<IF:$<BOOL:${MSVC}>,Release/,>$<IF:$<BOOL:${WIN32}>,qwen.dll,libqwen.so>"
+                "${CMAKE_BINARY_DIR}/qwentts/$<IF:$<BOOL:${MSVC}>,Release/,>$<IF:$<BOOL:${MINGW}>,libqwen.dll,qwen.dll>"
                 "$<TARGET_FILE_DIR:CompanionAI>")
+endif()
+
+# ----------------------------------------------------------------------------
+# Installation (cmake --install build --prefix <dossier>) : ce que l'installateur livre.
+# Les modèles NE sont PAS livrés : Omnis télécharge au 1er lancement ceux qui conviennent au PC.
+# ----------------------------------------------------------------------------
+install(TARGETS CompanionAI RUNTIME DESTINATION .)
+install(DIRECTORY assets/ DESTINATION assets PATTERN ".gitkeep" EXCLUDE)
+install(FILES companion.example.json README.md installer/THIRD_PARTY.txt DESTINATION .)
+if(COMPANION_WITH_ONNX)
+    install(FILES "${ONNXRUNTIME_ROOT}/lib/onnxruntime.dll" DESTINATION .)
+endif()
+if(COMPANION_WITH_ONNX AND COMPANION_WITH_ESPEAK)
+    foreach(dll espeak-ng.dll libespeak-ng.dll)
+        if(EXISTS "${ESPEAK_NG_ROOT}/bin/${dll}")
+            install(FILES "${ESPEAK_NG_ROOT}/bin/${dll}" DESTINATION .)
+        endif()
+    endforeach()
+    # Piper a besoin des données de phonèmes à côté de l'exe (main.cpp : <exe>/espeak-ng-data).
+    if(EXISTS "${ESPEAK_NG_ROOT}/espeak-ng-data")
+        install(DIRECTORY "${ESPEAK_NG_ROOT}/espeak-ng-data" DESTINATION .)
+    elseif(EXISTS "${ESPEAK_NG_ROOT}/share/espeak-ng-data")
+        install(DIRECTORY "${ESPEAK_NG_ROOT}/share/espeak-ng-data" DESTINATION .)
+    else()
+        message(WARNING "espeak-ng-data introuvable dans ${ESPEAK_NG_ROOT} : la voix Piper ne pourra pas parler.")
+    endif()
+endif()
+if(COMPANION_WITH_QWENTTS)
+    install(FILES "${CMAKE_BINARY_DIR}/qwentts/$<IF:$<BOOL:${MSVC}>,Release/,>$<IF:$<BOOL:${MINGW}>,libqwen.dll,qwen.dll>"
+            DESTINATION . RENAME qwen.dll)
 endif()
