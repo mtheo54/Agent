@@ -13,6 +13,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <deque>
 #include <functional>
 #include <mutex>
@@ -32,21 +33,26 @@ public:
     void Start(std::function<bool()> shouldSample);
     void Stop();
 
-    // Le pseudo vu « en train de parler » pendant la plupart de [from, to] ; vide si personne ou plusieurs.
-    [[nodiscard]] std::string SpeakerBetween(Clock::time_point from, Clock::time_point to) const;
+    struct Shown {
+        std::string name;                 // pseudo affiché (peut changer pour une blague)
+        std::vector<std::uint8_t> avatar;  // empreinte de l'avatar (vide si inconnue)
+        [[nodiscard]] bool empty() const { return name.empty(); }
+    };
+    // Celui vu « en train de parler » pendant la plupart de [from, to] ; vide si personne ou plusieurs.
+    [[nodiscard]] Shown SpeakerBetween(Clock::time_point from, Clock::time_point to) const;
     // Discord a été lu avec succès il y a peu (fenêtre visible, pseudos accessibles) ?
     [[nodiscard]] bool Seeing() const;
 
 private:
     void Main(std::stop_token st);
-    std::vector<std::string> Sample();
+    std::vector<Shown> Sample();
 
     std::function<bool()> should_;
     std::jthread thread_;
     mutable std::mutex mutex_;
     struct Snap {
         Clock::time_point at;
-        std::vector<std::string> names;
+        std::vector<Shown> people;
     };
     std::deque<Snap> timeline_;
     Clock::time_point lastSeen_{};

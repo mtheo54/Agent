@@ -373,6 +373,22 @@ Ce que donnent les mesures :
 | Micros corrects | 99 % de bonnes attributions |
 | Moquerie | Reprochée seulement à quelqu'un identifié sans ambiguïté. Sinon il demande « qui a osé ? » |
 
+**Les pseudos, ça se change pour rigoler : l'identité, c'est la voix.** Le pseudo n'est qu'un surnom de la fiche.
+Pour savoir qui est derrière un pseudo, il suit cet ordre :
+
+1. **la voix**, si elle est nette ;
+2. **l'avatar**, s'il n'appartient qu'à une personne (les avatars par défaut de Discord se ressemblent tous) ;
+3. le pseudo.
+
+| Blague | Ce qu'il fait |
+|---|---|
+| Karim se renomme « Le Boss » | Il sait que c'est Karim, garde « Karim » dans ses anciens pseudos et le vanne là-dessus. Si la voix n'est pas nette sur une seule phrase, il attend jusqu'à 4 phrases et compare leur moyenne avant de décider « renommage » ou « nouvelle personne ». |
+| Tom prend le pseudo de Léa pour piéger tout le monde | Sa voix le trahit : la fiche de Léa reste à Léa, et il grille Tom devant tout le monde (« t'as beau t'appeler Léa… »). |
+| Deux fiches pour la même voix (renommage repéré en retard) | Fusionnées à la sortie du call, anciens pseudos compris. |
+
+Mesuré avec des micros dégradés : 15 renommages sur 15 retrouvés, aucune fiche créée à tort, en général dès la
+1re phrase. Le pseudo usurpé est démasqué à chaque essai.
+
 **« Omnis, écoute le call »** (mode écoute) : il est là, écoute tout le monde et apprend les pseudos et les voix,
 mais ne parle que si on l'appelle. « Parle normalement » pour le relâcher. Le meilleur moyen de démarrer : une
 soirée en mode écoute avec Discord visible, et il connaît tout le monde. Chaque pote a sa **fiche** (sur ton PC seulement,

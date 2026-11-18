@@ -52,6 +52,8 @@ bool CallPeople::Load(const std::filesystem::path& file) {
             for (const auto& s : p.value("said", std::vector<std::string>{})) c.said.push_back(s);
             for (const auto& s : p.value("mocks", std::vector<std::string>{})) c.mocks.push_back(s);
             c.avoid = p.value("avoid", std::vector<std::string>{});
+            for (const auto& a : p.value("aliases", std::vector<std::string>{})) c.aliases.push_back(a);
+            c.avatar = p.value("avatar", std::vector<std::uint8_t>{});
             c.lastSeen = p.value("lastSeen", std::int64_t{0});
             if (!c.id.empty() && !c.voices.empty()) people_.push_back(std::move(c));
         }
@@ -59,6 +61,7 @@ bool CallPeople::Load(const std::filesystem::path& file) {
         people_.clear();
         return false;
     }
+    MergeDuplicates();
     return true;
 }
 
@@ -76,6 +79,8 @@ bool CallPeople::Save() const {
                                {"said", std::vector<std::string>(p.said.begin(), p.said.end())},
                                {"mocks", std::vector<std::string>(p.mocks.begin(), p.mocks.end())},
                                {"avoid", p.avoid},
+                               {"aliases", std::vector<std::string>(p.aliases.begin(), p.aliases.end())},
+                               {"avatar", p.avatar},
                                {"lastSeen", p.lastSeen}});
     std::error_code ec;
     std::filesystem::create_directories(file_.parent_path(), ec);
@@ -173,27 +178,160 @@ CallPeople::Match CallPeople::Identify(const std::vector<float>& emb, bool allow
     return m;
 }
 
-CallPeople::Match CallPeople::Enroll(const std::vector<float>& emb, const std::string& name, std::int64_t now) {
+namespace {
+bool SameAvatarSig(const std::vector<std::uint8_t>& a, const std::vector<std::uint8_t>& b) {
+    if (a.size() != 48 || b.size() != 48) return false;
+    int diff = 0;
+    for (std::size_t i = 0; i < 48; ++i) diff += std::abs(static_cast<int>(a[i]) - static_cast<int>(b[i]));
+    return diff / 48 < 16;
+}
+}  // namespace
+
+CallPeople::Match CallPeople::Resolve(const std::vector<float>* emb, const std::string& shownName,
+                                      const std::vector<std::uint8_t>& avatar, std::int64_t now) {
     Match m;
-    m.fromDiscord = m.sure = m.strong = true;
-    m.score = 1.f;
-    m.person = ByName(name);
-    if (!m.person) {
-        // Une voix déjà connue sans prénom, qui ressemble nettement à celle-ci : c'était elle, on la nomme.
+    m.fromDiscord = m.sure = true;
+    // 1) La voix, si elle est nette (seuil fort + marge) : un pseudo se change en 2 s, pas une voix.
+    CallPerson* byVoice = nullptr;   // voix nette : assez pour démasquer un faux pseudo
+    CallPerson* voiceSure = nullptr;  // voix sûre : assez pour suivre quelqu'un qui prend un pseudo neuf
+    if (emb) {
+        float best = 0.f, second = 0.f;
+        CallPerson* top = nullptr;
+        for (auto& p : people_) {
+            const float sc = p.Score(*emb);
+            if (sc > best) {
+                second = best;
+                best = sc;
+                top = &p;
+            } else if (sc > second) {
+                second = sc;
+            }
+        }
+        if (best >= SpeakerId::kStrong && best - second >= SpeakerId::kStrongMargin) byVoice = top;
+        if (best >= SpeakerId::kSame && best - second >= SpeakerId::kMargin) voiceSure = top;
+    }
+    CallPerson* byName = ByName(shownName);
+    // 2) L'avatar, seulement s'il n'appartient qu'à une personne (les avatars par défaut se ressemblent tous).
+    CallPerson* byAvatar = nullptr;
+    if (avatar.size() == 48) {
+        int matches = 0;
+        for (auto& p : people_)
+            if (SameAvatarSig(p.avatar, avatar)) {
+                byAvatar = &p;
+                ++matches;
+            }
+        if (matches != 1) byAvatar = nullptr;
+    }
+    CallPerson* p = nullptr;
+    if (byVoice) {
+        p = byVoice;
+        if (byName && byName != p) m.impostorOf = byName->Label();  // il a pris le pseudo d'un autre : sa voix le trahit
+    } else if (byAvatar) {
+        p = byAvatar;
+    } else if (byName) {
+        p = byName;
+    } else if (voiceSure) {
+        p = voiceSure;  // pseudo neuf, à personne : c'est lui qui s'est renommé
+    } else if (emb && !shownName.empty()) {
+        // Pseudo neuf, voix pas encore nette sur UNE phrase : on attend quelques phrases et on compare leur moyenne
+        // (bien plus fiable). Renommage d'un pote connu, ou vraie nouvelle personne au bout de 4 phrases.
+        auto it = std::ranges::find(pending_, shownName, &std::pair<std::string, std::vector<std::vector<float>>>::first);
+        if (it == pending_.end()) {
+            pending_.emplace_back(shownName, std::vector<std::vector<float>>{});
+            it = std::prev(pending_.end());
+        }
+        it->second.push_back(*emb);
+        std::vector<float> mean(emb->size(), 0.f);
+        for (const auto& e : it->second)
+            for (std::size_t i = 0; i < mean.size(); ++i) mean[i] += e[i];
+        float best = 0.f, second = 0.f;
+        CallPerson* top = nullptr;
+        for (auto& q : people_) {
+            const float sc = q.Score(mean);  // cosinus : la moyenne n'a pas besoin d'être normalisée
+            if (sc > best) {
+                second = best;
+                best = sc;
+                top = &q;
+            } else if (sc > second) {
+                second = sc;
+            }
+        }
+        bool created = false;
+        if (top && it->second.size() >= 2 && best >= SpeakerId::kSame && best - second >= SpeakerId::kMargin) {
+            p = top;  // c'était lui, renommé
+        } else if (it->second.size() >= 4) {
+            p = &Create(it->second.front(), now);  // vraiment quelqu'un de nouveau
+            created = true;
+        } else {
+            m.person = nullptr;  // pas encore décidé : le pseudo affiché sert d'étiquette, rien n'est appris
+            m.sure = m.strong = false;
+            return m;
+        }
+        const auto learned = std::move(it->second);
+        pending_.erase(it);
+        // Les phrases en attente sont apprises (la 1re a servi à créer la fiche ; la dernière est apprise plus bas).
+        for (std::size_t i = created ? 1 : 0; i + 1 < learned.size(); ++i) Learn(*p, learned[i]);
+    } else {
+        // Nouveau pseudo, voix et avatar pas (encore) reconnus : une fiche sans nom à qui la voix ressemble, sinon une neuve.
         CallPerson* unnamed = nullptr;
         float best = 0.f;
-        for (auto& p : people_)
-            if (p.name.empty())
-                if (const float s = p.Score(emb); s > best) {
-                    best = s;
-                    unnamed = &p;
-                }
-        m.person = unnamed && best >= SpeakerId::kStrong ? unnamed : &Create(emb, now);
-        Rename(*m.person, name);
+        if (emb)
+            for (auto& q : people_)
+                if (q.name.empty())
+                    if (const float sc = q.Score(*emb); sc > best) {
+                        best = sc;
+                        unnamed = &q;
+                    }
+        if (unnamed && best >= SpeakerId::kStrong) p = unnamed;
+        else if (emb) p = &Create(*emb, now);
+        else {
+            people_.push_back(CallPerson{});
+            p = &people_.back();
+            p->id = "p" + std::to_string(nextId_++);
+        }
     }
-    Learn(*m.person, emb);
-    m.person->lastSeen = now;
+    if (m.impostorOf.empty() && !shownName.empty() && p->name != shownName) {
+        if (!p->name.empty()) {
+            m.renamedFrom = p->name;
+            if (std::ranges::find(p->aliases, p->name) == p->aliases.end()) p->aliases.push_back(p->name);
+            while (p->aliases.size() > 6) p->aliases.pop_front();
+        }
+        Rename(*p, shownName);
+    }
+    if (emb) Learn(*p, *emb);
+    if (avatar.size() == 48 && m.impostorOf.empty()) p->avatar = avatar;
+    p->lastSeen = now;
+    m.person = p;
+    m.strong = true;
+    m.score = 1.f;
     return m;
+}
+
+void CallPeople::MergeDuplicates() {
+    for (auto a = people_.begin(); a != people_.end(); ++a)
+        for (auto b = std::next(a); b != people_.end();) {
+            float sim = 0.f;
+            for (const auto& va : a->voices)
+                for (const auto& vb : b->voices) sim = std::max(sim, Cosine(va, vb));
+            // Très strict (deux voix différentes ne dépassent pas ~0,56 même quand elles se ressemblent).
+            if (sim < 0.72f || a->voices.empty() || b->voices.empty()) {
+                ++b;
+                continue;
+            }
+            CallPerson& keep = *a;
+            CallPerson& gone = *b;
+            if (keep.name.empty()) keep.name = gone.name;
+            else if (!gone.name.empty() && gone.name != keep.name) keep.aliases.push_back(gone.name);
+            for (auto& al : gone.aliases) keep.aliases.push_back(al);
+            while (keep.aliases.size() > 6) keep.aliases.pop_front();
+            for (auto& l : gone.said) Remember(keep, l);
+            for (auto& l : gone.mocks) Mocked(keep, l);
+            for (auto& c : gone.avoid) Avoid(keep, c);
+            for (std::size_t i = 0; i < gone.voices.size(); ++i) Learn(keep, gone.voices[i]);
+            if (keep.avatar.empty()) keep.avatar = gone.avatar;
+            keep.samples += gone.samples;
+            b = people_.erase(b);
+        }
 }
 
 CallPerson* CallPeople::ById(const std::string& id) {
@@ -241,6 +379,10 @@ std::string CallPeople::Describe(const CallPerson& p) {
     if (!p.said.empty()) {
         s += " — a dit récemment :";
         for (const auto& l : p.said) s += " « " + l + " »";
+    }
+    if (!p.aliases.empty()) {
+        s += " — s'est déjà fait appeler (renommages pour rigoler) :";
+        for (const auto& a : p.aliases) s += " « " + a + " »";
     }
     if (!p.mocks.empty()) {
         s += " — s'est déjà moqué de toi :";

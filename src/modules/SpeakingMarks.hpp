@@ -7,6 +7,7 @@
 //   ignoré : pastille « en ligne » (petite et pleine), bouton vert (plein), texte vert (morceaux trop petits)
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstdint>
 #include <vector>
 
@@ -67,6 +68,37 @@ inline std::vector<SpeakingMark> FindSpeakingMarks(const std::uint8_t* bgra, int
             }
         }
     return out;
+}
+
+// Petite empreinte de l'avatar dans l'anneau (4 × 4 cases de couleur moyenne) : on change de pseudo pour rigoler
+// bien plus souvent que d'avatar. Vide pour une tuile (vidéo possible) ou une image trop petite.
+using AvatarSig = std::vector<std::uint8_t>;  // 48 octets (B, G, R par case)
+inline AvatarSig AvatarSignature(const std::uint8_t* bgra, int w, int h, int stride, const SpeakingMark& m) {
+    if (m.tile) return {};
+    const int cx = (m.left + m.right) / 2, cy = (m.top + m.bottom) / 2;
+    const int r = static_cast<int>((m.right - m.left) * 0.30f);  // à l'intérieur de l'anneau
+    if (r < 4 || cx - r < 0 || cy - r < 0 || cx + r >= w || cy + r >= h) return {};
+    AvatarSig sig(48, 0);
+    for (int gy = 0; gy < 4; ++gy)
+        for (int gx = 0; gx < 4; ++gx) {
+            int sum[3] = {0, 0, 0}, n = 0;
+            for (int y = cy - r + gy * r / 2; y < cy - r + (gy + 1) * r / 2; ++y)
+                for (int x = cx - r + gx * r / 2; x < cx - r + (gx + 1) * r / 2; ++x) {
+                    const std::uint8_t* p = bgra + static_cast<std::size_t>(y) * stride + x * 4;
+                    sum[0] += p[0]; sum[1] += p[1]; sum[2] += p[2];
+                    ++n;
+                }
+            for (int c = 0; c < 3; ++c) sig[static_cast<std::size_t>((gy * 4 + gx) * 3 + c)] = static_cast<std::uint8_t>(n ? sum[c] / n : 0);
+        }
+    return sig;
+}
+
+// Même avatar ? (écart moyen par couleur ; tolère la compression et le zoom)
+inline bool SameAvatar(const AvatarSig& a, const AvatarSig& b) {
+    if (a.size() != 48 || b.size() != 48) return false;
+    int diff = 0;
+    for (std::size_t i = 0; i < 48; ++i) diff += std::abs(static_cast<int>(a[i]) - static_cast<int>(b[i]));
+    return diff / 48 < 16;
 }
 
 }  // namespace companion

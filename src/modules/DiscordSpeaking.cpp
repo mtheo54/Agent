@@ -105,8 +105,8 @@ void DiscordSpeaking::Stop() {
     timeline_.clear();
 }
 
-std::vector<std::string> DiscordSpeaking::Sample() {
-    std::vector<std::string> names;
+std::vector<DiscordSpeaking::Shown> DiscordSpeaking::Sample() {
+    std::vector<Shown> names;
     HWND hwnd = FindDiscordWindow();
     if (!hwnd) return names;
     RECT rc{};
@@ -129,7 +129,11 @@ std::vector<std::string> DiscordSpeaking::Sample() {
     HGDIOBJ old = SelectObject(mem, bmp);
     const bool ok = bmp && PrintWindow(hwnd, mem, PW_CLIENTONLY | 0x2 /*PW_RENDERFULLCONTENT*/);
     std::vector<SpeakingMark> marks;
-    if (ok) marks = FindSpeakingMarks(static_cast<const std::uint8_t*>(bits), w, h, w * 4, scale);
+    std::vector<AvatarSig> sigs;
+    if (ok) {
+        marks = FindSpeakingMarks(static_cast<const std::uint8_t*>(bits), w, h, w * 4, scale);
+        for (const auto& m : marks) sigs.push_back(AvatarSignature(static_cast<const std::uint8_t*>(bits), w, h, w * 4, m));
+    }
     SelectObject(mem, old);
     if (bmp) DeleteObject(bmp);
     DeleteDC(mem);
@@ -139,13 +143,15 @@ std::vector<std::string> DiscordSpeaking::Sample() {
     ComPtr<IUIAutomation> uia;
     if (FAILED(CoCreateInstance(kClsidUia, nullptr, CLSCTX_INPROC_SERVER, kIidUia, reinterpret_cast<void**>(uia.GetAddressOf()))))
         return names;
-    for (const auto& m : marks) {
+    for (std::size_t k = 0; k < marks.size(); ++k) {
+        const SpeakingMark& m = marks[k];
         // Pseudo : à droite de l'anneau (liste), en bas à gauche dans la tuile (vue du call).
         POINT pt = m.tile ? POINT{m.left + static_cast<LONG>(28 * scale), m.bottom - static_cast<LONG>(18 * scale)}
                           : POINT{m.right + static_cast<LONG>(14 * scale), (m.top + m.bottom) / 2};
         ClientToScreen(hwnd, &pt);
         if (GetAncestor(WindowFromPoint(pt), GA_ROOT) != hwnd) continue;  // caché par une autre fenêtre : on ne devine pas
-        if (std::string n = NameAt(uia.Get(), pt); !n.empty() && std::ranges::find(names, n) == names.end()) names.push_back(std::move(n));
+        std::string n = NameAt(uia.Get(), pt);
+        if (!n.empty() && std::ranges::none_of(names, [&](const Shown& x) { return x.name == n; })) names.push_back({std::move(n), sigs[k]});
     }
     return names;
 }
@@ -157,23 +163,27 @@ void DiscordSpeaking::Main(std::stop_token st) {
     while (!st.stop_requested()) {
         Sleep(250);
         if (!should_ || !should_()) continue;
-        std::vector<std::string> names = Sample();
+        std::vector<Shown> people = Sample();
         const auto now = Clock::now();
         std::scoped_lock lock(mutex_);
-        if (!names.empty()) lastSeen_ = now;
-        timeline_.push_back({now, std::move(names)});
+        if (!people.empty()) lastSeen_ = now;
+        timeline_.push_back({now, std::move(people)});
         while (!timeline_.empty() && now - timeline_.front().at > std::chrono::seconds(30)) timeline_.pop_front();
     }
 }
 
-std::string DiscordSpeaking::SpeakerBetween(Clock::time_point from, Clock::time_point to) const {
+DiscordSpeaking::Shown DiscordSpeaking::SpeakerBetween(Clock::time_point from, Clock::time_point to) const {
     std::scoped_lock lock(mutex_);
     std::map<std::string, int> seen;
+    std::map<std::string, std::vector<std::uint8_t>> avatar;
     int samples = 0;
     for (const auto& s : timeline_) {
         if (s.at < from || s.at > to) continue;
         ++samples;
-        for (const auto& n : s.names) ++seen[n];
+        for (const auto& p : s.people) {
+            ++seen[p.name];
+            if (!p.avatar.empty()) avatar[p.name] = p.avatar;
+        }
     }
     if (samples < 2) return {};
     // Une seule personne vue sur au moins la moitié des images, et personne d'autre au-delà d'un quart.
@@ -186,7 +196,8 @@ std::string DiscordSpeaking::SpeakerBetween(Clock::time_point from, Clock::time_
             return {};
         }
     }
-    return who;
+    if (who.empty()) return {};
+    return {who, avatar[who]};
 }
 
 bool DiscordSpeaking::Seeing() const {

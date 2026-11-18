@@ -11,6 +11,7 @@
 // Logique pure (JSON + fichier) : testée hors Windows.
 
 #include <cstdint>
+#include <cstdlib>
 #include <deque>
 #include <filesystem>
 #include <optional>
@@ -21,7 +22,9 @@ namespace companion {
 
 struct CallPerson {
     std::string id;    // « p3 »
-    std::string name;  // vide = inconnu
+    std::string name;  // pseudo actuel (vide = inconnu) ; l'identité, c'est la VOIX, pas le pseudo
+    std::deque<std::string> aliases;  // anciens pseudos (renommages pour rigoler)
+    std::vector<std::uint8_t> avatar;  // empreinte de son avatar Discord
     // Jusqu'à 5 empreintes (micro qui change, voix fatiguée, cri…), apprises dans les calls eux-mêmes.
     std::vector<std::vector<float>> voices;
     std::vector<int> counts;
@@ -42,16 +45,23 @@ public:
         bool sure = false;    // c'est lui (seuil + marge sur le 2e)
         bool strong = false;  // assez sûr pour lui attribuer une moquerie
         bool fromDiscord = false;  // nom lu sur Discord (cercle vert), pas deviné à la voix
+        std::string renamedFrom;   // il a changé de pseudo (ancien pseudo)
+        std::string impostorOf;    // il a pris le pseudo de quelqu'un d'autre (sa voix le trahit)
     };
 
     bool Load(const std::filesystem::path& file);
     bool Save() const;
+    // Deux fiches, une seule voix (renommage pas reconnu tout de suite) : on fusionne. Invalide les pointeurs
+    // (CallPerson*) : à appeler hors d'un traitement de phrase (au chargement, à la sortie du call).
+    void MergeDuplicates();
 
     // Qui parle ? Met à jour l'empreinte si c'est sûr ; crée une fiche si c'est clairement une nouvelle voix
     // et que la phrase est assez longue (allowCreate).
     Match Identify(const std::vector<float>& emb, bool allowCreate, std::int64_t now);
-    // Discord a montré QUI parlait pendant la phrase (cercle vert + pseudo) : on apprend sa voix, sans deviner.
-    Match Enroll(const std::vector<float>& emb, const std::string& name, std::int64_t now);
+    // Discord a montré qui parlait (pseudo + avatar). Le pseudo peut être une blague : la voix tranche si elle est
+    // nette, puis l'avatar (s'il n'est qu'à une personne), puis le pseudo. Apprend la voix sous la bonne identité.
+    Match Resolve(const std::vector<float>* emb, const std::string& shownName, const std::vector<std::uint8_t>& avatar,
+                  std::int64_t now);
     CallPerson* ById(const std::string& id);
     CallPerson* ByName(const std::string& name);
     bool Forget(const std::string& id);
@@ -69,6 +79,8 @@ private:
     int nextId_ = 1;
     static void Learn(CallPerson& p, const std::vector<float>& emb);
     CallPerson& Create(const std::vector<float>& emb, std::int64_t now);
+    // Pseudo jamais vu : ses premières phrases attendent ici (4 au plus) avant de décider « renommage » ou « nouveau ».
+    std::vector<std::pair<std::string, std::vector<std::vector<float>>>> pending_;
 };
 
 // --- Ce qu'on entend dans le call (logique pure) ---

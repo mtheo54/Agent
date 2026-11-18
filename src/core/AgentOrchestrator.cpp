@@ -973,26 +973,30 @@ void AgentOrchestrator::HandleCallLine(const std::string& text, const std::vecto
     // 1) Qui parle ? D'abord Discord (cercle vert + pseudo pendant la phrase) : c'est sûr, et ça APPREND sa voix.
     //    Sinon (Discord caché, en jeu) : l'empreinte de voix, avec marge sur le 2e. Rien n'est attribué au hasard.
     const auto dur = std::chrono::milliseconds(pcm.size() * 1000 / 16000);
-    std::string shown = seeing_.SpeakerBetween(end - dur, end - std::chrono::milliseconds(600));
-    if (!cfg_.discordMyName.empty() && Lower(shown) == Lower(cfg_.discordMyName)) shown.clear();
+    DiscordSpeaking::Shown seen = seeing_.SpeakerBetween(end - dur, end - std::chrono::milliseconds(600));
+    if (!cfg_.discordMyName.empty() && Lower(seen.name) == Lower(cfg_.discordMyName)) seen = {};
+    const std::string shown = seen.name;
+    std::string renamedFrom, impostorOf;
     CallPerson* who = nullptr;
     bool strong = false;
     const bool model = EnsureSpeakerModel();
     const auto emb = model ? speaker_.Embed(pcm) : std::nullopt;
-    if (!shown.empty() && emb) {
-        who = people_.Enroll(*emb, shown, UnixNow()).person;
+    if (!shown.empty()) {
+        // Pseudo vu sur Discord… mais l'identité, c'est la voix : un renommage pour rigoler ne trompe personne.
+        const auto m = people_.Resolve(emb ? &*emb : nullptr, shown, seen.avatar, UnixNow());
+        who = m.person;
         strong = true;
+        renamedFrom = m.renamedFrom;
+        impostorOf = m.impostorOf;
         people_.Save();
-    } else if (!shown.empty()) {
-        who = people_.ByName(shown);
-        strong = who != nullptr;
     } else if (emb) {
         // Discord visible mais ambigu : on ne crée pas de fiche « Voix N » en double.
         const auto m = people_.Identify(*emb, pcm.size() >= 16000 * 5 / 2 && !seeing_.Seeing(), UnixNow());
         if (m.sure) who = m.person;
         strong = m.strong;
     }
-    const std::string label = who ? who->Label() : !shown.empty() ? shown : "Un pote";
+    std::string label = who ? who->Label() : !shown.empty() ? shown : "Un pote";
+    if (!impostorOf.empty()) label += " (qui se fait passer pour " + impostorOf + ")";
     if (!shown.empty() || who) log::Info("Call: {} ({})", label, !shown.empty() ? "vu sur Discord" : strong ? "voix, sûr" : "voix");
     if (who) lastSpeakerId_ = who->id;
 
@@ -1093,7 +1097,10 @@ void AgentOrchestrator::HandleCallLine(const std::string& text, const std::vecto
         const unsigned r = rng_.fetch_add(0x9E3779B9u) * 2654435761u;
         bait = static_cast<float>(r >> 8) / 16777216.f < cfg_.callBaitChance * (subActive_ ? 1.5f : 1.f);
     }
-    const bool reply = named || (mock && !quiet) || (subActive_ && question && !quiet);
+    // Renommage pour rigoler, ou pseudo d'un autre piqué : il le remarque (la voix ne ment pas).
+    const bool prank = (!impostorOf.empty() || !renamedFrom.empty()) && !quiet && now >= callMutedUntil_;
+    if (who && !renamedFrom.empty()) CallPeople::Remember(*who, "s'est renommé « " + who->name + " » (avant : « " + renamedFrom + " »)");
+    const bool reply = named || prank || (mock && !quiet) || (subActive_ && question && !quiet);
     if ((!reply && !bait) || d_.voice.IsSpeaking()) return;
     if (bait || mock) lastCallBait_ = now;
     // Bruitage au lieu d'une phrase (1 fois sur 3), parfois en earrape (au plus toutes les 10 min).
@@ -1111,7 +1118,12 @@ void AgentOrchestrator::HandleCallLine(const std::string& text, const std::vecto
     if (bait || mock) ctx += std::string(kRageBaitPlaybook) + "\n";
     ctx += MemeHint();
     std::string ask;
-    if (mock && !strong) ask = "Quelqu'un (tu ne sais pas qui) vient de se moquer de toi : « " + text + " ». Riposte en demandant qui a osé, une phrase.";
+    if (!impostorOf.empty() && prank)
+        ask = (who ? who->Label() : std::string("Quelqu'un")) + " a pris le pseudo de " + impostorOf + " pour piéger tout le monde, mais tu reconnais sa voix. "
+              "Grille-le devant tout le monde, une phrase.";
+    else if (!renamedFrom.empty() && prank)
+        ask = renamedFrom + " vient de se renommer « " + shown + " » pour rigoler. Vanne-le là-dessus (tu sais que c'est lui), une phrase.";
+    else if (mock && !strong) ask = "Quelqu'un (tu ne sais pas qui) vient de se moquer de toi : « " + text + " ». Riposte en demandant qui a osé, une phrase.";
     else if (mock) ask = label + " vient de se moquer de toi : « " + text + " ». Riposte précise et cinglante, appuyée sur ce que tu sais de lui. Une phrase.";
     else if (bait) ask = label + " vient de dire : « " + text + " ». Rage bait précis sur CE qu'il vient de dire. Une phrase.";
     else ask = label + " te parle : « " + text + " ». Réponds-lui ; s'il a besoin d'aide, aide-le avec ce que tu sais.";
@@ -1143,6 +1155,10 @@ void AgentOrchestrator::JoinedCall() {
 void AgentOrchestrator::LeftCall() {
     seeing_.Stop();
     listenOnly_ = false;
+    if (peopleLoaded_) {
+        people_.MergeDuplicates();  // un renommage reconnu en retard : deux fiches, une seule voix
+        people_.Save();
+    }
 }
 
 void AgentOrchestrator::StartSubstitute(const std::string& reason) {

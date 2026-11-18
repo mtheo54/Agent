@@ -40,7 +40,7 @@ int main(int, char** argv) {
     // Phase 1 : Discord visible, 6 phrases par personne étiquetées par le pseudo (cercle vert).
     for (int round = 0; round < 6; ++round)
         for (int who = 0; who < 5; ++who)
-            if (auto e = id.Embed(phrase(who, 1.6 + (rng() % 18) / 10.0, true))) people.Enroll(*e, names[who], round);
+            if (auto e = id.Embed(phrase(who, 1.6 + (rng() % 18) / 10.0, true))) people.Resolve(&*e, names[who], {}, round);
     // Phase 2 : Discord caché (en jeu) : la voix seule, sur d'autres phrases.
     int ok = 0, wrong = 0, unsure = 0, strongWrong = 0;
     for (int turn = 0; turn < 150; ++turn) {
@@ -55,6 +55,35 @@ int main(int, char** argv) {
     }
     std::printf("micros dégradés : fiches %zu ; à la voix seule : juste %d, FAUX %d (dont %d « sûr pour une moquerie »), pas sûr %d\n",
                 people.Size(), ok, wrong, strongWrong, unsure);
+    // Blagues : Karim se renomme « Le Boss », puis Tom prend le pseudo « Léa ».
+    {
+        CallPeople::Match m;
+        int phrases = 0;
+        for (; phrases < 4 && !m.person; ++phrases) { auto e = id.Embed(phrase(0, 2.5, false)); m = people.Resolve(&*e, "Le Boss", {}, 500 + phrases); }
+        std::printf("Karim -> « Le Boss » : décidé après %d phrase(s), fiches %zu, reconnu comme %s, ancien pseudo « %s »\n", phrases,
+                    people.Size(), m.person->name.c_str(), m.renamedFrom.c_str());
+        auto e2 = id.Embed(phrase(4, 3.0, false));
+        auto m2 = people.Resolve(&*e2, "Léa", {}, 501);
+        std::printf("Tom se fait appeler « Léa » : reconnu comme %s, usurpe %s ; la vraie Léa garde son nom : %s\n", m2.person->name.c_str(),
+                    m2.impostorOf.empty() ? "personne" : m2.impostorOf.c_str(), people.ByName("Léa") ? "oui" : "non");
+        people.Rename(*people.ByName("Le Boss"), "Karim");
+        // Chacun se renomme à son tour (3 fois chacun) : retrouvé sous sa vraie identité, ou nouvelle fiche à tort ?
+        int found = 0, dup = 0, waited = 0;
+        for (int rep = 0; rep < 3; ++rep)
+            for (int w = 0; w < 5; ++w) {
+                const std::string orig = people.ByName(names[w]) ? names[w] : "";
+                const std::string alias = "Alias" + std::to_string(rep * 5 + w);
+                CallPeople::Match mm;
+                int ph = 0;
+                for (; ph < 4 && !mm.person; ++ph) { auto e = id.Embed(phrase(w, 1.8 + (rng() % 15) / 10.0, false)); mm = people.Resolve(&*e, alias, {}, 600); }
+                waited += ph;
+                if (mm.person && mm.renamedFrom == names[w]) ++found; else ++dup;
+                if (mm.person) people.Rename(*mm.person, names[w]);  // il reprend son pseudo
+                (void)orig;
+            }
+        std::printf("15 renommages : retrouvés %d, nouvelle fiche à tort %d (%.1f phrase(s) en moyenne avant de décider), fiches %zu\n",
+                    found, dup, waited / 15.0, people.Size());
+    }
     CallPerson* k = people.ByName("karim");
     CallPeople::Mocked(*k, "Omnis il est éclaté au sol mdr");
     CallPeople::Remember(*k, "J'ai raté mon flash sous tour");
