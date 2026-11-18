@@ -151,6 +151,7 @@ add_executable(CompanionAI WIN32
     src/audio/DiscordBridge.cpp
     src/audio/SpeakerId.cpp
     src/core/CallPeople.cpp
+    src/core/RageBait.cpp
     src/modules/DesktopPilot.cpp
     src/modules/DiscordSpeaking.cpp
     src/audio/TextNormalizerFr.cpp

@@ -89,6 +89,8 @@ public:
     void SetBargeIn(bool enabled, std::function<void()> onBargeIn = {});
     void SetEmotionDetection(bool enabled) noexcept;
     void SetBaseSpeechRate(float lengthScale) noexcept;  // 0,85 rapide … 1,2 lent
+    // Débit de base (1 = celui du modèle, 1,18 par défaut : blancs resserrés et parole plus vive, même hauteur).
+    void SetVoiceTempo(float tempo) noexcept;
     [[nodiscard]] std::string VoiceBaseline() const;     // voix habituelle apprise (à persister)
     void LoadVoiceBaseline(const std::string& s);
     void StopSpeaking();           // vide la file et coupe la voix immédiatement

@@ -1127,7 +1127,25 @@ void AgentOrchestrator::HandleCallLine(const std::string& text, const std::vecto
     activity_ = AgentActivity::Thinking;
     std::string out;
     std::string why;
-    for (int attempt = 0; attempt < 2 && !stop.stop_requested(); ++attempt) {
+    // Vanne (rage bait, riposte, renommage, faux pseudo) : 3 candidates sur 3 techniques, triées, la meilleure gagne.
+    if (kind != CallAsk::Reply) {
+        BaitRequest br;
+        br.persona = PersonaPrompt();
+        br.context = ctx;
+        br.ask = ask;
+        br.targetLine = text;
+        br.avoid = sessionAvoid_;
+        br.recent.assign(recentBaits_.begin(), recentBaits_.end());
+        br.hasHistory = who && (!who->said.empty() || !who->mocks.empty());
+        std::uint32_t r = rng_.fetch_add(0x9E3779B9u) * 2654435761u;
+        const BaitResult res = WriteBait(d_.brain, br, r, stop);
+        for (const auto& t : res.tried) log::Info("Call: {}", t);
+        if (res.text.empty() || stop.stop_requested()) return;
+        recentBaits_.push_back(res.text);
+        while (recentBaits_.size() > 4) recentBaits_.pop_front();
+        out = res.text;
+    }
+    for (int attempt = 0; out.empty() && attempt < 2 && !stop.stop_requested(); ++attempt) {
         GenerateOptions o;
         o.maxTokens = 70;
         o.temperature = 0.8f;

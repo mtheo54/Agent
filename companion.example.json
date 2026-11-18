@@ -6,6 +6,8 @@
   "voiceQuirks": 0.5,
   "micEffect": 0.7,
   "pitchLife": 0.5,
+  // Débit de la voix : 1 = brut (posé), 1,18 = vif (blancs resserrés, même hauteur). 0,8 à 1,5.
+  "voiceTempo": 1.18,
   // Bruitage (soundboard myinstants, « installe les sons ») joué à des moments précis ; "" = aucun.
   "soundEvents": {
     "greeting": "anime wow", "clipping": "fahhh", "rageBaitBite": "https://www.myinstants.com/fr/instant/cyril-hanouna-92711/",

@@ -7,6 +7,8 @@
 #include "core/LocalBrain.hpp"
 #include "core/MemeBank.hpp"
 #include "core/Persona.hpp"
+#include "core/RageBait.hpp"
+#include <deque>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -30,6 +32,8 @@ int main(int, char** argv) {
     CallSituation call;
     std::set<std::string> protectedPeople;
     float gain = 0.9f;
+    std::deque<std::string> recentBaits;
+    std::uint32_t rng = 12345;
     std::string lastReply;
     const Line script[] = {
         {"Karim", "Karim", "Bon les gars, j'ai mis Yasuo mid, je vais carry tranquille."},
@@ -40,6 +44,8 @@ int main(int, char** argv) {
         {"Léa", "Léa", "Bon, on lance une game ?"},
         {"Yanis", "Yanis", "Omnis, c'est quoi le meilleur build sur Jinx en ce moment ?"},
         {"Karim", "Le Boss", "Appelez-moi Le Boss maintenant."},
+        {"Tom", "Tom", "Franchement je suis le meilleur Jett de France, c'est pas discutable."},
+        {"Karim", "Le Boss", "J'ai acheté un nouveau clavier, cette fois je monte Diamant."},
         {"Tom", "Tom", "Quoi ? T'as dit quoi ?"},
         {"Yanis", "Yanis", "Attendez je stream FL, laissez-moi rapper deux secondes."},
         {"Yanis", "Yanis", "Alors, vous en pensez quoi du flow ?"},
@@ -75,7 +81,7 @@ int main(int, char** argv) {
         else if (named) kind = CallAsk::Reply;
         if (kind == CallAsk::Bait && protectedPeople.contains(l.who)) { std::printf("    → %s est ménagée ce soir : pas de vanne.\n", l.who); continue; }
         if (kind == CallAsk::Bait && call.quiet && !named) { std::printf("    → mode discret : il ne vanne pas.\n"); continue; }
-        if (n == 12) { std::printf("    → bruitage au lieu d'une phrase : « FAHHH » en earrape (1,5 s, crête -8 dBFS)\n"); continue; }
+        if (n == 14) { std::printf("    → bruitage au lieu d'une phrase : « FAHHH » en earrape (1,5 s, crête -8 dBFS)\n"); continue; }
         std::string ctx = CallHintText(call) + "Celui qui parle : " + CallPeople::Describe(who) + "\n";
         if (kind != CallAsk::Reply) ctx += std::string(kRageBaitPlaybook) + "\n";
         ctx += memes.Hint(1.f, true);
@@ -83,7 +89,21 @@ int main(int, char** argv) {
         if (kind == CallAsk::Reply && FactualQuestion(lower)) ctx += std::string(kNoReliableInfo) + "\n";  // démo : mémoire vide
         const auto t0 = std::chrono::steady_clock::now();
         std::string r, why, refused;
-        for (int attempt = 0; attempt < 2; ++attempt) {
+        if (kind != CallAsk::Reply) {  // exactement le chemin de l'appli : WriteBait
+            BaitRequest br;
+            br.persona = PersonaPrompt("Omnis", 2);
+            br.context = ctx;
+            br.ask = ask;
+            br.targetLine = l.text;
+            br.avoid = call.avoid;
+            br.recent.assign(recentBaits.begin(), recentBaits.end());
+            br.hasHistory = !who.said.empty() || !who.mocks.empty();
+            const BaitResult res = WriteBait(brain, br, rng);
+            for (const auto& t : res.tried) refused += "      " + t + "\n";
+            r = res.text;
+            if (!r.empty()) { recentBaits.push_back(r); while (recentBaits.size() > 4) recentBaits.pop_front(); }
+        }
+        for (int attempt = 0; r.empty() && kind == CallAsk::Reply && attempt < 2; ++attempt) {
             GenerateOptions o;
             o.maxTokens = 70;
             o.temperature = 0.8f;

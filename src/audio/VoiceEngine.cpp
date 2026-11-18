@@ -1,4 +1,5 @@
 #include "audio/VoiceEngine.hpp"
+#include "audio/TempoStretch.hpp"
 
 #include "audio/Expressivity.hpp"
 #include "audio/VoiceColor.hpp"
@@ -386,6 +387,8 @@ struct VoiceEngine::Impl {
     VocalBank vocals;
     RobotGlitcher glitcher;
     EmotionShaper shaper;
+    TempoStretch tempo;  // débit : blancs resserrés + plus rapide sans monter dans les aigus
+    std::atomic<float> voiceTempo{1.18f};
     VoiceColor color;                  // micro + bizarreries (thread de synthèse)
     std::function<std::shared_ptr<const std::vector<float>>(const std::string&)> soundResolver;
     std::atomic<float> micEffect{0.7f};
@@ -733,6 +736,16 @@ struct VoiceEngine::Impl {
         float lengthMul, noiseMul, moodDelta;
         StyleParams(style, lengthMul, noiseMul, moodDelta);
         bool done = false;
+        tempo.SetTempo(voiceTempo.load() / std::max(0.5f, baseLength.load()));
+        tempo.Reset();
+        // Chaîne d'une phrase : débit -> émotion -> bugs -> micro -> sortie.
+        const auto emit = [&](std::vector<float>& buf) {
+            if (buf.empty()) return;
+            shaper.Process(buf);
+            glitcher.Process(buf);
+            color.Process(buf.data(), buf.size());
+            PushAudio(buf, generation);
+        };
         shaper.Set(style, emotionIntensity.load());
         shaper.Reset();
         const float life = pitchLife.load();
@@ -744,24 +757,31 @@ struct VoiceEngine::Impl {
             done = neural.Speak(text, style, [&](std::span<const float> pcm) {
                 if (speechGeneration.load() != generation) return false;  // interrompu : on arrête le décodeur
                 chunkBuf.assign(pcm.begin(), pcm.end());  // tampon réutilisé : aucune allocation en régime établi
-                shaper.Process(chunkBuf);
-                glitcher.Process(chunkBuf);
-                color.Process(chunkBuf.data(), chunkBuf.size());
-                PushAudio(chunkBuf, generation);
+                tempo.Process(chunkBuf);
+                emit(chunkBuf);
                 return true;
             }, jitter);
+            if (done && speechGeneration.load() == generation) {
+                tempo.Flush(chunkBuf);
+                emit(chunkBuf);
+            }
         }
 #if COMPANION_WITH_ONNX && COMPANION_WITH_ESPEAK
         if (!done && tts) {
             std::vector<float> pcm;
             for (const auto& sentence : SplitSentences(NormalizeForSpeechFr(text))) {
                 if (speechGeneration.load() != generation) break;
-                if (!tts->Synthesize(sentence, pcm, lengthMul * baseLength.load(), noiseMul)) continue;
+                if (!tts->Synthesize(sentence, pcm, lengthMul, noiseMul)) continue;
                 auto out = Resample(pcm, tts->SampleRate(), static_cast<int>(outputRate));
+                tempo.Process(out);
                 glitcher.Process(out);
                 color.Process(out.data(), out.size());
                 PushAudio(out, generation);
             }
+            tempo.Flush(chunkBuf);
+            glitcher.Process(chunkBuf);
+            color.Process(chunkBuf.data(), chunkBuf.size());
+            if (!chunkBuf.empty()) PushAudio(chunkBuf, generation);
         }
 #endif
         if (glitcher.UsedBig()) lastGlitch = clock::now();
@@ -900,6 +920,7 @@ bool VoiceEngine::Initialize(const VoiceEngineConfig& cfg) {
     d.neuralEnabled = cfg.neuralEnabled;
     d.neuralInGame = cfg.neuralInGame;
     d.fx.Prepare(static_cast<float>(d.outputRate), cfg.fx);
+    d.tempo.Prepare(static_cast<int>(d.outputRate));
     d.renderWake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     d.renderThread = std::jthread([&d](std::stop_token st) { d.RenderMain(st); });
     d.worker = std::jthread([&d](std::stop_token st) { d.WorkerMain(st); });
@@ -1036,6 +1057,7 @@ void VoiceEngine::SetBargeIn(bool enabled, std::function<void()> onBargeIn) {
 
 void VoiceEngine::SetEmotionDetection(bool enabled) noexcept { impl_->emotionEnabled = enabled; }
 void VoiceEngine::SetBaseSpeechRate(float lengthScale) noexcept { impl_->baseLength = std::clamp(lengthScale, 0.7f, 1.4f); }
+void VoiceEngine::SetVoiceTempo(float tempo) noexcept { impl_->voiceTempo = std::clamp(tempo, 0.8f, 1.5f); }
 
 std::string VoiceEngine::VoiceBaseline() const {
     std::scoped_lock lock(impl_->emotionMutex);
