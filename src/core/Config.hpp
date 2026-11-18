@@ -67,7 +67,7 @@ struct CompanionConfig {
     std::string neuralVoiceDevice;  // "Vulkan0", "CPU"… vide = automatique
     int tone = 2;                   // 0 poli, 1 pote, 2 sans filtre (argot, vannes, gros mots)
     float speechRate = 1.f;         // 0,85 rapide … 1,2 lent
-    float voiceTempo = 1.18f;       // débit de la voix (1 = brut ; mesuré 4-5 syll/s brut, ~6 avec 1,18)
+    float voiceTempo = 1.08f;       // débit MOYEN de la voix (il varie autour, ±10 %) ; 1,18 était trop rapide
     bool backchannels = true;       // relances orales instantanées (« Hmm… »)
     bool bargeIn = true;            // on peut lui couper la parole (écoute continue)
     bool emotionDetection = true;   // émotion perçue dans la voix

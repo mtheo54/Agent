@@ -2,6 +2,8 @@
 
 #include "core/Log.hpp"
 
+#include <cmath>
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -24,6 +26,7 @@ CompanionConfig LoadConfig(const std::filesystem::path& jsonFile) {
         cfg.fxIntensity = j.value("fxIntensity", cfg.fxIntensity);
         cfg.speechRate = j.value("speechRate", cfg.speechRate);
         cfg.voiceTempo = std::clamp(j.value("voiceTempo", cfg.voiceTempo), 0.8f, 1.5f);
+        if (std::abs(cfg.voiceTempo - 1.18f) < 1e-3f) cfg.voiceTempo = 1.08f;  // ancien défaut (trop rapide) des installs existantes
         cfg.tone = std::clamp(j.value("tone", cfg.tone), 0, 2);
         cfg.backchannels = j.value("backchannels", cfg.backchannels);
         cfg.neuralVoice = j.value("neuralVoice", cfg.neuralVoice);

@@ -774,8 +774,26 @@ struct VoiceEngine::Impl {
         float lengthMul, noiseMul, moodDelta;
         StyleParams(style, lengthMul, noiseMul, moodDelta);
         bool done = false;
-        tempo.SetTempo(voiceTempo.load() / std::max(0.5f, baseLength.load()));
+        // Débit humain : pas une vitesse fixe. Chaque phrase a son allure (un peu plus vite ou plus posée, selon
+        // l'émotion), elle accélère et ralentit en vagues lentes (2 à 3,5 s), démarre un poil plus lentement et se
+        // pose sur la fin (les gens ralentissent sur les derniers mots).
+        const float baseTempo = voiceTempo.load() / std::max(0.5f, baseLength.load());
+        float phrase = 0.94f + 0.12f * NextRandom(vrng);
+        if (style == SpeakingStyle::Bright) phrase *= 1.05f;
+        if (style == SpeakingStyle::Soft || style == SpeakingStyle::Calm) phrase *= 0.93f;
+        const float wavePeriod = 2.0f + 1.5f * NextRandom(vrng), wavePhase = 6.2832f * NextRandom(vrng);
+        const float waveDepth = 0.07f + 0.05f * NextRandom(vrng);
+        const float estSeconds = std::max(1.0f, static_cast<float>(text.size()) / 15.f);  // ~15 caractères/s au débit brut
+        std::size_t heard = 0;  // échantillons bruts déjà passés (horloge du contour)
+        const auto paceAt = [&](std::size_t samples) {
+            const float t = static_cast<float>(samples) / static_cast<float>(outputRate);
+            float k = phrase * (1.f + waveDepth * std::sin(6.2832f * t / wavePeriod + wavePhase));
+            if (t < 0.35f) k *= 0.95f;                    // attaque posée
+            if (t > 0.82f * estSeconds) k *= 0.88f;       // fin de phrase : on ralentit
+            tempo.SetTempo(baseTempo * k);
+        };
         tempo.Reset();
+        paceAt(0);
         // Chaîne d'une phrase : débit -> émotion -> bugs -> micro -> sortie.
         const auto emit = [&](std::vector<float>& buf) {
             if (buf.empty()) return;
@@ -787,7 +805,8 @@ struct VoiceEngine::Impl {
         shaper.Set(style, emotionIntensity.load());
         shaper.Reset();
         const float life = pitchLife.load();
-        shaper.PlanPitch(style, 40.f * life, 0.55f * life, vrng);  // défaut : ±20 cents, virage 1 phrase sur 4
+        // Mélodie vivante : dérive ±40 cents et virages (monte / redescend) dans la plupart des phrases.
+        shaper.PlanPitch(style, 80.f * life, 0.8f * life, vrng);
         SyncMic();
         color.PlanWeird(style, quirks.load(), vrng);
         if (UseNeural()) {
@@ -795,6 +814,8 @@ struct VoiceEngine::Impl {
             done = neural.Speak(text, style, [&](std::span<const float> pcm) {
                 if (speechGeneration.load() != generation) return false;  // interrompu : on arrête le décodeur
                 chunkBuf.assign(pcm.begin(), pcm.end());  // tampon réutilisé : aucune allocation en régime établi
+                paceAt(heard);
+                heard += chunkBuf.size();
                 tempo.Process(chunkBuf);
                 emit(chunkBuf);
                 return true;
@@ -811,11 +832,17 @@ struct VoiceEngine::Impl {
             for (const auto& sentence : SplitSentences(NormalizeForSpeechFr(text))) {
                 if (speechGeneration.load() != generation) break;
                 if (!tts->Synthesize(sentence, pcm, lengthMul, noiseMul)) continue;
-                auto out = Resample(pcm, tts->SampleRate(), static_cast<int>(outputRate));
-                tempo.Process(out);
-                glitcher.Process(out);
-                color.Process(out.data(), out.size());
-                PushAudio(out, generation);
+                const auto whole = Resample(pcm, tts->SampleRate(), static_cast<int>(outputRate));
+                for (std::size_t i = 0; i < whole.size(); i += 1920) {  // morceaux de 80 ms : le débit varie dedans aussi
+                    std::vector<float> out(whole.begin() + static_cast<std::ptrdiff_t>(i),
+                                           whole.begin() + static_cast<std::ptrdiff_t>(std::min(whole.size(), i + 1920)));
+                    paceAt(heard);
+                    heard += out.size();
+                    tempo.Process(out);
+                    glitcher.Process(out);
+                    color.Process(out.data(), out.size());
+                    PushAudio(out, generation);
+                }
             }
             tempo.Flush(chunkBuf);
             glitcher.Process(chunkBuf);

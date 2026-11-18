@@ -1950,6 +1950,10 @@ std::string AgentOrchestrator::GenerateSpoken(const std::vector<ChatTurn>& messa
         bcCv.notify_all();
     };
     SpeakingStyle replyStyle = style_.load();
+    // Bavardage : 2 phrases au plus (il en enchaînait 3-4) ; une explication (technique) peut être plus longue.
+    const int maxSentences = maxTokens <= 120 ? 2 : 0;
+    int sentences = 0;
+    bool enough = false;
     const auto speak = [&](const std::string& chunk) {
         cancelBackchannel();
         std::string said = chunk;
@@ -1962,6 +1966,8 @@ std::string AgentOrchestrator::GenerateSpoken(const std::vector<ChatTurn>& messa
         }
         spoken = true;
         if (!said.empty()) d_.voice.Speak(said, replyStyle);
+        for (char c : said) sentences += c == '.' || c == '!' || c == '?';
+        if (maxSentences && sentences >= maxSentences) enough = true;
     };
 
     GenerateOptions opt;
@@ -1993,7 +1999,7 @@ std::string AgentOrchestrator::GenerateSpoken(const std::vector<ChatTurn>& messa
             speak(Trim(pending.substr(0, cut + 1)));
             pending.erase(0, cut + 1);
         }
-        return true;
+        return !enough;  // assez dit : on arrête la génération
     };
     activity_ = AgentActivity::Thinking;
     const auto out = image ? d_.brain.GenerateWithImage(messages, image->rgb.data(), image->width, image->height, opt)
@@ -2005,7 +2011,7 @@ std::string AgentOrchestrator::GenerateSpoken(const std::vector<ChatTurn>& messa
         isEscalation = true;  // balise en fin de réponse : on escalade (et on ne la prononce pas)
         return Trim(*out);
     }
-    if (!isEscalation && !Trim(pending).empty() && !stop.stop_requested()) speak(Trim(pending));
+    if (!isEscalation && !enough && !Trim(pending).empty() && !stop.stop_requested()) speak(Trim(pending));
     return Trim(*out);
 }
 
@@ -2191,7 +2197,7 @@ void AgentOrchestrator::HandleLevel1(const std::string& text, const std::vector<
     bool escalation = false;
     // Rage bait : 2 à 3 phrases, sec ; technique : de quoi expliquer.
     const std::string out = GenerateSpoken(messages, kEscalateGrammar, stop, escalation, nullptr,
-                                           chatMode_ == ChatMode::Technical ? 260 : 90);
+                                           chatMode_ == ChatMode::Technical ? 260 : 70);
     if (stop.stop_requested()) return;
     if (!escalation) {
         if (!out.empty()) {
