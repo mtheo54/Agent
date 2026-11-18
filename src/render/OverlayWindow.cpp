@@ -180,7 +180,7 @@ bool OverlayWindow::EndFrame() {
     // est fixée par l'animation, pas par le taux de rafraîchissement du moniteur.
     const HRESULT present = swapChain_->Present(0, 0);
     // Carte perdue : sans ça, l'avatar restait invisible pour toujours alors qu'Omnis tournait encore.
-    if (draw == D2DERR_RECREATE_TARGET || present == DXGI_ERROR_DEVICE_REMOVED || present == DXGI_ERROR_DEVICE_RESET) {
+    if (draw == static_cast<HRESULT>(D2DERR_RECREATE_TARGET) || present == DXGI_ERROR_DEVICE_REMOVED || present == DXGI_ERROR_DEVICE_RESET) {
         log::Info("Overlay: carte graphique perdue (0x{:08X} / 0x{:08X}), recréation", static_cast<unsigned>(draw),
                   static_cast<unsigned>(present));
         if (!RecoverDevice()) log::Info("Overlay: recréation impossible pour l'instant, nouvel essai à l'image suivante");
