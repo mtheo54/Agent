@@ -59,6 +59,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <cstdint>
 #include <cstring>
 #include <chrono>
 #include <filesystem>
@@ -203,17 +204,46 @@ void SetGameIsolation(bool on) {
 #endif
 }
 
+// Plantage : on note le code, l'adresse et le module fautif dans %LOCALAPPDATA%\CompanionAI\crash.txt (ajout).
+LONG WINAPI OnCrash(EXCEPTION_POINTERS* e) {
+    const auto* r = e->ExceptionRecord;
+    HMODULE mod = nullptr;
+    wchar_t name[MAX_PATH] = L"?";
+    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                       static_cast<LPCWSTR>(r->ExceptionAddress), &mod);
+    if (mod) GetModuleFileNameW(mod, name, MAX_PATH);
+    SYSTEMTIME t{};
+    GetLocalTime(&t);
+    const std::string line = std::format("{:04}-{:02}-{:02} {:02}:{:02}:{:02}  code 0x{:08X}  module {} + 0x{:X}  ligne de commande : {}\n",
+                                         t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond, static_cast<unsigned>(r->ExceptionCode),
+                                         log::Narrow(std::filesystem::path(name).filename().wstring()),
+                                         reinterpret_cast<std::uintptr_t>(r->ExceptionAddress) - reinterpret_cast<std::uintptr_t>(mod),
+                                         log::Narrow(GetCommandLineW()));
+    std::error_code ec;
+    std::filesystem::create_directories(DataDir(), ec);
+    if (std::ofstream f(DataDir() / L"crash.txt", std::ios::binary | std::ios::app); f) f << line;
+    return EXCEPTION_CONTINUE_SEARCH;  // Windows affiche/enregistre le plantage comme d'habitude
+}
+
 // --selftest : vérifie que tout ce qui est livré marche sur CE PC, sans modèle et sans rien télécharger.
 // Rapport dans %LOCALAPPDATA%\CompanionAI\selftest.txt (et dans la console qui l'a lancé). Code 0 = tout va bien.
 int RunSelfTest() {
     const auto root = ExeDir();
     std::string report = "Omnis — auto-test\n";
     int failures = 0;
+    namespace fs = std::filesystem;
+    // Rapport écrit après CHAQUE étape (+ l'étape en cours) : si quelque chose plante, la dernière ligne dit où.
+    std::error_code dirErr;
+    fs::create_directories(DataDir(), dirErr);
+    auto save = [&](const std::string& next) {
+        if (std::ofstream f(DataDir() / L"selftest.txt", std::ios::binary | std::ios::trunc); f)
+            f << report << (next.empty() ? "" : "  ...   en cours : " + next + " (si le test s'arrête ici, c'est cette étape qui plante)\n");
+    };
     auto check = [&](bool ok, bool critical, const std::string& what) {
         report += (ok ? "  OK    " : critical ? "  ÉCHEC " : "  (info) ") + what + "\n";
         if (!ok && critical) ++failures;
+        save({});
     };
-    namespace fs = std::filesystem;
     check(fs::exists(root / L"assets" / L"avatar" / L"rig.json"), true, "personnage (assets/avatar/rig.json)");
     check(fs::exists(root / L"espeak-ng-data" / L"phondata") && fs::exists(root / L"espeak-ng-data" / L"fr_dict"), true,
           "données de phonèmes (espeak-ng-data, français)");
@@ -224,6 +254,7 @@ int RunSelfTest() {
     const bool baits = bank.Load(root / L"assets" / L"persona" / L"baits.json", DataDir() / L"baits_learned.json");
     check(baits && bank.Size() > 0, true, std::format("banque de vannes ({} formes)", bank.Size()));
 
+    save("sonde du matériel");
     const HardwareInfo hw = ProbeHardware();
     check(!hw.gpuName.empty(), false, std::format("carte graphique : {} ({:.1f} Go), RAM {:.0f} Go", hw.gpuName, hw.vramGiB, hw.ramGiB));
     const VoicePlan vplan = ModelPlanner::PlanVoice(hw, cfg.neuralVoice);
@@ -234,11 +265,13 @@ int RunSelfTest() {
     check(true, false, std::format("à télécharger au 1er lancement : {:.1f} Go", static_cast<double>(total) / 1e9));
 
 #if COMPANION_WITH_ESPEAK
+    save("espeak-ng");
     const bool esp = espeak_Initialize(AUDIO_OUTPUT_SYNCHRONOUS, 0, nullptr, 0) > 0 && espeak_SetVoiceByName("fr") == EE_OK;
     check(esp, true, "espeak-ng (voix Piper) : français chargé");
     if (esp) espeak_Terminate();
 #endif
 #if COMPANION_WITH_QWENTTS
+    save("chargement de qwen.dll");
     HMODULE qwen = LoadLibraryW((root / L"qwen.dll").c_str());
     if (!qwen) qwen = LoadLibraryW((root / L"libqwen.dll").c_str());
     check(qwen && GetProcAddress(qwen, "qt_init"), false,
@@ -255,6 +288,7 @@ int RunSelfTest() {
         for (const wchar_t* ext : {L"", L"-wal", L"-shm"}) fs::remove(fs::path(tmp.wstring() + ext), ec);
     }
 #if COMPANION_WITH_LLAMA
+    save("llama.cpp + Vulkan (carte graphique)");
     llama_backend_init();
     std::string devices;
     for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
@@ -269,10 +303,7 @@ int RunSelfTest() {
     llama_backend_free();
 #endif
     report += failures ? std::format("{} problème(s).\n", failures) : "Tout est prêt.\n";
-
-    std::error_code ec;
-    fs::create_directories(DataDir(), ec);
-    if (std::ofstream f(DataDir() / L"selftest.txt", std::ios::binary); f) f << report;
+    save({});
     if (AttachConsole(ATTACH_PARENT_PROCESS)) {
         const std::wstring w = log::Widen(report);
         DWORD written = 0;
@@ -284,6 +315,7 @@ int RunSelfTest() {
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
+    SetUnhandledExceptionFilter(OnCrash);
 #if defined(COMPANION_REQUIRES_AVX512)
     if (!CpuHasAvx512()) {
         if (cmdLine && std::wstring_view(cmdLine).find(L"--selftest") != std::wstring_view::npos) return 3;  // pas de fenêtre en test
