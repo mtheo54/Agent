@@ -30,12 +30,14 @@ struct ConfigStatus {
     int voiceSamples = 0;          // phrases apprises pour la voix habituelle
     std::string emotion = "neutre";
     float arousal = 0.f;           // -1 … +1
+    // Journal de la conversation (rôle « user » / « assistant », texte), du plus ancien au plus récent.
+    std::vector<std::pair<std::string, std::string>> conversation;
 };
 
 class ConfigView {
 public:
     static constexpr float kWidth = 1040.f;
-    static constexpr float kHeight = 760.f;
+    static constexpr float kHeight = 1120.f;
 
     enum class Action { None, Save, Cancel };
 
@@ -54,12 +56,15 @@ public:
     void MouseUp();
     Action Key(unsigned vk);
     void Char(wchar_t c);
+    void Paste(const std::wstring& text);  // Ctrl+V (clé Claude)
+    void Wheel(int notches);               // défile le journal de conversation
     [[nodiscard]] bool InCaption(float x, float y) const;  // zone de déplacement de la fenêtre
     [[nodiscard]] bool CloseHit(float x, float y) const;
 
 private:
     enum class Field { None, Name, Scale, Opacity, Corner, Expressiveness, Fx, Rate, Backchannels, BargeIn,
-                       Emotion, Listen, Tone, Engine, Quirks, AutoTraining, Cloud, CloudAsk, Save, Cancel, Close, Expression };
+                       Emotion, Listen, Tone, Engine, Quirks, AutoTraining, Cloud, CloudAsk, Save, Cancel, Close, Expression,
+                       ClaudeKey, ClaudeKeyClear, Captions, Conversation };
     struct Hit {
         D2D1_RECT_F r;
         Field field;
@@ -80,6 +85,8 @@ private:
                    Field f);
     ID2D1SolidColorBrush* Brush(const char* name, float alpha = 1.f);
 
+    float TextHeight(const std::wstring& s, const char* fmt, float maxW);
+    void RenderConversation(D2D1_RECT_F area);
     float SliderValue(Field f) const;
     void SetSliderValue(Field f, float v01);
 
@@ -106,6 +113,8 @@ private:
     float caretClock_ = 0.f;
     D2D1_POINT_2F mouse_{-1, -1};
     bool dirty_ = true;
+    int scroll_ = 0;              // messages masqués en bas (0 = on suit le dernier)
+    D2D1_RECT_F convRect_{};
 };
 
 }  // namespace companion

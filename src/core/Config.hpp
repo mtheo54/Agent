@@ -158,7 +158,11 @@ struct CompanionConfig {
 
     // --- Niveau 2 : Claude (dernier recours) ---
     bool cloudEnabled = true;
-    bool cloudAsksPermission = true;  // chaque appel cloud demande ton accord (sauf "toujours")
+    bool cloudAsksPermission = true;
+    bool captions = true;             // sous-titres sous le personnage (ce qu'il dit)
+    // Saisie de la fenêtre de réglages, jamais écrite dans companion.json : la clé va dans le coffre de Windows.
+    std::string claudeKeyEntry;
+    bool claudeKeyRemove = false;  // chaque appel cloud demande ton accord (sauf "toujours")
     std::string claudeModel = "claude-opus-5-5";
     std::string claudeEffort = "medium";
 };

@@ -207,6 +207,7 @@ add_executable(CompanionAI WIN32
     src/audio/TextNormalizerFr.cpp
     src/render/OverlayWindow.cpp
     src/render/CartoonAvatar.cpp
+    src/render/CaptionBar.cpp
     src/ui/ConfigView.cpp
     src/ui/ConfigWindow.cpp
 )

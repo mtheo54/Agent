@@ -595,6 +595,11 @@ applis lançables, alertes studio, Claude activé ou non, permission cloud, etc.
 
 ## Clé Claude (facultative)
 
-Sans clé, tout reste local. Pour activer le dernier recours, définis la variable d'environnement
-`ANTHROPIC_API_KEY`, ou enregistre la clé dans le Gestionnaire d'identification Windows
-(identifiant générique `CompanionAI/anthropic`).
+Sans clé, tout reste local. Pour activer le dernier recours : réglages (`Ctrl+Alt+O`) → **CLÉ CLAUDE**, clique
+dans le champ, colle ta clé (`Ctrl+V`), **Enregistrer**. Elle est rangée dans le Gestionnaire d'identification
+Windows (identifiant `CompanionAI/anthropic`, chiffré par Windows), jamais dans `companion.json` ni dans le
+journal, et sert tout de suite. « effacer » la supprime. La variable d'environnement `ANTHROPIC_API_KEY`
+reste possible (elle passe avant au démarrage).
+
+Les réglages montrent aussi le **journal de la conversation** (molette pour remonter) et l'option
+**sous-titres** : une bulle sous le personnage affiche ce qu'il dit, calée sur le son.

@@ -32,6 +32,28 @@ std::string ClaudeClient::LoadApiKey() {
     return {};
 }
 
+bool ClaudeClient::SetApiKey(const std::string& key) {
+    bool ok = true;
+    if (key.empty()) {
+        CredDeleteW(L"CompanionAI/anthropic", CRED_TYPE_GENERIC, 0);
+    } else {
+        CREDENTIALW c{};
+        c.Type = CRED_TYPE_GENERIC;
+        c.TargetName = const_cast<LPWSTR>(L"CompanionAI/anthropic");
+        c.CredentialBlobSize = static_cast<DWORD>(key.size());
+        c.CredentialBlob = reinterpret_cast<LPBYTE>(const_cast<char*>(key.data()));
+        c.Persist = CRED_PERSIST_LOCAL_MACHINE;
+        c.UserName = const_cast<LPWSTR>(L"anthropic");
+        ok = CredWriteW(&c, 0) != FALSE;
+    }
+    {
+        std::scoped_lock lock(keyMutex_);
+        apiKey_ = key;
+    }
+    log::Info("Claude: {}", key.empty() ? "clé supprimée" : ok ? "nouvelle clé enregistrée" : "clé utilisée pour cette session (coffre Windows indisponible)");
+    return ok;
+}
+
 std::string ClaudeClient::Base64(const void* data, size_t size) {
     static constexpr char kTable[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     const auto* p = static_cast<const unsigned char*>(data);
@@ -80,7 +102,12 @@ ClaudeReply ClaudeClient::Send(const ClaudeRequest& req) {
     http.url = "https://api.anthropic.com/v1/messages";
     http.timeoutMs = 180000;
     http.body = body.dump();
-    const std::wstring key(apiKey_.begin(), apiKey_.end());  // clé ASCII
+    std::string apiKey;
+    {
+        std::scoped_lock lock(keyMutex_);
+        apiKey = apiKey_;
+    }
+    const std::wstring key(apiKey.begin(), apiKey.end());  // clé ASCII
     http.headers = {{L"content-type", L"application/json"},
                     {L"x-api-key", key},
                     {L"anthropic-version", L"2026-10-21"},

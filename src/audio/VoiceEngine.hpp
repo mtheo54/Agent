@@ -118,6 +118,13 @@ public:
 
     // Pont Discord : sortie de la voix (nullptr = aucun) et transcription de l'audio des autres (16 kHz mono).
     void SetVoiceTap(VoiceTap* tap) noexcept;
+    // Sous-titres : la phrase qu'il est en train de dire (calée sur le son réellement joué), et depuis quand il s'est tu.
+    struct Caption {
+        std::string text;            // vide : rien dit récemment
+        bool speaking = false;
+        float silentSeconds = 0.f;   // depuis la fin du son (pour estomper)
+    };
+    [[nodiscard]] Caption CurrentCaption() const;
     // Prendre la voix de l'utilisateur : chaque phrase dite au micro est livrée brute (16 kHz) avec sa transcription,
     // au lieu d'être traitée comme une demande, jusqu'à CaptureNextUtterance(nullptr).
     using RawUtterance = std::function<void(std::vector<float> pcm16k, std::string text)>;

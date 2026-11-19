@@ -51,6 +51,7 @@
 #include <espeak-ng/speak_lib.h>
 #endif
 #include "render/CartoonAvatar.hpp"
+#include "render/CaptionBar.hpp"
 #include "ui/ConfigWindow.hpp"
 
 #include <windows.h>
@@ -494,11 +495,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
 
     // --- Overlay + avatar ---------------------------------------------------
     OverlayWindow overlay;
-    if (!overlay.Create(instance, {})) {
+    OverlayWindow::Desc overlayDesc;
+    overlayDesc.height += static_cast<int>(CaptionBar::kHeight);  // sous-titres sous le personnage
+    if (!overlay.Create(instance, overlayDesc)) {
         MessageBoxW(nullptr, L"Impossible de créer l'overlay DirectX 11.", L"CompanionAI", MB_ICONERROR);
         return 1;
     }
     CartoonAvatar avatar;
+    CaptionBar captionBar;
+    std::string shownCaption;
+    float shownCaptionAlpha = 0.f;
     if (!avatar.Load(root / L"assets" / L"avatar" / L"rig.json")) {
         MessageBoxW(nullptr, L"assets/avatar/rig.json introuvable ou invalide.", L"CompanionAI", MB_ICONERROR);
         return 1;
@@ -615,6 +621,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
         cfg.autoTraining = edited.autoTraining;
         cfg.cloudEnabled = edited.cloudEnabled;
         cfg.cloudAsksPermission = edited.cloudAsksPermission;
+        cfg.captions = edited.captions;
+        // Clé Claude : coffre de Windows (jamais companion.json) ; une clé saisie active le recours à Claude.
+        if (!edited.claudeKeyEntry.empty()) {
+            claude.SetApiKey(edited.claudeKeyEntry);
+            cfg.cloudEnabled = true;
+        } else if (edited.claudeKeyRemove) {
+            claude.SetApiKey({});
+        }
         SaveConfig(cfg, root / L"companion.json");
         voice.SetMood(cfg.fxIntensity);
         voice.SetBaseSpeechRate(cfg.speechRate);
@@ -644,6 +658,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
         const EmotionEstimate e = orchestrator.LastEmotion();
         st.emotion = ToString(e.label);
         st.arousal = e.arousal;
+        for (const auto& m : db.RecentMessages(60))
+            if (m.role == "user" || m.role == "assistant") st.conversation.emplace_back(m.role, m.content);
         return st;
     };
     const auto openSettings = [&] {
@@ -804,12 +820,24 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
             overlay.SetVisible(wantVisible);
             forceFrame = wantVisible;  // réapparition : une image tout de suite
         }
-        const bool newFrame = avatar.Update(dt, voice.VoiceRms()) || forceFrame;
+        // Sous-titres : ce qu'il dit, visible 2,5 s après la fin puis estompé en 0,6 s.
+        const VoiceEngine::Caption caption = cfg.captions ? voice.CurrentCaption() : VoiceEngine::Caption{};
+        const float captionAlpha = caption.text.empty() ? 0.f
+                                   : caption.speaking  ? 1.f
+                                                       : std::clamp(1.f - (caption.silentSeconds - 2.5f) / 0.6f, 0.f, 1.f);
+        const bool captionChanged = caption.text != shownCaption || std::abs(captionAlpha - shownCaptionAlpha) > 0.02f;
+        const bool newFrame = avatar.Update(dt, voice.VoiceRms()) || forceFrame || captionChanged;
 
         if (newFrame && overlay.IsVisible()) {
             if (ID2D1DeviceContext* ctx = overlay.BeginFrame()) {
                 avatar.Render(ctx, overlay.D2DFactory(), overlay.Scale());
-                if (!overlay.EndFrame()) avatar.ReleaseDeviceResources();
+                captionBar.Render(ctx, overlay.Scale(), {6.f, 424.f, 314.f, 420.f + CaptionBar::kHeight}, caption.text, captionAlpha);
+                shownCaption = caption.text;
+                shownCaptionAlpha = captionAlpha;
+                if (!overlay.EndFrame()) {
+                    avatar.ReleaseDeviceResources();
+                    captionBar.ReleaseDeviceResources();
+                }
             }
         }
     }

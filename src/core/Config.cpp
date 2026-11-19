@@ -103,6 +103,7 @@ CompanionConfig LoadConfig(const std::filesystem::path& jsonFile) {
         cfg.knowledgeMaxAgeDays = j.value("knowledgeMaxAgeDays", cfg.knowledgeMaxAgeDays);
         cfg.cloudEnabled = j.value("cloudEnabled", cfg.cloudEnabled);
         cfg.cloudAsksPermission = j.value("cloudAsksPermission", cfg.cloudAsksPermission);
+        cfg.captions = j.value("captions", cfg.captions);
         cfg.claudeModel = j.value("claudeModel", cfg.claudeModel);
         cfg.claudeEffort = j.value("claudeEffort", cfg.claudeEffort);
         if (j.contains("wikis")) {
@@ -152,6 +153,7 @@ bool SaveConfig(const CompanionConfig& cfg, const std::filesystem::path& jsonFil
     j["autoTraining"] = cfg.autoTraining;
     j["cloudEnabled"] = cfg.cloudEnabled;
     j["cloudAsksPermission"] = cfg.cloudAsksPermission;
+    j["captions"] = cfg.captions;
     std::ofstream out(jsonFile, std::ios::binary | std::ios::trunc);
     if (!out) return false;
     out << j.dump(2) << "\n";

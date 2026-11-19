@@ -453,7 +453,7 @@ void ConfigView::Render(ID2D1DeviceContext* ctx, float scale) {
         Slider(R + 18, y, RW - 36, L"EXPRESSIVITÉ", SliderValue(Field::Expressiveness),
                std::format(L"{:.0f} %", cfg_.expressiveness * 100), Field::Expressiveness);
         y += 28;
-        Slider(R + 18, y, RW - 36, L"TICS & BUGS", SliderValue(Field::Quirks),
+        Slider(R + 18, y, RW - 36, L"TICS HUMAINS", SliderValue(Field::Quirks),
                cfg_.voiceQuirks < 0.01f ? std::wstring(L"jamais") : std::format(L"{:.0f} %", cfg_.voiceQuirks * 100), Field::Quirks);
         y += 28;
         Leader(R + 18, y, RW - 36, L"s'entraîner pendant tes pauses", cfg_.autoTraining ? L"activé" : L"désactivé",
@@ -467,15 +467,99 @@ void ConfigView::Render(ID2D1DeviceContext* ctx, float scale) {
                cfg_.cloudAsksPermission ? "green" : "amber", Field::CloudAsk);
     }
 
+    // --- Clé Claude ------------------------------------------------------------------------------
+    box = {L, 740, L + LW, 816};
+    Box(box, L"CLÉ CLAUDE");
+    {
+        const float y = box.top + 44;
+        Text(L"CLÉ API", "mono11", L + 22, y, "dim", 2.f);
+        const D2D1_RECT_F field{L + 120, y - 6, L + LW - 100, y + 20};
+        ctx->DrawLine({field.left, field.bottom}, {field.right, field.bottom},
+                      Brush(focus_ == Field::ClaudeKey ? "white" : "dash"), 1.f, dashed_.Get());
+        std::wstring shown;
+        const char* color = "text";
+        const std::string& k = cfg_.claudeKeyEntry;
+        if (!k.empty()) {  // jamais affichée en clair : début et 4 derniers caractères
+            shown = W(k.substr(0, std::min<std::size_t>(7, k.size()))) + std::wstring(std::min<std::size_t>(12, k.size()), L'•') +
+                    (k.size() > 11 ? W(k.substr(k.size() - 4)) : std::wstring{});
+        } else if (cfg_.claudeKeyRemove) {
+            shown = L"sera supprimée à l'enregistrement";
+            color = "amber";
+        } else if (focus_ == Field::ClaudeKey) {
+            shown.clear();
+        } else {
+            shown = status_.claudeKey ? L"•••••• enregistrée (coffre Windows)" : L"clique puis colle ta clé (Ctrl+V)";
+            color = status_.claudeKey ? "green" : "muted";
+        }
+        Text(shown, "mono13", field.left + 2, y - 3, color);
+        if (focus_ == Field::ClaudeKey && std::fmod(caretClock_, 1.f) < 0.55f) {
+            const float cx = field.left + 3 + TextWidth(shown, "mono13");
+            ctx->FillRectangle({cx, y - 3, cx + 8, y + 15}, Brush("text"));
+        }
+        hits_.push_back({field, Field::ClaudeKey});
+        if (status_.claudeKey || !k.empty()) {
+            const D2D1_RECT_F clear{L + LW - 86, y - 4, L + LW - 22, y + 16};
+            Text(L"effacer", "mono11", clear.left, clear.top + 2, Inside(clear, mouse_.x, mouse_.y) ? "white" : "dim");
+            hits_.push_back({clear, Field::ClaudeKeyClear});
+        }
+    }
+
+    // --- Affichage ------------------------------------------------------------------------------
+    box = {R, 740, R + RW, 816};
+    Box(box, L"AFFICHAGE");
+    Leader(R + 18, box.top + 44, RW - 36, L"sous-titres sous le personnage", cfg_.captions ? L"activé" : L"désactivé",
+           cfg_.captions ? "green" : "muted", Field::Captions);
+
+    // --- Journal de la conversation -------------------------------------------------------------
+    box = {L, 834, R + RW, 1082};
+    Box(box, L"CONVERSATION");
+    RenderConversation({box.left + 22, box.top + 42, box.right - 22, box.bottom - 10});
+
     // --- Pied de page --------------------------------------------------------------------------
-    ctx->DrawLine({0, 736}, {kWidth, 736}, Brush("line"), 1.f);
-    Text(L"© 2026 abrasion · compagnon", "mono11", 40, 742, "muted", 1.f);
+    ctx->DrawLine({0, kHeight - 24}, {kWidth, kHeight - 24}, Brush("line"), 1.f);
+    Text(L"© 2026 abrasion · compagnon", "mono11", 40, kHeight - 18, "muted", 1.f);
     const std::wstring right = L"local · 24 i/s · plugin's for all";
-    Text(right, "mono11", kWidth - 40 - TextWidth(right, "mono11", 1.f), 742, "muted", 1.f);
+    Text(right, "mono11", kWidth - 40 - TextWidth(right, "mono11", 1.f), kHeight - 18, "muted", 1.f);
 
     ctx->SetTransform(D2D1::IdentityMatrix());
     ctx_ = nullptr;
     dirty_ = false;
+}
+
+float ConfigView::TextHeight(const std::wstring& s, const char* fmt, float maxW) {
+    ComPtr<IDWriteTextLayout> layout;
+    if (FAILED(dwrite_->CreateTextLayout(s.c_str(), static_cast<UINT32>(s.size()), Format(fmt), maxW, 2000.f, &layout))) return 16.f;
+    DWRITE_TEXT_METRICS m{};
+    layout->GetMetrics(&m);
+    return m.height;
+}
+
+// Du plus récent (en bas) au plus ancien, autant que la zone en contient ; la molette remonte dans l'historique.
+void ConfigView::RenderConversation(D2D1_RECT_F area) {
+    convRect_ = area;
+    hits_.push_back({area, Field::Conversation});
+    const auto& conv = status_.conversation;
+    if (conv.empty()) {
+        Text(L"Rien pour l'instant. Parle-lui, la conversation s'affiche ici.", "mono11", area.left, area.top, "muted");
+        return;
+    }
+    scroll_ = std::clamp(scroll_, 0, static_cast<int>(conv.size()) - 1);
+    const float labelW = 64.f, textW = area.right - area.left - labelW;
+    ctx_->PushAxisAlignedClip(area, D2D1_ANTIALIAS_MODE_ALIASED);
+    float bottom = area.bottom;
+    for (int i = static_cast<int>(conv.size()) - 1 - scroll_; i >= 0 && bottom > area.top; --i) {
+        const auto& [role, text] = conv[static_cast<std::size_t>(i)];
+        const std::wstring t = W(text);
+        const float h = std::max(16.f, TextHeight(t, "sans13", textW)) + 6.f;
+        const float top = bottom - h;
+        if (top < area.top - 1.f) break;  // pas de message coupé : la molette remonte
+        const bool omnis = role == "assistant";
+        Text(omnis ? L"OMNIS" : L"TOI", "mono11", area.left, top + 2, omnis ? "green" : "amber", 1.5f);
+        Text(t, "sans13", area.left + labelW, top, omnis ? "text" : "soft", 0.f, textW);
+        bottom = top;
+    }
+    ctx_->PopAxisAlignedClip();
+    if (scroll_ > 0) Text(std::format(L"↓ {} plus récents (molette)", scroll_), "mono11", area.right - 210, area.bottom - 14, "dim");
 }
 
 // ---------------------------------------------------------------------------
@@ -506,6 +590,16 @@ ConfigView::Action ConfigView::MouseDown(float x, float y) {
             case Field::Cloud: cfg_.cloudEnabled = !cfg_.cloudEnabled; return Action::None;
             case Field::CloudAsk: cfg_.cloudAsksPermission = !cfg_.cloudAsksPermission; return Action::None;
             case Field::Name: focus_ = Field::Name; caretClock_ = 0.f; return Action::None;
+            case Field::ClaudeKey:
+                focus_ = Field::ClaudeKey;
+                cfg_.claudeKeyRemove = false;
+                caretClock_ = 0.f;
+                return Action::None;
+            case Field::ClaudeKeyClear:
+                cfg_.claudeKeyEntry.clear();
+                cfg_.claudeKeyRemove = status_.claudeKey;
+                return Action::None;
+            case Field::Captions: cfg_.captions = !cfg_.captions; return Action::None;
             case Field::Expression: {
                 const std::wstring clip = kExpressions[h.value][1];
                 const std::string c(clip.begin(), clip.end());
@@ -534,6 +628,10 @@ void ConfigView::MouseUp() { dragging_ = Field::None; }
 ConfigView::Action ConfigView::Key(unsigned vk) {
     if (vk == VK_ESCAPE) return Action::Cancel;
     if (vk == VK_RETURN) return Action::Save;
+    if (focus_ == Field::ClaudeKey && vk == VK_BACK && !cfg_.claudeKeyEntry.empty()) {
+        cfg_.claudeKeyEntry.pop_back();
+        dirty_ = true;
+    }
     if (focus_ == Field::Name && vk == VK_BACK && !cfg_.name.empty()) {
         // Retire le dernier caractère UTF-8 complet.
         size_t i = cfg_.name.size() - 1;
@@ -545,10 +643,27 @@ ConfigView::Action ConfigView::Key(unsigned vk) {
 }
 
 void ConfigView::Char(wchar_t c) {
+    if (focus_ == Field::ClaudeKey) {  // clé : ASCII imprimable, sans espace
+        if (c > 32 && c < 127 && cfg_.claudeKeyEntry.size() < 256) cfg_.claudeKeyEntry += static_cast<char>(c);
+        dirty_ = true;
+        return;
+    }
     if (focus_ != Field::Name || c < 32 || cfg_.name.size() >= 24) return;
     char buf[8];
     const int n = WideCharToMultiByte(CP_UTF8, 0, &c, 1, buf, sizeof(buf), nullptr, nullptr);
     if (n > 0) cfg_.name.append(buf, static_cast<size_t>(n));
+    dirty_ = true;
+}
+
+void ConfigView::Paste(const std::wstring& text) {
+    if (focus_ != Field::ClaudeKey && focus_ != Field::Name) return;
+    if (focus_ == Field::ClaudeKey) cfg_.claudeKeyEntry.clear();  // coller remplace (on colle une clé entière)
+    for (wchar_t c : text) Char(c);
+}
+
+void ConfigView::Wheel(int notches) {
+    if (!Inside(convRect_, mouse_.x, mouse_.y)) return;
+    scroll_ = std::max(0, scroll_ + notches);  // molette vers le haut = plus ancien
     dirty_ = true;
 }
 

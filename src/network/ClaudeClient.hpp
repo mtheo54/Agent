@@ -13,6 +13,7 @@
 #include "core/MemoryDB.hpp"  // ChatTurn
 #include "network/HttpClient.hpp"
 
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -44,7 +45,13 @@ class ClaudeClient {
 public:
     ClaudeClient(HttpClient& http, std::string model, std::string effort);
 
-    [[nodiscard]] bool HasCredentials() const { return !apiKey_.empty(); }
+    [[nodiscard]] bool HasCredentials() const {
+        std::scoped_lock lock(keyMutex_);
+        return !apiKey_.empty();
+    }
+    // Clé saisie dans les réglages : rangée dans le Gestionnaire d'identification Windows (chiffrée par Windows, jamais
+    // dans companion.json ni dans le journal), utilisée tout de suite. Vide = supprimée.
+    bool SetApiKey(const std::string& key);
     ClaudeReply Send(const ClaudeRequest& req);
 
     static std::string Base64(const void* data, size_t size);
@@ -56,6 +63,7 @@ private:
     std::string model_;
     std::string effort_;
     std::string apiKey_;
+    mutable std::mutex keyMutex_;
 };
 
 }  // namespace companion

@@ -473,6 +473,10 @@ struct VoiceEngine::Impl {
 
     void StopSpeakingNow() {
         ++speechGeneration;
+        {
+            std::scoped_lock lock(captionMutex);
+            captions.clear();  // phrase coupée : on ne l'affiche plus
+        }
         flushMark = ring.WriteIndex();
         if (renderWake) SetEvent(renderWake);
     }
@@ -559,6 +563,7 @@ struct VoiceEngine::Impl {
 
             const ULONGLONG now = GetTickCount64();
             if (got > 0) lastAudioTick = now;
+            if (got > 0) lastAudibleTick = now;
             if (now - lastAudioTick > 400 && pendingSpeech.load() == 0) {
                 client->Stop();
                 client->Reset();
@@ -573,10 +578,32 @@ struct VoiceEngine::Impl {
         CloseHandle(bufferEvent);
     }
 
+    // Sous-titres : chaque phrase est datée en échantillons poussés ; la position jouée = poussés - en file.
+    std::atomic<std::uint64_t> pushedTotal{0};
+    mutable std::mutex captionMutex;
+    std::deque<std::pair<std::uint64_t, std::string>> captions;  // (début, texte)
+    std::atomic<ULONGLONG> lastAudibleTick{0};
+    void MarkCaption(const std::string& text) {
+        std::string t;  // sans balises (rire), (son: …)
+        int depth = 0;
+        for (char c : text) {
+            if (c == '(') ++depth;
+            else if (c == ')') depth = std::max(0, depth - 1);
+            else if (!depth) t += c;
+        }
+        while (!t.empty() && t.front() == ' ') t.erase(t.begin());
+        while (!t.empty() && t.back() == ' ') t.pop_back();
+        if (t.empty()) return;
+        std::scoped_lock lock(captionMutex);
+        captions.emplace_back(pushedTotal.load(), std::move(t));
+        while (captions.size() > 8) captions.pop_front();
+    }
+
     void PushAudio(std::span<const float> pcm, uint32_t generation) {
         while (!pcm.empty()) {
             if (speechGeneration.load() != generation) return;  // StopSpeaking() entre-temps
             const size_t n = ring.Push(pcm);
+            pushedTotal += n;
             pcm = pcm.subspan(n);
             SetEvent(renderWake);
             if (!pcm.empty()) Sleep(10);  // file pleine : on attend le rendu
@@ -780,6 +807,7 @@ struct VoiceEngine::Impl {
     void SpeakText(const std::string& text, uint32_t generation, SpeakingStyle style, bool forceGlitch) {
         // Aucun glitch (demande utilisateur) : ni bugs de robot, ni voix bizarre, ni grésillement. forceGlitch ignoré.
         (void)forceGlitch;
+        MarkCaption(text);
         float lengthMul, noiseMul, moodDelta;
         StyleParams(style, lengthMul, noiseMul, moodDelta);
         bool done = false;
@@ -1200,6 +1228,21 @@ void VoiceEngine::SetGamingMode(bool gaming) noexcept {
     if (gaming) d.Post([&d] { if (d.gaming.load()) d.neural.Unload(); });
     else d.Post([&d] { if (!d.gaming.load() && d.neuralEnabled.load() && !d.neural.Ready()) d.neural.Load(d.cfg.neural); });
 }
+VoiceEngine::Caption VoiceEngine::CurrentCaption() const {
+    const auto& d = *impl_;
+    Caption c;
+    const std::uint64_t played = d.pushedTotal.load() - std::min<std::uint64_t>(d.pushedTotal.load(), d.ring.Size());
+    {
+        std::scoped_lock lock(d.captionMutex);
+        for (const auto& [start, text] : d.captions)
+            if (start <= played) c.text = text;
+    }
+    const ULONGLONG last = d.lastAudibleTick.load();
+    c.silentSeconds = last ? static_cast<float>(GetTickCount64() - last) / 1000.f : 1e9f;
+    c.speaking = d.SpeakingNow();
+    return c;
+}
+
 void VoiceEngine::CaptureNextUtterance(RawUtterance cb) {
     std::scoped_lock lock(impl_->cbMutex);
     impl_->rawCapture = std::move(cb);

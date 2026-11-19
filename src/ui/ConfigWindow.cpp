@@ -1,5 +1,7 @@
 #include "ui/ConfigWindow.hpp"
 
+#include <algorithm>
+
 #include "core/Log.hpp"
 
 #include <windowsx.h>
@@ -42,9 +44,12 @@ bool ConfigWindow::Open(HINSTANCE instance, const CompanionConfig& cfg, const st
     RegisterClassExW(&wc);
 
     scale_ = static_cast<float>(GetDpiForSystem()) / 96.f;
-    const int w = static_cast<int>(ConfigView::kWidth * scale_), h = static_cast<int>(ConfigView::kHeight * scale_);
     RECT work{};
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
+    // Écran trop petit pour la fenêtre (1040 x 1120) : tout est réduit pour tenir dans la zone de travail.
+    scale_ = std::min({scale_, static_cast<float>(work.bottom - work.top) * 0.96f / ConfigView::kHeight,
+                       static_cast<float>(work.right - work.left) * 0.96f / ConfigView::kWidth});
+    const int w = static_cast<int>(ConfigView::kWidth * scale_), h = static_cast<int>(ConfigView::kHeight * scale_);
     hwnd_ = CreateWindowExW(WS_EX_APPWINDOW, kClass, L"abrasion · compagnon", WS_POPUP | WS_MINIMIZEBOX | WS_SYSMENU,
                             (work.left + work.right - w) / 2, (work.top + work.bottom - h) / 2, w, h, nullptr, nullptr,
                             instance, this);
@@ -143,7 +148,24 @@ LRESULT ConfigWindow::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             if (hwnd_) Paint();
             return 0;
         case WM_CHAR:
-            view_.Char(static_cast<wchar_t>(wp));
+            if (wp == 0x16) {  // Ctrl+V
+                std::wstring clip;
+                if (OpenClipboard(hwnd_)) {
+                    if (HANDLE h = GetClipboardData(CF_UNICODETEXT))
+                        if (const auto* p = static_cast<const wchar_t*>(GlobalLock(h))) {
+                            clip = p;
+                            GlobalUnlock(h);
+                        }
+                    CloseClipboard();
+                }
+                view_.Paste(clip);
+            } else {
+                view_.Char(static_cast<wchar_t>(wp));
+            }
+            Paint();
+            return 0;
+        case WM_MOUSEWHEEL:
+            view_.Wheel(GET_WHEEL_DELTA_WPARAM(wp) / WHEEL_DELTA);
             Paint();
             return 0;
         case WM_PAINT: {
