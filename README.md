@@ -312,6 +312,18 @@ voix Piper `fr_FR-siwis-medium`, voix neuronale Qwen3-TTS 0.6B (`Serveurperso/Qw
 Imposer un modèle : un chemin dans `llmModel` / `llmGamingModel` (`companion.json`) au lieu de `"auto"`.
 Vision locale (optionnelle) : `mmproj-F16.gguf` du même dépôt que le cerveau, dans `llmMmproj`.
 
+### FL Studio en ASIO (Antelope, Focusrite, RME…)
+
+Omnis écoute la sortie de FL Studio directement (pas ton micro), via la capture audio de Windows. Un pilote
+**ASIO natif** contourne Windows : il ne reçoit alors que du silence et te le dit. Deux solutions :
+
+1. **Le plus simple** : dans FL Studio, *Options → Audio settings → Device* : **FL Studio ASIO** (sortie vers ta
+   carte). Omnis entend FL directement.
+2. **Garder l'ASIO de la carte** : dans le panneau de ta carte (Antelope Control Panel…), envoie la sortie de FL
+   vers un canal d'enregistrement « loopback », puis indique son nom dans `companion.json` :
+   `"studioInput": "Loopback"` (un morceau du nom suffit ; la liste des entrées est dans `omnis.log`, ligne
+   « Entrées audio »).
+
 ## Deux modes : technique ou rage bait
 
 Avant chaque réponse, Omnis décide du mode **dans le code**, pas au hasard du modèle (`OmnisModes.hpp`) :

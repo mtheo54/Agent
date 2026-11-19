@@ -121,7 +121,78 @@ HRESULT ActivateSystemLoopback(ComPtr<IAudioClient>& client) {
     return hr;
 }
 
+// Entrées audio actives : (identifiant, nom).
+std::vector<std::pair<std::wstring, std::wstring>> Inputs() {
+    std::vector<std::pair<std::wstring, std::wstring>> out;
+    ComPtr<IMMDeviceEnumerator> enumerator;
+    ComPtr<IMMDeviceCollection> devices;
+    if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&enumerator))) ||
+        FAILED(enumerator->EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE, &devices)))
+        return out;
+    UINT n = 0;
+    devices->GetCount(&n);
+    static constexpr PROPERTYKEY kFriendlyName = {{0xa45c254e, 0xdf1c, 0x4efd, {0x80, 0x20, 0x67, 0xd1, 0x46, 0xa8, 0x50, 0xe0}}, 14};
+    for (UINT i = 0; i < n; ++i) {
+        ComPtr<IMMDevice> d;
+        ComPtr<IPropertyStore> props;
+        LPWSTR id = nullptr;
+        if (FAILED(devices->Item(i, &d)) || FAILED(d->GetId(&id))) continue;
+        std::wstring name;
+        PROPVARIANT v;
+        PropVariantInit(&v);
+        if (SUCCEEDED(d->OpenPropertyStore(STGM_READ, &props)) && SUCCEEDED(props->GetValue(kFriendlyName, &v)) && v.vt == VT_LPWSTR)
+            name = v.pwszVal;
+        PropVariantClear(&v);
+        out.emplace_back(id, name);
+        CoTaskMemFree(id);
+    }
+    return out;
+}
+
+HRESULT ActivateInput(const std::wstring& id, ComPtr<IAudioClient>& client) {
+    ComPtr<IMMDeviceEnumerator> enumerator;
+    ComPtr<IMMDevice> device;
+    HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&enumerator));
+    if (SUCCEEDED(hr)) hr = enumerator->GetDevice(id.c_str(), &device);
+    if (SUCCEEDED(hr))
+        hr = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, reinterpret_cast<void**>(client.ReleaseAndGetAddressOf()));
+    return hr;
+}
+
+std::wstring Lower(std::wstring s) {
+    for (auto& c : s) c = static_cast<wchar_t>(towlower(c));
+    return s;
+}
+
 }  // namespace
+
+std::vector<std::wstring> WasapiLoopback::InputNames() {
+    const HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    std::vector<std::wstring> names;
+    for (const auto& [id, name] : Inputs()) names.push_back(name);
+    if (SUCCEEDED(com)) CoUninitialize();
+    return names;
+}
+
+bool WasapiLoopback::StartInput(const std::wstring& nameContains, Sink sink) {
+    Stop();
+    if (nameContains.empty()) return false;
+    const HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    std::wstring id;
+    for (const auto& [devId, name] : Inputs())
+        if (Lower(name).find(Lower(nameContains)) != std::wstring::npos) {
+            id = devId;
+            log::Info("Loopback: entrée « {} »", log::Narrow(name));
+            break;
+        }
+    if (SUCCEEDED(com)) CoUninitialize();
+    if (id.empty()) return false;
+    processMode_ = false;
+    inputId_ = id;
+    running_ = true;
+    thread_ = std::jthread([this, id, sink = std::move(sink)](std::stop_token st) { Run(st, 0, id, sink); });
+    return true;
+}
 
 std::uint32_t WasapiLoopback::FindProcessId(const std::wstring& exeName) {
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -147,8 +218,9 @@ bool WasapiLoopback::Start(const std::wstring& processName, Sink sink) {
         if (pid == 0) return false;
     }
     processMode_ = pid != 0;
+    inputId_.clear();
     running_ = true;
-    thread_ = std::jthread([this, pid, sink = std::move(sink)](std::stop_token st) { Run(st, pid, sink); });
+    thread_ = std::jthread([this, pid, sink = std::move(sink)](std::stop_token st) { Run(st, pid, {}, sink); });
     return true;
 }
 
@@ -160,12 +232,13 @@ void WasapiLoopback::Stop() {
     running_ = false;
 }
 
-void WasapiLoopback::Run(std::stop_token st, std::uint32_t pid, Sink sink) {
+void WasapiLoopback::Run(std::stop_token st, std::uint32_t pid, std::wstring inputId, Sink sink) {
     log::SetCurrentThreadName(L"Companion.Loopback");
     const HRESULT comHr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 
     ComPtr<IAudioClient> client;
-    HRESULT hr = pid ? ActivateProcessLoopback(pid, client) : ActivateSystemLoopback(client);
+    const bool input = !inputId.empty();
+    HRESULT hr = input ? ActivateInput(inputId, client) : pid ? ActivateProcessLoopback(pid, client) : ActivateSystemLoopback(client);
 
     WAVEFORMATEX fmt{};
     fmt.wFormatTag = WAVE_FORMAT_IEEE_FLOAT;
@@ -179,7 +252,7 @@ void WasapiLoopback::Run(std::stop_token st, std::uint32_t pid, Sink sink) {
     ComPtr<IAudioCaptureClient> capture;
     if (SUCCEEDED(hr))
         hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED,
-                                AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_EVENTCALLBACK |
+                                (input ? 0 : AUDCLNT_STREAMFLAGS_LOOPBACK) | AUDCLNT_STREAMFLAGS_EVENTCALLBACK |
                                     AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
                                 2'000'000 /* 200 ms */, 0, &fmt, nullptr);
     if (SUCCEEDED(hr)) hr = client->SetEventHandle(event);
@@ -187,10 +260,10 @@ void WasapiLoopback::Run(std::stop_token st, std::uint32_t pid, Sink sink) {
     if (SUCCEEDED(hr)) hr = client->Start();
 
     if (FAILED(hr)) {
-        log::Info("Loopback: échec d'initialisation ({}, hr=0x{:08X})", pid ? "processus" : "système",
+        log::Info("Loopback: échec d'initialisation ({}, hr=0x{:08X})", input ? "entrée" : pid ? "processus" : "système",
                   static_cast<unsigned>(hr));
     } else {
-        log::Info("Loopback: capture {} démarrée", pid ? "du processus" : "du mix système");
+        log::Info("Loopback: capture {} démarrée", input ? "de l'entrée" : pid ? "du processus" : "du mix système");
         std::vector<float> silence;
         while (!st.stop_requested()) {
             // Sans son, aucun événement n'arrive : le délai permet de rester réactif à l'arrêt.

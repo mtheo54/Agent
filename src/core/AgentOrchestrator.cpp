@@ -366,9 +366,10 @@ void AgentOrchestrator::UpdateStudioCapture() {
         d_.analyzer.Start();
         auto sink = [this](const float* data, std::size_t frames) { d_.analyzer.Push(data, frames); };
         const std::wstring proc(cfg_.studioProcess.begin(), cfg_.studioProcess.end());
-        // FL Studio seul dès qu'il tourne (sa voix à lui n'est pas captée), sinon le mix système. Avant, hors mode
-        // Studio, c'était toujours le mix système : il s'entendait lui-même au lieu de la prod.
-        if (!d_.loopback.Start(proc, sink)) d_.loopback.Start(L"", sink);
+        // 1) l'entrée de la carte qui reçoit FL (ASIO natif), 2) FL Studio seul dès qu'il tourne (sa voix à lui n'est pas
+        // captée), 3) le mix système. Avant, hors mode Studio, c'était toujours le mix système.
+        const std::wstring input = log::Widen(cfg_.studioInput);
+        if (!(!input.empty() && d_.loopback.StartInput(input, sink)) && !d_.loopback.Start(proc, sink)) d_.loopback.Start(L"", sink);
     } else if (!wanted && d_.loopback.Running()) {
         d_.loopback.Stop();
         d_.analyzer.Stop();
@@ -2659,7 +2660,18 @@ void AgentOrchestrator::HandleStudioQuestion(const std::string& text, const std:
     if (stop.stop_requested()) return;
     const auto mix = d_.analyzer.Snapshot();
     if (mix.seconds < 1.f) {
-        Say(Line("studioSilent", {}, "Je n'entends rien. Lance la lecture et redemande-moi."));
+        // FL tourne mais sa capture est muette : presque toujours l'ASIO natif de la carte son (Antelope, Focusrite…),
+        // qui contourne Windows. On le dit clairement, avec les deux solutions, et on note les entrées disponibles.
+        const bool flRunning = WasapiLoopback::FindProcessId(std::wstring(cfg_.studioProcess.begin(), cfg_.studioProcess.end())) != 0;
+        if (flRunning && !d_.loopback.IsInputCapture()) {
+            std::string inputs;
+            for (const auto& n : WasapiLoopback::InputNames()) inputs += (inputs.empty() ? "" : " | ") + log::Narrow(n);
+            log::Info("Studio: FL tourne mais sa capture est muette (ASIO natif ?). Entrées disponibles : {}", inputs);
+            Say("FL tourne, mais je reçois rien. T'es sûrement en ASIO de ta carte son, ça passe pas par Windows. Dans FL, "
+                "Options, Audio, prends FL Studio ASIO, et là je t'entends direct.");
+        } else {
+            Say(Line("studioSilent", {}, "Je n'entends rien. Lance la lecture et redemande-moi."));
+        }
         return;
     }
     // Partage des rôles (cascade du rapport) : le C++ sait CE QUI NE VA PAS et QUOI FAIRE (diagnostic façon

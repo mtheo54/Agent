@@ -144,6 +144,9 @@ struct CompanionConfig {
 
     // --- Studio (héritage OMNIS) ---
     std::string studioProcess = "FL64.exe";  // capture audio ciblée sur ce processus
+    // FL en ASIO natif (Antelope, Focusrite…) : l'ASIO contourne Windows, la capture du processus est muette. Nom (ou
+    // morceau de nom) de l'ENTRÉE de la carte son qui reçoit la sortie de FL (canal loopback), ex. "Loopback".
+    std::string studioInput;
     bool studioAlerts = true;                // niveau 0 : "ça clippe", problème de phase
 
     // --- Contrôle du PC ---

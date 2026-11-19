@@ -5,6 +5,9 @@
 //    (ActivateAudioInterfaceAsync + PROCESS_LOOPBACK). La voix du compagnon, Discord ou le
 //    navigateur ne polluent pas l'analyse.
 //  - Mode système (repli) : loopback du périphérique de sortie par défaut (tout le mix du PC).
+//  - Mode entrée : une ENTRÉE de la carte son choisie par son nom (ex. le canal « Loopback » d'une Antelope).
+//    Indispensable quand FL Studio joue en ASIO natif (Antelope, Focusrite…) : l'ASIO contourne le moteur audio
+//    de Windows, la capture du processus ne reçoit alors que du silence.
 //
 // Format livré : float stéréo entrelacé 48 kHz (conversion par le moteur audio Windows).
 // Le thread de capture ne fait que copier : l'analyse tourne ailleurs, en priorité basse.
@@ -15,6 +18,7 @@
 #include <stop_token>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace companion {
 
@@ -30,18 +34,24 @@ public:
     // processName vide = mix système. Retourne false si le processus est introuvable
     // (l'appelant peut alors retenter en mode système).
     bool Start(const std::wstring& processName, Sink sink);
+    // Entrée dont le nom contient `nameContains` (sans casse). Faux si aucune ne correspond.
+    bool StartInput(const std::wstring& nameContains, Sink sink);
+    // Noms des entrées audio (pour le journal et les réglages).
+    static std::vector<std::wstring> InputNames();
     void Stop();
     [[nodiscard]] bool Running() const noexcept { return running_.load(); }
     [[nodiscard]] bool IsProcessCapture() const noexcept { return processMode_; }
+    [[nodiscard]] bool IsInputCapture() const noexcept { return !inputId_.empty(); }
 
     static std::uint32_t FindProcessId(const std::wstring& exeName);
 
 private:
-    void Run(std::stop_token st, std::uint32_t pid, Sink sink);
+    void Run(std::stop_token st, std::uint32_t pid, std::wstring inputId, Sink sink);
 
     std::jthread thread_;
     std::atomic<bool> running_{false};
     bool processMode_ = false;
+    std::wstring inputId_;
 };
 
 }  // namespace companion

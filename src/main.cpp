@@ -427,6 +427,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
             cfg.llmMmproj = cfg.llmModel.parent_path() / log::Widen(v->file);
     log::Info("Matériel : {} ({:.1f} Go de VRAM, {:.0f} Go de RAM). {}", hw.gpuName, hw.vramGiB, hw.ramGiB, normalPlan.why);
 
+    {  // Entrées audio : pour « studioInput » (FL en ASIO natif -> canal loopback de la carte son)
+        std::string inputs;
+        for (const auto& n : WasapiLoopback::InputNames()) inputs += (inputs.empty() ? "" : " | ") + log::Narrow(n);
+        log::Info("Entrées audio : {}{}", inputs.empty() ? "aucune" : inputs,
+                  cfg.studioInput.empty() ? "" : " ; studioInput = « " + cfg.studioInput + " »");
+    }
     // Mode prudent si la session d'avant a été tuée (pilote de la carte réinitialisé, par exemple). Avant tout ggml.
     GpuGuard gpuGuard(DataDir());
     cfg.gpuSafeStage = gpuGuard.Begin();
