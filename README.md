@@ -332,6 +332,14 @@ Omnis écoute la sortie de FL Studio directement (pas ton micro), via la capture
 - **Voix off (After Effects)** : « sous-titre ma voix off » — Omnis demande au projet le fichier du calque audio (sélectionné, sinon le premier), le décode (Media Foundation), le transcrit avec Whisper mot par mot (`token_timestamps`), ramène les instants au temps de la composition (position et étirement du calque) et pose les sous-titres : 1 à 3 mots, coupés aux pauses et à la ponctuation, mot fort seul, plus gros et en couleur, petite entrée en pop. « Quand je le dis » : la recette reçoit `QUAND "mot"` et les gestes démarrent à l'instant exact du mot (recherche sans accents, expressions de plusieurs mots) ; « ici » = tête de lecture. Les « toujours… / jamais… » sont retenus comme règles de style. Transcription gardée en cache tant que le fichier ne change pas.
 - **FL Studio, accords** : « fais-moi une suite d'accords trap sombre ». Le modèle donne la tonalité et les degrés (grammaire), Omnis empile les tierces dans la gamme (toujours dans la tonalité), choisit les renversements qui bougent le moins et ajoute la basse ; script piano roll `Omnis - accords.pyscript` (FL 21.2+, menu Outils → Scripts).
 
+## Compétences qu'il se crée (avec ton accord)
+
+« Apprends Blender », « apprends à exporter en MP3 » : Omnis classe la demande (savoir / action / refus, grammaire). Il refuse tout ce qui touche aux comptes, aux messages, à la triche, au piratage ou à la sécurité. Une compétence n'est jamais du code natif : c'est un fichier JSON dans `%LOCALAPPDATA%\CompanionAI\skills`, exécuté par les briques déjà sûres d'Omnis.
+- **Savoir** : sources du web d'abord (avec permission), puis une méthode de pro en 10 points. Elle est marquée « de mémoire, non vérifiée » sans source, et utilisée comme une méthode de domaine.
+- **Action** : un plan du pilote (actions risquées confirmées à voix haute) ou un script After Effects (contrôle de sécurité, un seul Ctrl+Z, vérification). Il se relance par sa phrase, même conjuguée autrement.
+
+Chaque création est lue à voix haute et enregistrée seulement après ton « oui ». Il le demande à chaque fois : un « toujours » ne s'applique jamais à la suivante. Le contenu complet va dans le journal de la conversation. « Quelles compétences t'as », « oublie la compétence X ».
+
 ## Deux modes : technique ou rage bait
 
 Avant chaque réponse, Omnis décide du mode **dans le code**, pas au hasard du modèle (`OmnisModes.hpp`) :

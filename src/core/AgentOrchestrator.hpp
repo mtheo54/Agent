@@ -35,6 +35,7 @@
 #include "core/LocalBrain.hpp"
 #include "core/MemoryDB.hpp"
 #include "core/Playbooks.hpp"
+#include "core/Skills.hpp"
 #include "core/PermissionGate.hpp"
 #include "core/ResourceGovernor.hpp"
 #include "modules/DesktopPilot.hpp"
@@ -254,6 +255,17 @@ private:
     bool HandlePilot(const std::string& text, const std::string& lower, std::stop_token stop);
     bool HandleAfterEffects(const PilotTarget& t, const std::string& text, std::stop_token stop);  // script ExtendScript vérifié
     bool HandleFlChords(const std::string& text, std::stop_token stop);
+    std::string PilotAppName(const PilotTarget& t) const;
+    std::string PilotSystem(const PilotTarget& t) const;
+    void RunPilotSteps(const PilotTarget& t, std::vector<PilotStep> steps, std::stop_token stop);
+    // Compétences créées par Omnis à ta demande et avec ton accord (Skills.hpp).
+    std::vector<Skill> skills_;
+    std::optional<std::string> aeForcedBody_;  // compétence After Effects : ce script-là, sans en écrire un autre
+    [[nodiscard]] std::filesystem::path SkillsDir() const { return d_.dataDir / L"skills"; }
+    void ReloadSkills();
+    bool HandleSkillCommand(const std::string& text, const std::string& lower, std::stop_token stop);
+    void CreateSkill(const std::string& request, std::stop_token stop);
+    void RunSkill(const Skill& k, const std::string& text, std::stop_token stop);
     std::vector<TimedWord> aeWords_;  // voix off du montage AE, mot par mot (temps de la composition)
     std::string aeWordsKey_;          // fichier + taille + position : retranscrit seulement si ça change  // accords posés par un script piano roll
     // Call Discord (par ton micro) : rejoindre / quitter, réagir à ce que disent les autres

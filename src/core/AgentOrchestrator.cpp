@@ -78,7 +78,7 @@ AgentOrchestrator::~AgentOrchestrator() { Stop(); }
 
 void AgentOrchestrator::Start() {
     LoadKnowledgePack();
-    playbooks_ = LoadPlaybooks(d_.assetsDir / L"knowledge" / L"playbooks.json");
+    ReloadSkills();  // méthodes de pro + compétences apprises
     log::Info("Méthodes de pro : {} domaines", playbooks_.size());
     if (!worker_.joinable()) worker_ = std::jthread([this](std::stop_token st) { WorkerMain(st); });
 }
@@ -1770,6 +1770,78 @@ void AgentOrchestrator::DoActivity(std::optional<std::string> request) {
 // ---------------------------------------------------------------------------
 // Prise en main : il écrit un plan (grammaire stricte), l'annonce, puis l'exécute. Tu bouges, il s'arrête.
 
+// ---------------------------------------------------------------------------
+std::string AgentOrchestrator::PilotAppName(const PilotTarget& t) const {
+    return t.app == PilotApp::AutoCad ? "AutoCAD (Electrical)" : t.app == PilotApp::FlStudio ? "FL Studio"
+         : t.app == PilotApp::AfterEffects ? "After Effects" : log::Narrow(t.exe);
+}
+
+// Consigne du plan d'actions pour cette fenêtre (raccourcis du logiciel, boutons visibles).
+std::string AgentOrchestrator::PilotSystem(const PilotTarget& t) const {
+    const std::string appName = PilotAppName(t);
+    std::string tips;
+    std::vector<std::string> names;
+    if (t.app == PilotApp::FlStudio) {
+        tips = "FL Studio ne décrit pas ses boutons à Windows : n'utilise QUE des raccourcis (TOUCHE), jamais CLIC. "
+               "Raccourcis : f5 playlist, f6 channel rack, f7 piano roll, f8 navigateur de plugins, f9 mixer, f10 réglages MIDI, "
+               "f11 infos du projet, f12 ferme toutes les fenêtres, alt+f8 navigateur, espace lecture/stop, l bascule "
+               "pattern/chanson, ctrl+s enregistrer, ctrl+shift+s enregistrer sous, ctrl+r exporter en WAV, ctrl+shift+r "
+               "exporter en MP3, ctrl+z annuler.\n";
+    } else {
+        names = DesktopPilot::ClickableNames(t.hwnd, 60);
+        if (t.app == PilotApp::AutoCad)
+            tips = "AutoCAD : préfère COMMANDE, avec les noms ANGLAIS précédés de _ (marche avec un AutoCAD en français), "
+                   "points en x,y, et un espace final qui valide. Exemples : COMMANDE \"_LINE 0,0 100,0  \" (deux espaces "
+                   "pour finir la ligne), COMMANDE \"_CIRCLE 50,50 20 \", COMMANDE \"_RECTANG 0,0 200,100 \", COMMANDE "
+                   "\"_ZOOM _E \", COMMANDE \"_UNDO 1 \", COMMANDE \"_QSAVE \". AutoCAD Electrical : _AEWIRE (fil), "
+                   "_AECOMPONENT (insérer un composant), _AELADDER (échelle), _AEMULTIBUS (bus multiple), _AEWIRENO (numéros "
+                   "de fils), _AEPROJECT (gestionnaire de projet).\n";
+    }
+    std::string sys =
+        "Tu es " + cfg_.name + " et tu pilotes le clavier et la souris de ton pote dans " + appName + " (fenêtre « " + t.title +
+        " »). Écris UNIQUEMENT un plan d'actions, une par ligne, 10 au maximum :\n"
+        "DIRE \"phrase courte, ton style de pote, qui annonce ce que tu vas faire\"  (toujours en premier)\n"
+        "TOUCHE raccourci   (ex. ctrl+s, f9, espace, entree, echap)\n"
+        "TAPE \"texte à taper\"\n"
+        "CLIC \"nom exact d'un bouton de la liste\"\n"
+        "COMMANDE \"commande AutoCAD\"   (AutoCAD seulement)\n"
+        "ATTENDS millisecondes\n"
+        "Si c'est impossible ici, trop vague ou risqué : une seule ligne DIRE qui explique ou pose une question. "
+        "N'invente jamais un bouton absent de la liste.\n" + tips;
+    if (!names.empty()) {
+        sys += "Boutons visibles : ";
+        for (size_t i = 0; i < names.size(); ++i) sys += (i ? ", " : "") + names[i];
+        sys += "\n";
+    }
+    return sys;
+}
+
+// Exécute un plan : annonce, accord à voix haute pour chaque action risquée, puis clavier et souris (arrêt si tu bouges).
+void AgentOrchestrator::RunPilotSteps(const PilotTarget& t, std::vector<PilotStep> steps, std::stop_token stop) {
+    if (steps.front().op != PilotOp::Say) steps.insert(steps.begin(), PilotStep{PilotOp::Say, "Je m'en occupe.", 0});
+    // Ce qui peut faire perdre du travail : accord à voix haute avant de commencer (« toujours » = pour cette action).
+    for (const auto& s : steps) {
+        if (!IsRiskyStep(s)) continue;
+        const std::string what = s.op == PilotOp::Key ? "faire " + s.arg : s.op == PilotOp::Click ? "cliquer sur " + s.arg : "lancer " + s.arg;
+        if (!d_.gate.Request(PermissionScope::System, "pilot:" + s.arg, "Attention, je vais " + what + ". Je le fais ?",
+                             std::chrono::seconds(20), stop)) {
+            Say("Ok, je touche à rien.");
+            return;
+        }
+    }
+    std::string error;
+    const auto result = pilot_.Run(t, steps, [this](const std::string& line) { Say(line); }, stop, error);
+    if (result == DesktopPilot::Result::Aborted) {
+        if (error == "tu as repris la main") {
+            d_.voice.StopSpeaking();
+            Say("Ok, je te rends la main.");
+        }
+    } else if (result == DesktopPilot::Result::Failed) {
+        Say("J'ai bloqué : " + error + ".");
+    }
+    log::Info("Pilot: {}", result == DesktopPilot::Result::Done ? "terminé" : error);
+}
+
 bool AgentOrchestrator::HandlePilot(const std::string& text, const std::string& lower, std::stop_token stop) {
     if (!cfg_.pilotEnabled) return false;
     {
@@ -1818,43 +1890,8 @@ bool AgentOrchestrator::HandlePilot(const std::string& text, const std::string& 
         Say("Il me faut mon cerveau local pour ça, et il n'est pas installé.");
         return true;
     }
-    const std::string appName = t.app == PilotApp::AutoCad ? "AutoCAD (Electrical)"
-                              : t.app == PilotApp::FlStudio ? "FL Studio"
-                                                            : log::Narrow(t.exe);
-    std::string tips;
-    std::vector<std::string> names;
-    if (t.app == PilotApp::FlStudio) {
-        tips = "FL Studio ne décrit pas ses boutons à Windows : n'utilise QUE des raccourcis (TOUCHE), jamais CLIC. "
-               "Raccourcis : f5 playlist, f6 channel rack, f7 piano roll, f8 navigateur de plugins, f9 mixer, f10 réglages MIDI, "
-               "f11 infos du projet, f12 ferme toutes les fenêtres, alt+f8 navigateur, espace lecture/stop, l bascule "
-               "pattern/chanson, ctrl+s enregistrer, ctrl+shift+s enregistrer sous, ctrl+r exporter en WAV, ctrl+shift+r "
-               "exporter en MP3, ctrl+z annuler.\n";
-    } else {
-        names = DesktopPilot::ClickableNames(t.hwnd, 60);
-        if (t.app == PilotApp::AutoCad)
-            tips = "AutoCAD : préfère COMMANDE, avec les noms ANGLAIS précédés de _ (marche avec un AutoCAD en français), "
-                   "points en x,y, et un espace final qui valide. Exemples : COMMANDE \"_LINE 0,0 100,0  \" (deux espaces "
-                   "pour finir la ligne), COMMANDE \"_CIRCLE 50,50 20 \", COMMANDE \"_RECTANG 0,0 200,100 \", COMMANDE "
-                   "\"_ZOOM _E \", COMMANDE \"_UNDO 1 \", COMMANDE \"_QSAVE \". AutoCAD Electrical : _AEWIRE (fil), "
-                   "_AECOMPONENT (insérer un composant), _AELADDER (échelle), _AEMULTIBUS (bus multiple), _AEWIRENO (numéros "
-                   "de fils), _AEPROJECT (gestionnaire de projet).\n";
-    }
-    std::string sys =
-        "Tu es " + cfg_.name + " et tu pilotes le clavier et la souris de ton pote dans " + appName + " (fenêtre « " + t.title +
-        " »). Écris UNIQUEMENT un plan d'actions, une par ligne, 10 au maximum :\n"
-        "DIRE \"phrase courte, ton style de pote, qui annonce ce que tu vas faire\"  (toujours en premier)\n"
-        "TOUCHE raccourci   (ex. ctrl+s, f9, espace, entree, echap)\n"
-        "TAPE \"texte à taper\"\n"
-        "CLIC \"nom exact d'un bouton de la liste\"\n"
-        "COMMANDE \"commande AutoCAD\"   (AutoCAD seulement)\n"
-        "ATTENDS millisecondes\n"
-        "Si c'est impossible ici, trop vague ou risqué : une seule ligne DIRE qui explique ou pose une question. "
-        "N'invente jamais un bouton absent de la liste.\n" + tips;
-    if (!names.empty()) {
-        sys += "Boutons visibles : ";
-        for (size_t i = 0; i < names.size(); ++i) sys += (i ? ", " : "") + names[i];
-        sys += "\n";
-    }
+    const std::string appName = PilotAppName(t);
+    const std::string sys = PilotSystem(t);
     GenerateOptions o;
     o.grammar = kPilotGrammar;
     o.maxTokens = 260;
@@ -1873,28 +1910,7 @@ bool AgentOrchestrator::HandlePilot(const std::string& text, const std::string& 
         for (const auto& s : steps) Say(s.arg);  // il explique ou pose une question : rien à exécuter
         return true;
     }
-    if (steps.front().op != PilotOp::Say) steps.insert(steps.begin(), PilotStep{PilotOp::Say, "Je m'en occupe.", 0});
-    // Ce qui peut faire perdre du travail : accord à voix haute avant de commencer (« toujours » = pour cette action).
-    for (const auto& s : steps) {
-        if (!IsRiskyStep(s)) continue;
-        const std::string what = s.op == PilotOp::Key ? "faire " + s.arg : s.op == PilotOp::Click ? "cliquer sur " + s.arg : "lancer " + s.arg;
-        if (!d_.gate.Request(PermissionScope::System, "pilot:" + s.arg, "Attention, je vais " + what + ". Je le fais ?",
-                             std::chrono::seconds(20), stop)) {
-            Say("Ok, je touche à rien.");
-            return true;
-        }
-    }
-    std::string error;
-    const auto result = pilot_.Run(t, steps, [this](const std::string& line) { Say(line); }, stop, error);
-    if (result == DesktopPilot::Result::Aborted) {
-        if (error == "tu as repris la main") {
-            d_.voice.StopSpeaking();
-            Say("Ok, je te rends la main.");
-        }
-    } else if (result == DesktopPilot::Result::Failed) {
-        Say("J'ai bloqué : " + error + ".");
-    }
-    log::Info("Pilot: {}", result == DesktopPilot::Result::Done ? "terminé" : error);
+    RunPilotSteps(t, std::move(steps), stop);
     return true;
 }
 
@@ -1907,7 +1923,7 @@ bool AgentOrchestrator::HandleAfterEffects(const PilotTarget& t, const std::stri
     }
     if (!expertActive_ && ExpertInstalled() && mode_.load() != SystemMode::Gaming) {
         expertActive_ = true;  // le grand cerveau écrit de bien meilleurs scripts
-        if (!(d_.brain.IsLoaded() && d_.brain.ModelPath() == ExpertPath())) Say("Je sors le grand cerveau pour After Effects, deux secondes.");
+        if (!(d_.brain.IsLoaded() && d_.brain.ModelPath() == ExpertPath())) Say("Je sors le grand cerveau pour After Effects, quelques secondes.");
     }
     if (!EnsureBrain()) {
         Say("Il me faut mon cerveau local pour ça, et il n'est pas installé.");
@@ -1975,7 +1991,9 @@ bool AgentOrchestrator::HandleAfterEffects(const PilotTarget& t, const std::stri
         Say("C'est oublié, je repars sur mon style à moi.");
         return true;
     }
-    if (ContainsAny(lower, {"toujours", "jamais", "à chaque fois", "a chaque fois", "à partir de maintenant"})) {
+    if (ContainsAny(lower, {"toujours", "jamais", "à chaque fois", "a chaque fois", "à partir de maintenant"}) &&
+        !ContainsAny(lower, {"toujours pas", "jamais marché", "jamais marche", "marche pas", "bug", "plante", "ça veut pas",
+                             "ca veut pas", "comprends pas", "comprend pas"}) && !aeForcedBody_) {
         std::string rules = d_.db.GetProfile("ae.rules").value_or("");
         if (rules.find(text) == std::string::npos) {
             rules = Trim(rules + " ; " + text);
@@ -2067,6 +2085,23 @@ bool AgentOrchestrator::HandleAfterEffects(const PilotTarget& t, const std::stri
     if (ContainsAny(lower, {"quand je", "au moment où je", "au moment ou je", "sur le mot", "quand il dit", "quand on entend"}) &&
         !loadVoice())
         return true;
+
+    // Compétence apprise : son script, tel quel (contrôlé à sa création, revérifié ici).
+    if (aeForcedBody_) {
+        const std::string body = *aeForcedBody_;
+        if (!AeForbidden(body).empty()) {
+            Say("Ce script a été modifié et fait un truc interdit, je le lance pas.");
+            return true;
+        }
+        Say("C'est parti.");
+        const auto r = run(body);
+        std::string report;
+        if (r && split(*r, report)) Say((report.empty() ? std::string("C'est fait.") : report) + " Ctrl Z si ça te va pas.");
+        else if (r) Say("After Effects bloque : " + report + ". Fais Ctrl Z si un bout est passé.");
+        else if (noReport) noReportHint();
+        else Say("After Effects a refusé de lancer le script.");
+        return true;
+    }
 
     // 1) Recette : gestes de pro choisis dans un menu fermé, code écrit par Omnis (fiable, même avec le petit cerveau).
     {
@@ -2665,6 +2700,7 @@ bool AgentOrchestrator::TryFuzzyCommand(const std::string& text, std::stop_token
 bool AgentOrchestrator::HandleLevel0(const std::string& text, std::stop_token stop) {
     const std::string lower = Lower(text);
     if (HandleHelp(lower)) return true;
+    if (HandleSkillCommand(text, lower, stop)) return true;  // « apprends à… », compétences apprises
 
     if (lower.find("entra") != std::string::npos && lower.find("toi") != std::string::npos) {  // « entraîne-toi »
         StartTraining(/*manual=*/true);
@@ -3320,7 +3356,7 @@ bool AgentOrchestrator::HandleExpertCommand(const std::string& lower, std::stop_
         return true;
     }
     expertActive_ = true;
-    Say("Je sors le grand cerveau, deux secondes.");
+    Say("Je sors le grand cerveau, la première fois ça prend quelques secondes.");
     const bool ok = EnsureBrain() && d_.brain.ModelPath() == ExpertPath();
     if (!ok) expertActive_ = false;
     Say(ok ? "Mode expert. Vas-y, pose ta question." : "Il a pas voulu se charger, je reste en normal.");
@@ -3335,7 +3371,7 @@ void AgentOrchestrator::MaybeUseExpert(const std::string& lower, std::stop_token
                                                                "technique", "astuce", "niveau pro", "comme un pro"});
     if (!deep) return;
     expertActive_ = true;
-    if (!(d_.brain.IsLoaded() && d_.brain.ModelPath() == ExpertPath())) Say("Je sors le grand cerveau, deux secondes.");
+    if (!(d_.brain.IsLoaded() && d_.brain.ModelPath() == ExpertPath())) Say("Je sors le grand cerveau, la première fois ça prend quelques secondes.");
 }
 
 // Après une réponse de métier, une fois par session : proposer le grand cerveau (si le PC le porte et qu'il manque).
@@ -3351,6 +3387,239 @@ void AgentOrchestrator::OfferExpert(std::stop_token stop) {
         StartExpertDownload();
     else if (!stop.stop_requested())
         d_.db.SetProfile("expert.offer", "non");  // plus proposé ; « mode expert » reste possible
+}
+
+}  // namespace companion
+
+// ---------------------------------------------------------------------------
+// Compétences : Omnis se crée un savoir ou un geste à ta demande, te le lit, et ne l'enregistre qu'avec ton oui.
+namespace companion {
+
+void AgentOrchestrator::ReloadSkills() {
+    skills_ = LoadSkills(SkillsDir());
+    playbook_ = nullptr;  // le tableau des méthodes est reconstruit : plus de pointeur dedans
+    playbooks_ = LoadPlaybooks(d_.assetsDir / L"knowledge" / L"playbooks.json");
+    for (const auto& k : skills_)
+        if (k.kind == "savoir") playbooks_.push_back(AsPlaybook(k));
+    log::Info("Compétences apprises : {}", skills_.size());
+}
+
+bool AgentOrchestrator::HandleSkillCommand(const std::string& text, const std::string& lower, std::stop_token stop) {
+    // Liste
+    if (ContainsAny(lower, {"quelles compétences", "quelles competences", "tes compétences", "tes competences",
+                            "qu'est-ce que t'as appris", "ce que t'as appris", "compétences apprises"})) {
+        if (skills_.empty()) {
+            Say("J'en ai pas encore appris. Dis apprends à, puis ce que tu veux, et je m'en crée une.");
+            return true;
+        }
+        std::string list;
+        for (size_t i = 0; i < skills_.size() && i < 10; ++i) list += (i ? ", " : "") + skills_[i].name;
+        Say(std::format("J'en ai {} : {}.", skills_.size(), list));
+        return true;
+    }
+    // Oubli
+    for (const char* key : {"oublie la compétence ", "oublie la competence ", "supprime la compétence ", "supprime la competence "})
+        if (const auto p = lower.find(key); p != std::string::npos) {
+            const std::string name = Trim(lower.substr(p + std::string_view(key).size()));
+            const Skill* found = nullptr;
+            for (const auto& k : skills_)
+                if (LowerFr(k.name) == name || LowerFr(k.name).find(name) != std::string::npos) found = &k;
+            if (!found || !RemoveSkill(SkillsDir(), found->name)) {
+                Say("J'ai pas de compétence qui s'appelle comme ça. Dis quelles compétences pour la liste.");
+                return true;
+            }
+            const std::string gone = found->name;
+            ReloadSkills();
+            Say("C'est oublié : " + gone + ".");
+            return true;
+        }
+    // Création : « apprends à exporter en MP3 », « apprends Blender », « crée-toi une compétence pour… »
+    const bool media = ContainsAny(lower, {"tuto", "lien", "vidéo", "video", "tiktok", "reel", "ma voix", "ta voix"});
+    if (!media && ContainsAny(lower, {"apprends à ", "apprends a ", "apprends-toi à", "crée-toi une compétence", "cree-toi une competence",
+                                      "crée une compétence", "cree une competence", "nouvelle compétence", "nouvelle competence",
+                                      "apprends une compétence", "deviens bon en ", "deviens expert en ", "apprends le logiciel",
+                                      "apprends à utiliser", "apprends à te servir", "ajoute-toi la compétence"})) {
+        CreateSkill(text, stop);
+        return true;
+    }
+    // Lancement d'une compétence d'action
+    if (const Skill* k = MatchSkill(skills_, lower)) {
+        RunSkill(*k, text, stop);
+        return true;
+    }
+    return false;
+}
+
+void AgentOrchestrator::CreateSkill(const std::string& request, std::stop_token stop) {
+    if (mode_.load() == SystemMode::Gaming) {
+        Say("Pas pendant une partie : redemande-moi après.");
+        return;
+    }
+    if (!expertActive_ && ExpertInstalled()) expertActive_ = true;  // le grand cerveau écrit de meilleures compétences
+    if (!EnsureBrain()) {
+        Say("Il me faut mon cerveau local pour ça, et il n'est pas installé.");
+        return;
+    }
+    // Ce qu'il faut apprendre : la demande sans la formule (« apprends à » …).
+    std::string subject = request;
+    {
+        const std::string l = Lower(request);
+        for (const char* key : {"apprends-toi à ", "apprends à ", "apprends a ", "pour ", "deviens bon en ", "deviens expert en ",
+                                "apprends le logiciel ", "apprends à utiliser ", "compétence "})
+            if (const auto p = l.find(key); p != std::string::npos) {
+                subject = Trim(request.substr(p + std::string_view(key).size()));
+                break;
+            }
+    }
+    while (!subject.empty() && std::string_view("?!.").find(subject.back()) != std::string_view::npos) subject.pop_back();
+    if (subject.size() < 3) {
+        Say("Apprendre quoi ? Dis par exemple : apprends à exporter en MP3, ou apprends Blender.");
+        return;
+    }
+    activity_ = AgentActivity::Thinking;
+    GenerateOptions ko;
+    ko.grammar = kSkillKindGrammar;
+    ko.maxTokens = 4;
+    ko.temperature = 0.0f;
+    ko.stop = stop;
+    const std::string kind = Trim(d_.brain.Generate({{"system", kSkillKindSystem}, {"user", request}}, ko).value_or(""));
+    if (stop.stop_requested()) return;
+    log::Info("Compétence : « {} » -> {}", subject, kind);
+    if (kind == "IMPOSSIBLE" || kind.empty()) {
+        Say("Ça, je me l'apprends pas : soit c'est pas précis, soit ça touche à des comptes, de la triche ou de la sécurité.");
+        return;
+    }
+
+    Skill k;
+    std::string readAloud;  // ce qu'il te lit avant ton accord
+    if (kind == "SAVOIR") {
+        // Des sources fraîches d'abord si le web est permis : une méthode écrite de mémoire peut contenir des erreurs.
+        std::string sources;
+        if (d_.http && (WebSurf::Allowed(d_.db) ||
+                        d_.gate.Request(PermissionScope::Web, "web-libre", "Je cherche des sources sur le web pour bien l'apprendre ?",
+                                        std::chrono::seconds(20), stop))) {
+            Say("Je me renseigne.");
+            WebSurf surf(*d_.http);
+            int pages = 4;
+            sources = surf.Research(subject + " guide professionnel workflow", 3, pages);
+        }
+        if (stop.stop_requested()) return;
+        Say("J'écris ma méthode, quelques secondes.");
+        GenerateOptions o;
+        o.maxTokens = 1100;
+        o.temperature = 0.3f;
+        o.stop = stop;
+        const std::string user = (sources.empty() ? std::string{} : "<sources>\n" + sources.substr(0, 6000) + "\n</sources>\n") +
+                                 "Domaine : " + subject;
+        const auto out = d_.brain.Generate({{"system", kSkillKnowledgeSystem}, {"user", user}}, o);
+        if (stop.stop_requested()) return;
+        const auto draft = out ? ParseKnowledgeDraft(*out) : std::nullopt;
+        if (!draft) {
+            Say("J'arrive pas à écrire une méthode propre là-dessus. Redis-le plus précisément.");
+            return;
+        }
+        k.name = draft->name;
+        k.kind = "savoir";
+        k.app = "tout";
+        k.keywords = draft->keywords;
+        k.method = (sources.empty() ? std::string("(Méthode écrite de mémoire, pas vérifiée : pour une valeur précise, un raccourci ou une "
+                                                  "extension, cherche une source avant de l'affirmer.)\n")
+                                    : std::string("(Méthode tirée de sources du web.)\n")) + draft->method;
+        k.what = "la méthode de pro pour " + draft->name + (sources.empty() ? ", écrite de mémoire" : ", à partir de sources du web");
+        readAloud = "J'ai écrit " + k.what + ", en dix points. Je m'en servirai dès que tu parles de " + draft->keywords[0] + ".";
+        d_.db.AddMessage("assistant", "[Nouvelle compétence : " + k.name + "]\n" + k.method);  // lisible dans tes réglages
+    } else {
+        const PilotTarget t = DesktopPilot::Foreground();
+        if (!t.hwnd || t.pid == GetCurrentProcessId()) {
+            Say("Mets-toi sur le logiciel où je dois faire ça, et redemande-moi.");
+            return;
+        }
+        k.kind = "action";
+        k.name = subject.substr(0, 60);
+        k.triggers = {LowerFr(subject)};
+        k.app = t.app == PilotApp::AfterEffects ? "after effects" : t.app == PilotApp::FlStudio ? "fl studio"
+              : t.app == PilotApp::AutoCad ? "autocad" : "tout";
+        GenerateOptions o;
+        o.temperature = 0.2f;
+        o.stop = stop;
+        if (t.app == PilotApp::AfterEffects) {
+            o.maxTokens = 900;
+            const auto out = d_.brain.Generate({{"system", kAeSystem}, {"user", "Demande : " + subject}}, o);
+            if (stop.stop_requested()) return;
+            k.aeScript = Trim(AeStripFences(out.value_or("")));
+            if (const std::string why = AeForbidden(k.aeScript); !why.empty() || k.aeScript.empty() ||
+                k.aeScript.starts_with("throw new Error(") || !AeModernSyntax(k.aeScript).empty()) {
+                Say(why.empty() ? "J'arrive pas à écrire ce script proprement, redis-le autrement." : "Le script voulait " + why + ", je le garde pas.");
+                return;
+            }
+            readAloud = std::format("J'ai écrit un script After Effects de {} lignes pour {}. Il passera par mes contrôles et un "
+                                    "seul Ctrl Z l'annule.", std::ranges::count(k.aeScript, '\n') + 1, subject);
+            d_.db.AddMessage("assistant", "[Nouvelle compétence : " + k.name + "]\n" + k.aeScript);
+        } else {
+            o.grammar = kPilotGrammar;
+            o.maxTokens = 260;
+            const auto out = d_.brain.Generate({{"system", PilotSystem(t)}, {"user", subject}}, o);
+            if (stop.stop_requested()) return;
+            const auto steps = out ? ParsePilotPlan(*out) : std::vector<PilotStep>{};
+            if (steps.empty() || std::ranges::all_of(steps, [](const PilotStep& s) { return s.op == PilotOp::Say; })) {
+                for (const auto& s : steps) Say(s.arg);
+                if (steps.empty()) Say("Je vois pas comment faire ça dans " + PilotAppName(t) + ".");
+                return;
+            }
+            k.steps = *out;
+            std::string gestures;
+            int n = 0;
+            for (const auto& s : steps)
+                if (s.op == PilotOp::Key || s.op == PilotOp::Click || s.op == PilotOp::Type || s.op == PilotOp::Command) {
+                    if (n < 4) gestures += (n ? ", " : "") + std::string(s.op == PilotOp::Key ? "touche " : s.op == PilotOp::Click ? "clic sur " : "") + s.arg;
+                    ++n;
+                }
+            readAloud = std::format("Dans {}, je ferai {} action{} : {}{}.", PilotAppName(t), n, n > 1 ? "s" : "", gestures, n > 4 ? "…" : "");
+            d_.db.AddMessage("assistant", "[Nouvelle compétence : " + k.name + "]\n" + k.steps);
+        }
+        k.what = subject;
+    }
+    // Ton accord, à chaque fois (cible unique : un « toujours » ne s'applique jamais à la compétence suivante).
+    Say(readAloud);
+    const std::string target = "skill:" + SkillSlug(k.name) + ":" + std::to_string(std::time(nullptr));
+    if (!d_.gate.Request(PermissionScope::System, target, "Je l'enregistre comme nouvelle compétence ?", std::chrono::seconds(30), stop)) {
+        if (!stop.stop_requested()) Say("Ok, je la jette.");
+        return;
+    }
+    if (!SaveSkill(SkillsDir(), k)) {
+        Say("J'arrive pas à l'écrire sur le disque.");
+        return;
+    }
+    ReloadSkills();
+    log::Info("Compétence apprise : {} ({})", k.name, k.kind);
+    Say(k.kind == "savoir" ? "C'est appris. Tu peux me poser tes questions là-dessus."
+                           : "C'est appris. Dis " + k.triggers.front() + " et je le fais. Oublie la compétence pour l'effacer.");
+}
+
+void AgentOrchestrator::RunSkill(const Skill& k, const std::string& text, std::stop_token stop) {
+    if (mode_.load() == SystemMode::Gaming) {
+        Say("Pas en jeu : l'anti-triche prendrait mes clics pour de la triche.");
+        return;
+    }
+    const PilotTarget t = DesktopPilot::Foreground();
+    const PilotApp want = k.app == "after effects" ? PilotApp::AfterEffects : k.app == "fl studio" ? PilotApp::FlStudio
+                        : k.app == "autocad" ? PilotApp::AutoCad : PilotApp::Other;
+    if (k.app != "tout" && t.app != want) {
+        Say("Cette compétence, c'est dans " + k.app + " : mets-toi dessus et redis-le.");
+        return;
+    }
+    log::Info("Compétence lancée : {}", k.name);
+    if (!k.aeScript.empty()) {
+        aeForcedBody_ = k.aeScript;  // le script appris, avec les mêmes contrôles et la même vérification
+        HandleAfterEffects(t, text, stop);
+        aeForcedBody_.reset();
+        return;
+    }
+    if (!t.hwnd || t.pid == GetCurrentProcessId()) {
+        Say("Mets-toi d'abord sur la fenêtre où je dois le faire.");
+        return;
+    }
+    RunPilotSteps(t, ParsePilotPlan(k.steps), stop);
 }
 
 }  // namespace companion
