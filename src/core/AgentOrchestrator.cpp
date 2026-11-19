@@ -3193,14 +3193,19 @@ void AgentOrchestrator::HandleStudioQuestion(const std::string& text, const std:
         // FL tourne mais sa capture est muette : presque toujours l'ASIO natif de la carte son (Antelope, Focusrite…),
         // qui contourne Windows. On le dit clairement, avec les deux solutions, et on note les entrées disponibles.
         const bool flRunning = WasapiLoopback::FindProcessId(std::wstring(cfg_.studioProcess.begin(), cfg_.studioProcess.end())) != 0;
-        if (flRunning && !d_.loopback.IsInputCapture()) {
-            // ASIO natif (Antelope…) : il cherche lui-même l'entrée de la carte qui reçoit le son de FL, puis réécoute.
+        if (flRunning && !studioProbed_) {
+            // Capture muette (FL sur une autre sortie que celle de Windows, ou ASIO natif) : il cherche lui-même la sortie ou
+            // l'entrée qui reçoit le son de FL, puis réécoute. Une seule recherche par question.
+            studioProbed_ = true;
+            struct Reset { bool& f; ~Reset() { f = false; } } reset{studioProbed_};
             if (const auto found = ProbeStudioInput(stop)) {
                 d_.db.SetProfile("studio.input", log::Narrow(*found));
                 d_.loopback.Stop();
                 d_.analyzer.Stop();
                 UpdateStudioCapture();
-                Say("Trouvé, j'entends FL par " + log::Narrow(*found) + ". Je l'écoute.");
+                std::string where = log::Narrow(*found);
+                if (where.starts_with("[sortie] ")) where = "la sortie " + where.substr(9);
+                Say("Trouvé, j'entends FL par " + where + ". Je l'écoute.");
                 for (int i = 0; i < 60 && !stop.stop_requested() && d_.analyzer.Snapshot().seconds < 3.f; ++i) Sleep(100);
                 if (!stop.stop_requested() && d_.analyzer.Snapshot().seconds >= 1.f) {
                     HandleStudioQuestion(text, history, stop);  // cette fois, il entend
@@ -3219,6 +3224,19 @@ void AgentOrchestrator::HandleStudioQuestion(const std::string& text, const std:
         }
         return;
     }
+    // Avis sur la PROD (« t'en penses quoi », « tu kiffes ? ») : un avis de pote sur la musique, en ressenti, sans chiffres.
+    // Avis sur le MIX (mix, master, niveaux, basses, aigus…) : le diagnostic d'ingé son ci-dessous.
+    const std::string lowerQ = Lower(text);
+    const bool aboutMix = !lexicon_.Match(text).empty() ||
+                          ContainsAny(lowerQ, {"mix", "master", "niveau", "équilibre", "equilibre", "fréquence", "frequence", "sature",
+                                               "clip", "compress", "eq ", "égalis", "stéréo", "stereo", "mono", "lufs", "décibel",
+                                               "decibel", " db", "trop fort", "pas assez fort", "les basses", "la basse", "les aigus",
+                                               "les médiums", "la voix sort", "technique", "ingé son", "inge son"});
+    if (!aboutMix) {
+        SayProdOpinion(text, mix, stop);
+        return;
+    }
+    const bool wantsNumbers = ContainsAny(lowerQ, {"combien", "chiffre", "lufs", "décibel", "decibel", " db", "précis", "mesure"});
     // Partage des rôles (cascade du rapport) : le C++ sait CE QUI NE VA PAS et QUOI FAIRE (diagnostic façon
     // OMNIS, exact) ; le modèle local ne fait qu'UNE phrase de réaction avec sa personnalité. Un 3B à qui
     // on confie le conseil technique le déforme (« ajoute un clipper », « baisse le kick » pour la 808).
@@ -3237,6 +3255,8 @@ void AgentOrchestrator::HandleStudioQuestion(const std::string& text, const std:
         for (const auto& i : mix.Issues()) { advice.push_back(i); break; }
     }
     for (const auto& i : advice) facts += i.text + " ";
+    // Les mesures (« (-24.0 LUFS) », « (corrélation 0.42) ») ne sont dites que si on les demande : l'avis reste en mots.
+    if (!wantsNumbers) facts = std::regex_replace(facts, std::regex(R"(\s*\([^)]*\d[^)]*\))"), "");
 
     studioFocus_ = true;  // pas de diagnostic brut dans le contexte : seulement les constats ci-dessous
     HandleLevel1(text, history,
@@ -3718,17 +3738,22 @@ namespace companion {
 // FL en ASIO natif : sa capture Windows est muette. On écoute 1,2 s chaque entrée de la carte (hors micros, webcams,
 // casques VR) pendant que FL joue, et on garde celle qui reçoit le plus de son (au-dessus de -50 dBFS).
 std::optional<std::wstring> AgentOrchestrator::ProbeStudioInput(std::stop_token stop) {
-    Say("Je cherche par où passe le son de FL. Fais tourner ta prod et parle pas pendant dix secondes.");
+    Say("Je cherche par où sort le son de FL. Fais tourner ta prod et parle pas pendant quelques secondes.");
     for (int i = 0; i < 60 && d_.voice.IsSpeaking(); ++i) Sleep(100);
     Sleep(1500);  // le temps de lancer la lecture
     std::optional<std::wstring> best;
     double bestDb = -50.0;
-    for (const auto& name : WasapiLoopback::InputNames()) {
+    // Les sorties d'abord (FL Studio ASIO joue sur une sortie de Windows, pas forcément celle par défaut), puis les entrées
+    // de la carte (ASIO natif routé vers un loopback).
+    std::vector<std::wstring> sources = WasapiLoopback::OutputNames();
+    for (auto& n : WasapiLoopback::InputNames()) sources.push_back(std::move(n));
+    for (const auto& name : sources) {
         if (stop.stop_requested()) return std::nullopt;
         const std::wstring l = [&] { std::wstring x = name; for (auto& c : x) c = static_cast<wchar_t>(towlower(c)); return x; }();
-        if (l.find(L"microphone") != std::wstring::npos || l.find(L"micro ") != std::wstring::npos || l.find(L"webcam") != std::wstring::npos ||
-            l.find(L"headset") != std::wstring::npos || l.find(L"oculus") != std::wstring::npos || l.find(L"steam") != std::wstring::npos ||
-            l.find(L"casque") != std::wstring::npos)
+        const bool output = name.starts_with(WasapiLoopback::kOutputPrefix);
+        if (!output && (l.find(L"microphone") != std::wstring::npos || l.find(L"micro ") != std::wstring::npos ||
+                        l.find(L"webcam") != std::wstring::npos || l.find(L"headset") != std::wstring::npos ||
+                        l.find(L"oculus") != std::wstring::npos || l.find(L"steam") != std::wstring::npos || l.find(L"casque") != std::wstring::npos))
             continue;
         std::atomic<double> sum{0.0};
         std::atomic<std::uint64_t> n{0};
@@ -3751,6 +3776,47 @@ std::optional<std::wstring> AgentOrchestrator::ProbeStudioInput(std::stop_token 
     }
     if (best) log::Info("Studio : FL passe par « {} » ({:.1f} dBFS)", log::Narrow(*best), bestDb);
     return best;
+}
+
+}  // namespace companion
+
+// ---------------------------------------------------------------------------
+namespace companion {
+
+// Ce qu'on entend, en ressenti (pas en chiffres) : énergie, relief, basses, brillance, largeur, milieu.
+static std::string ProdFeel(const MixMetrics& m) {
+    const auto band = [&](int i) { return m.bandDb[static_cast<size_t>(i)]; };
+    const float mids = (band(2) + band(3) + band(4)) / 3.f;
+    std::string f;
+    f += m.lufsShort > -9.f ? "ça envoie fort, c'est très dense ; " : m.lufsShort > -14.f ? "niveau et énergie d'un morceau fini ; "
+       : m.lufsShort > -20.f ? "plutôt calme et aéré ; " : "encore très doux, pas poussé ; ";
+    f += m.crestDb < 7.f ? "très compressé, ça respire peu ; " : m.crestDb < 12.f ? "punchy ; " : "du relief, des moments forts et calmes ; ";
+    const float bass = std::max(band(0), band(1)) - mids;
+    f += bass > 8.f ? "grosses basses, la 808 domine ; " : bass < -6.f ? "assez peu de basses ; " : "basses présentes sans écraser ; ";
+    const float air = (band(5) + band(6)) / 2.f;
+    f += air > 3.f ? "son brillant, aigus bien en avant ; " : air < -8.f ? "son sombre, feutré ; " : "";
+    f += m.width > 0.35f ? "large, ça enveloppe ; " : m.width < 0.08f ? "assez centré, étroit ; " : "";
+    f += band(3) > 4.f ? "la mélodie est très en avant ; " : band(3) < -10.f ? "le milieu est un peu creux ; " : "";
+    if (m.clips > 0 || m.peakDb > -0.1f) f += "ça craque un peu par moments (saturation) ; ";
+    return f;
+}
+
+void AgentOrchestrator::SayProdOpinion(const std::string& question, const MixMetrics& mix, std::stop_token stop) {
+    if (!EnsureBrain()) {
+        Say("Il me faut mon cerveau local pour te donner un avis.");
+        return;
+    }
+    std::vector<ChatTurn> messages{
+        {"system", PersonaPrompt()},
+        {"user", "[Ce que tu entends de sa prod, en ce moment] " + ProdFeel(mix) +
+                     "\n[Consigne] Il te demande ton avis GÉNÉRAL sur sa prod, comme un pote qui fait de la musique. Dis si tu kiffes "
+                     "ou pas et pourquoi : l'ambiance, l'énergie, ce qui accroche, ce qui manque ou ce que tu changerais. 2 ou 3 "
+                     "phrases, franc mais pas méchant. AUCUN chiffre, aucun dB, aucun LUFS, pas de cours de mixage. Tu n'entends "
+                     "que le son : n'invente pas de paroles ni de titre.\n[Question]\n" + question}};
+    bool escalation = false;
+    activity_ = AgentActivity::Thinking;
+    const std::string out = GenerateSpoken(messages, nullptr, stop, escalation, nullptr, 120);
+    if (!stop.stop_requested() && !out.empty()) d_.db.AddMessage("assistant", out);
 }
 
 }  // namespace companion

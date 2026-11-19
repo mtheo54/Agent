@@ -270,6 +270,8 @@ private:
     void CreateSkill(const std::string& request, std::stop_token stop);
     void RunSkill(const Skill& k, const std::string& text, std::stop_token stop);
     std::optional<std::wstring> ProbeStudioInput(std::stop_token stop);  // FL en ASIO natif : l'entrée qui le reçoit
+    bool studioProbed_ = false;  // une seule recherche de la source de FL par question
+    void SayProdOpinion(const std::string& question, const MixMetrics& mix, std::stop_token stop);
     std::atomic<bool> studioOff_{false};     // « arrête le mode écoute »
     std::atomic<bool> meterVisible_{false};  // vu-mètre affiché sous le personnage
     std::vector<TimedWord> aeWords_;  // voix off du montage AE, mot par mot (temps de la composition)

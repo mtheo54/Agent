@@ -17,6 +17,7 @@
 #include <functional>
 #include <stop_token>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -38,6 +39,9 @@ public:
     bool StartInput(const std::wstring& nameContains, Sink sink);
     // Noms des entrées audio (pour le journal et les réglages).
     static std::vector<std::wstring> InputNames();
+    // Sorties (haut-parleurs, carte son, casque) sous la forme « [sortie] nom » : StartInput les écoute en loopback.
+    static constexpr const wchar_t* kOutputPrefix = L"[sortie] ";
+    static std::vector<std::wstring> OutputNames();
     void Stop();
     [[nodiscard]] bool Running() const noexcept { return running_.load(); }
     [[nodiscard]] bool IsProcessCapture() const noexcept { return processMode_; }
@@ -46,7 +50,7 @@ public:
     static std::uint32_t FindProcessId(const std::wstring& exeName);
 
 private:
-    void Run(std::stop_token st, std::uint32_t pid, std::wstring inputId, Sink sink);
+    void Run(std::stop_token st, std::uint32_t pid, std::wstring inputId, Sink sink, bool outputDevice = false);
 
     std::jthread thread_;
     std::atomic<bool> running_{false};

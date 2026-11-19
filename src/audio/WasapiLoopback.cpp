@@ -122,12 +122,12 @@ HRESULT ActivateSystemLoopback(ComPtr<IAudioClient>& client) {
 }
 
 // Entrées audio actives : (identifiant, nom).
-std::vector<std::pair<std::wstring, std::wstring>> Inputs() {
+std::vector<std::pair<std::wstring, std::wstring>> Endpoints(EDataFlow flow) {
     std::vector<std::pair<std::wstring, std::wstring>> out;
     ComPtr<IMMDeviceEnumerator> enumerator;
     ComPtr<IMMDeviceCollection> devices;
     if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&enumerator))) ||
-        FAILED(enumerator->EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE, &devices)))
+        FAILED(enumerator->EnumAudioEndpoints(flow, DEVICE_STATE_ACTIVE, &devices)))
         return out;
     UINT n = 0;
     devices->GetCount(&n);
@@ -148,6 +148,8 @@ std::vector<std::pair<std::wstring, std::wstring>> Inputs() {
     }
     return out;
 }
+
+std::vector<std::pair<std::wstring, std::wstring>> Inputs() { return Endpoints(eCapture); }
 
 HRESULT ActivateInput(const std::wstring& id, ComPtr<IAudioClient>& client) {
     ComPtr<IMMDeviceEnumerator> enumerator;
@@ -174,15 +176,26 @@ std::vector<std::wstring> WasapiLoopback::InputNames() {
     return names;
 }
 
+std::vector<std::wstring> WasapiLoopback::OutputNames() {
+    const HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    std::vector<std::wstring> names;
+    for (const auto& [id, name] : Endpoints(eRender)) names.push_back(std::wstring(kOutputPrefix) + name);
+    if (SUCCEEDED(com)) CoUninitialize();
+    return names;
+}
+
 bool WasapiLoopback::StartInput(const std::wstring& nameContains, Sink sink) {
     Stop();
     if (nameContains.empty()) return false;
+    // « [sortie] X » : ce qui JOUE sur la sortie X (loopback du périphérique), pas une entrée.
+    const bool output = nameContains.starts_with(kOutputPrefix);
+    const std::wstring want = Lower(output ? nameContains.substr(std::wstring_view(kOutputPrefix).size()) : nameContains);
     const HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     std::wstring id;
-    for (const auto& [devId, name] : Inputs())
-        if (Lower(name).find(Lower(nameContains)) != std::wstring::npos) {
+    for (const auto& [devId, name] : Endpoints(output ? eRender : eCapture))
+        if (Lower(name).find(want) != std::wstring::npos) {
             id = devId;
-            log::Info("Loopback: entrée « {} »", log::Narrow(name));
+            log::Info("Loopback: {} « {} »", output ? "sortie" : "entrée", log::Narrow(name));
             break;
         }
     if (SUCCEEDED(com)) CoUninitialize();
@@ -190,7 +203,7 @@ bool WasapiLoopback::StartInput(const std::wstring& nameContains, Sink sink) {
     processMode_ = false;
     inputId_ = id;
     running_ = true;
-    thread_ = std::jthread([this, id, sink = std::move(sink)](std::stop_token st) { Run(st, 0, id, sink); });
+    thread_ = std::jthread([this, id, output, sink = std::move(sink)](std::stop_token st) { Run(st, 0, id, sink, output); });
     return true;
 }
 
@@ -232,7 +245,7 @@ void WasapiLoopback::Stop() {
     running_ = false;
 }
 
-void WasapiLoopback::Run(std::stop_token st, std::uint32_t pid, std::wstring inputId, Sink sink) {
+void WasapiLoopback::Run(std::stop_token st, std::uint32_t pid, std::wstring inputId, Sink sink, bool outputDevice) {
     log::SetCurrentThreadName(L"Companion.Loopback");
     const HRESULT comHr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 
@@ -252,7 +265,7 @@ void WasapiLoopback::Run(std::stop_token st, std::uint32_t pid, std::wstring inp
     ComPtr<IAudioCaptureClient> capture;
     if (SUCCEEDED(hr))
         hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED,
-                                (input ? 0 : AUDCLNT_STREAMFLAGS_LOOPBACK) | AUDCLNT_STREAMFLAGS_EVENTCALLBACK |
+                                (input && !outputDevice ? 0 : AUDCLNT_STREAMFLAGS_LOOPBACK) | AUDCLNT_STREAMFLAGS_EVENTCALLBACK |
                                     AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
                                 2'000'000 /* 200 ms */, 0, &fmt, nullptr);
     if (SUCCEEDED(hr)) hr = client->SetEventHandle(event);
