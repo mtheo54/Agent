@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aide d'Omnis</title>
+<style>
+  :root { --bg:#0b0b0f; --card:#15151c; --line:#2a2a36; --text:#ececf1; --soft:#a9a9b8; --green:#5cff9a; --amber:#ffc25c; }
+  @media (prefers-color-scheme: light) { :root { --bg:#f5f5f8; --card:#ffffff; --line:#dedee6; --text:#16161c; --soft:#5a5a6a; --green:#0f8a45; --amber:#a65d00; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:16px/1.55 "Segoe UI", system-ui, sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 30px; margin: 0 0 4px; }
+  .lead { color: var(--soft); margin: 0 0 24px; }
+  .tip { background: var(--card); border: 1px solid var(--green); border-radius: 12px; padding: 16px 18px; margin-bottom: 24px; }
+  .tip b { color: var(--green); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+  h2 { font-size: 17px; margin: 0 0 10px; color: var(--green); }
+  ul { margin: 0; padding-left: 18px; }
+  li { margin: 6px 0; }
+  q { color: var(--amber); font-style: normal; quotes: "« " " »"; }
+  kbd { background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; font-size: 13px; }
+  footer { color: var(--soft); margin-top: 28px; font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Omnis — ce que tu peux lui dire</h1>
+  <p class="lead">Tout tourne sur ton PC. Ces phrases sont des exemples : dis-le à ta façon, il comprend.</p>
+
+  <div class="tip"><b>Perdu ?</b> Dis <q>qu'est-ce que tu sais faire</q> ou <q>comment je fais pour…</q> : il t'explique. Cette page : <q>ouvre l'aide</q>.</div>
+
+  <div class="grid">
+    <section><h2>Les bases</h2><ul>
+      <li><q>Tais-toi</q>, <q>pause</q> : il se tait tout de suite</li>
+      <li><q>Ouvre les réglages</q> (ou <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>O</kbd>)</li>
+      <li><q>Retiens que…</q> : il s'en souvient</li>
+      <li><q>Cache-toi</q> / <q>montre-toi</q></li>
+      <li><q>Ferme-toi</q> : il quitte</li>
+    </ul></section>
+
+    <section><h2>Ta musique (FL Studio)</h2><ul>
+      <li><q>Écoute ce que j'ai fait</q>, <q>t'en penses quoi de ma prod ?</q></li>
+      <li>Juste après : <q>alors, qu'est-ce qu'on pense ?</q></li>
+      <li><q>Comment je fais un sidechain ?</q> : il t'explique pas à pas</li>
+      <li>FL en ASIO de ta carte son : prends <b>FL Studio ASIO</b> dans Options → Audio pour qu'il t'entende</li>
+    </ul></section>
+
+    <section><h2>Ton écran et les vidéos</h2><ul>
+      <li><q>Regarde mon écran</q> : il t'aide sur ce qu'il voit</li>
+      <li><q>Regarde avec moi</q> : Reels, TikTok, YouTube ensemble</li>
+      <li><q>Regarde en silence</q> / <q>arrête de regarder</q></li>
+      <li><q>Étudie le lien copié</q> : il apprend de la vidéo</li>
+    </ul></section>
+
+    <section><h2>En jeu</h2><ul>
+      <li><q>Je build quoi ?</q> (LoL)</li>
+      <li><q>Combien de FPS ?</q>, <q>teste tes perfs</q></li>
+      <li><q>Passe sur le processeur</q>, <q>mode léger</q>, <q>mode auto</q></li>
+    </ul></section>
+
+    <section><h2>Le PC</h2><ul>
+      <li><q>Monte le son</q>, <q>volume à 30</q>, <q>coupe le son</q></li>
+      <li><q>Musique suivante</q>, <q>mets la musique en pause</q></li>
+      <li><q>Prends la main</q>, <q>clique sur…</q> : souris et clavier (il annonce avant d'agir)</li>
+      <li><q>Lance Spotify</q> (avec ta permission)</li>
+    </ul></section>
+
+    <section><h2>Discord</h2><ul>
+      <li><q>Viens dans le call</q>, <q>quitte le call</q></li>
+      <li><q>Écoute le call</q> : il apprend les voix sans parler</li>
+      <li><q>Prends ma place</q>, <q>je vais manger</q> → <q>je suis revenu</q></li>
+      <li>Tes potes : <q>Omnis, tais-toi</q>, <q>Omnis, oublie-moi</q></li>
+    </ul></section>
+
+    <section><h2>Ta voix</h2><ul>
+      <li><q>Prends ma voix</q> : 15 s de parole, une phrase à fond, une posée</li>
+      <li><q>Reprends ta voix</q>, <q>oublie ma voix</q></li>
+    </ul></section>
+
+    <section><h2>Bruitages et entraînement</h2><ul>
+      <li><q>Installe les sons</q>, <q>joue le son vine boom</q>, <q>quels sons t'as ?</q></li>
+      <li><q>Entraîne-toi</q>, <q>tu peux surfer cette nuit</q>, <q>arrête de surfer</q></li>
+    </ul></section>
+
+    <section><h2>Raccourcis</h2><ul>
+      <li><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd> : parler (appuie, parle, ré-appuie)</li>
+      <li><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd> : écoute continue</li>
+      <li><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>H</kbd> : cacher / montrer</li>
+      <li><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>O</kbd> : réglages · <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Q</kbd> : quitter</li>
+      <li>Souris (hors jeu) : attrape-le pour le déplacer</li>
+    </ul></section>
+  </div>
+
+  <footer>Réglages, journal de la conversation, clé Claude et sous-titres : <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>O</kbd>. En cas de souci : <code>%LOCALAPPDATA%\CompanionAI\omnis.log</code>.</footer>
+</main>
+</body>
+</html>

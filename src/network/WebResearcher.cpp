@@ -1,3 +1,4 @@
+#include "core/TextFr.hpp"
 #include "network/WebResearcher.hpp"
 
 #include "core/Log.hpp"
@@ -14,11 +15,7 @@ namespace {
 
 constexpr size_t kMaxPageChars = 20000;
 
-std::string Lower(std::string_view s) {
-    std::string o(s);
-    std::transform(o.begin(), o.end(), o.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return o;
-}
+std::string Lower(std::string_view s) { return LowerFr(s); }
 
 std::set<std::string> Terms(std::string_view query) {
     std::set<std::string> terms;

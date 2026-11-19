@@ -608,6 +608,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
 
     const DWORD mainThread = GetCurrentThreadId();
     orchestrator.SetOpenSettingsCallback([mainThread] { PostThreadMessageW(mainThread, WM_APP_OPEN_SETTINGS, 0, 0); });
+    // « Ferme-toi », « cache-toi » : comme les raccourcis Ctrl+Alt+Q / Ctrl+Alt+H.
+    orchestrator.SetUiCommandCallback([mainThread](int hotkey) { PostThreadMessageW(mainThread, WM_HOTKEY, static_cast<WPARAM>(hotkey), 0); });
 
     // Fenêtre de réglages : enregistrement dans companion.json et application immédiate.
     ConfigWindow settings;
@@ -721,6 +723,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
             "J'ai encore planté sur la carte graphique. Cette fois, je réfléchis avec le processeur : un peu plus lent, mais stable.",
             "Toujours instable : je laisse complètement ta carte graphique tranquille, et je prends ma voix de secours."};
         voice.Speak(kSafe[cfg.gpuSafeStage]);
+    } else if (!db.GetProfile("tour.done")) {
+        // Premier lancement : trois choses à savoir, pas plus.
+        voice.Speak("Salut, moi c'est Omnis ! Trois trucs à savoir. Un : parle-moi normalement, je comprends même si tu le dis "
+                    "à ta façon. Deux : si t'es perdu, dis « qu'est-ce que tu sais faire ». Trois : tu peux m'attraper à la souris "
+                    "pour me poser où tu veux.");
+        db.SetProfile("tour.done", "1");
     } else {
         voice.Speak(phrases.Pick("greeting", {}, "Salut. Je suis en ligne."));
     }

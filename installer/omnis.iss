@@ -71,6 +71,7 @@ Name: "{app}\assets\models"
 
 [Icons]
 Name: "{autoprograms}\Omnis"; Filename: "{app}\CompanionAI.exe"; WorkingDir: "{app}"
+Name: "{autoprograms}\Aide d'Omnis"; Filename: "{app}\assets\Aide.html"
 Name: "{autoprograms}\Désinstaller Omnis"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\Omnis"; Filename: "{app}\CompanionAI.exe"; WorkingDir: "{app}"; Tasks: desktop
 

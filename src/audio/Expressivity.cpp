@@ -1,3 +1,4 @@
+#include "core/TextFr.hpp"
 #include "audio/Expressivity.hpp"
 
 #include "audio/NeuralVoice.hpp"  // ReadWavMono
@@ -25,10 +26,7 @@ const char* ToFileStem(Vocal v) noexcept {
 
 namespace {
 
-std::string Lower(std::string s) {
-    for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    return s;
-}
+std::string Lower(const std::string& s) { return LowerFr(s); }
 
 // Mot de la balise → son. Renvoie Count si c'est une didascalie inconnue (retirée sans bruit).
 Vocal Classify(const std::string& raw) {

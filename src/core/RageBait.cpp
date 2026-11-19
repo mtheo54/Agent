@@ -1,3 +1,4 @@
+#include "core/TextFr.hpp"
 #include "core/RageBait.hpp"
 
 #include "core/BaitBank.hpp"
@@ -11,10 +12,7 @@
 namespace companion {
 namespace {
 
-std::string Lower(std::string s) {
-    for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    return s;
-}
+std::string Lower(const std::string& s) { return LowerFr(s); }
 
 // Mots « pleins » d'une phrase (4 lettres et plus, hors mots outils) : ce qu'une vanne précise reprend.
 std::vector<std::string> ContentWords(const std::string& s) {

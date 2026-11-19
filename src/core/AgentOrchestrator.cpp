@@ -3,6 +3,8 @@
 #include "core/Log.hpp"
 #include "core/Persona.hpp"
 #include "core/Disfluency.hpp"
+#include "core/CommandCatalog.hpp"
+#include "core/TextFr.hpp"
 #include "audio/NeuralVoice.hpp"
 
 #include <objbase.h>
@@ -26,11 +28,7 @@ std::int64_t NowMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
-std::string Lower(std::string_view s) {
-    std::string o(s);
-    std::transform(o.begin(), o.end(), o.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return o;
-}
+std::string Lower(std::string_view s) { return LowerFr(s); }
 
 bool ContainsAny(const std::string& haystack, std::initializer_list<const char*> needles) {
     return std::any_of(needles.begin(), needles.end(),
@@ -2198,6 +2196,7 @@ void AgentOrchestrator::Handle(const std::string& text, std::stop_token stop) {
     const auto history = d_.db.RecentMessages(8);  // avant d'ajouter la question courante
     d_.db.AddMessage("user", text);
     if (HandleLevel0(text, stop)) return;
+    if (TryFuzzyCommand(text, stop)) return;  // « viens sur discord avec nous », « tu peux te mettre en mode léger »…
 
     const std::string lower = Lower(text);
     // Vu sur le terrain : « écoute ce que j'ai fait », « t'as aimé le piano ? » ne lançaient pas l'écoute.
@@ -2222,8 +2221,56 @@ void AgentOrchestrator::Handle(const std::string& text, std::stop_token stop) {
     OfferSounds(stop);
 }
 
+// Aide : « qu'est-ce que tu sais faire », « ouvre l'aide », « ferme-toi », « cache-toi ».
+bool AgentOrchestrator::HandleHelp(const std::string& lower) {
+    if (ContainsAny(lower, {"qu'est-ce que tu sais faire", "qu'est ce que tu sais faire", "tu sais faire quoi", "tu fais quoi comme truc",
+                            "c'est quoi tes fonctions", "tes fonctionnalités", "tes commandes", "comment on t'utilise",
+                            "comment je t'utilise", "comment je me sers de toi", "à quoi tu sers", "a quoi tu sers"})) {
+        Say(kHelpSummary);
+        return true;
+    }
+    if (ContainsAny(lower, {"ouvre", "montre", "affiche"}) && ContainsAny(lower, {"l'aide", "page d'aide", "ton guide", "mode d'emploi"})) {
+        const std::wstring page = (d_.assetsDir / L"Aide.html").wstring();
+        if (reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr, L"open", page.c_str(), nullptr, nullptr, SW_SHOWNORMAL)) > 32)
+            Say("Je t'ouvre l'aide.");
+        else
+            Say("J'arrive pas à ouvrir la page d'aide.");
+        return true;
+    }
+    if (ContainsAny(lower, {"ferme-toi", "ferme toi", "tu peux te fermer", "éteins-toi", "eteins-toi", "quitte-toi", "ferme omnis",
+                            "quitte omnis", "ferme l'application"})) {
+        Say("Allez, à plus.");
+        for (int i = 0; i < 40 && d_.voice.IsSpeaking(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        if (onUiCommand_) onUiCommand_(3);
+        return true;
+    }
+    if (ContainsAny(lower, {"cache-toi", "cache toi", "disparais", "montre-toi", "montre toi", "réapparais", "reapparais"})) {
+        if (onUiCommand_) onUiCommand_(2);
+        return true;
+    }
+    return false;
+}
+
+bool AgentOrchestrator::TryFuzzyCommand(const std::string& text, std::stop_token stop) {
+    if (!LooksLikeCommand(Lower(text)) || !EnsureBrain()) return false;
+    static const std::string system = CommandClassifierPrompt();
+    static const std::string grammar = CommandGrammar();
+    GenerateOptions o;
+    o.grammar = grammar.c_str();
+    o.maxTokens = 8;
+    o.temperature = 0.f;
+    o.stop = stop;
+    const auto out = d_.brain.Generate({{"system", system}, {"user", text}}, o);
+    if (!out) return false;
+    const OmnisCommand* c = FindCommand(Trim(*out));
+    if (!c) return false;
+    log::Info("Commande comprise : « {} » -> {} (« {} »)", text, c->id, c->canonical);
+    return HandleLevel0(c->canonical, stop);
+}
+
 bool AgentOrchestrator::HandleLevel0(const std::string& text, std::stop_token stop) {
     const std::string lower = Lower(text);
+    if (HandleHelp(lower)) return true;
 
     if (lower.find("entra") != std::string::npos && lower.find("toi") != std::string::npos) {  // « entraîne-toi »
         StartTraining(/*manual=*/true);

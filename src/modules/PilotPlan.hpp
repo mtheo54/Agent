@@ -10,6 +10,7 @@
 //
 // Les actions risquées (fermer, supprimer, écraser, quitter) demandent ton accord à voix haute avant de partir.
 
+#include "core/TextFr.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
@@ -47,11 +48,7 @@ str ::= "\"" [^"\n]+ "\""
 )";
 
 namespace pilot_detail {
-inline std::string Lower(std::string_view s) {
-    std::string o(s);
-    for (auto& c : o) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    return o;
-}
+inline std::string Lower(std::string_view s) { return LowerFr(s); }
 inline std::string Unquote(std::string_view s) {
     while (!s.empty() && s.front() == ' ') s.remove_prefix(1);
     while (!s.empty() && (s.back() == ' ' || s.back() == '\r')) s.remove_suffix(1);

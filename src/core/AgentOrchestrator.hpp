@@ -106,6 +106,8 @@ public:
     void OnCallSpeech(std::string text, std::vector<float> pcm16k, std::chrono::steady_clock::time_point end);  // thread-safe
     void UpdateConfig(const CompanionConfig& cfg);  // appliquée sur le thread de l'orchestrateur
     void SetOpenSettingsCallback(std::function<void()> cb) { onOpenSettings_ = std::move(cb); }
+    // Commandes de l'interface dites à la voix : 2 = cacher / montrer, 3 = quitter (mêmes identifiants que les raccourcis).
+    void SetUiCommandCallback(std::function<void(int)> cb) { onUiCommand_ = std::move(cb); }
 
     // Réactions de l'avatar (appelées depuis les threads de travail ; à relayer au thread de rendu).
     using AvatarFn = std::function<void(const std::string& clip)>;
@@ -135,6 +137,9 @@ private:
     void WorkerMain(std::stop_token st);
     void Handle(const std::string& text, std::stop_token stop);
     bool HandleLevel0(const std::string& text, std::stop_token stop);
+    bool HandleHelp(const std::string& lower);
+    // Phrase approximative : le modèle choisit la commande (CommandCatalog), puis on l'exécute.
+    bool TryFuzzyCommand(const std::string& text, std::stop_token stop);
     void HandleLevel1(const std::string& text, const std::vector<ChatTurn>& history, const std::string& extraContext,
                       std::stop_token stop);
     bool HandleSystemCommand(const std::string& text, const std::string& lower, std::stop_token stop);
@@ -169,6 +174,7 @@ private:
 
     OrchestratorDeps d_;
     CompanionConfig cfg_;  // copie propre au thread de l'orchestrateur (mise à jour par UpdateConfig)
+    std::function<void(int)> onUiCommand_;
     std::function<void()> onOpenSettings_;
     std::jthread worker_;
     std::mutex mutex_;
