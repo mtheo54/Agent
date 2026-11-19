@@ -9,6 +9,7 @@
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <format>
 #include <cmath>
 #include <cwctype>
 
@@ -65,9 +66,10 @@ std::wstring FindEndpoint(EDataFlow flow, const std::wstring& part) {
     return {};
 }
 
-bool OpenClient(IMMDevice* dev, bool eventDriven, HANDLE event, ComPtr<IAudioClient>& client) {
-    if (FAILED(dev->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, reinterpret_cast<void**>(client.ReleaseAndGetAddressOf()))))
-        return false;
+bool OpenClient(IMMDevice* dev, bool eventDriven, HANDLE event, ComPtr<IAudioClient>& client, HRESULT* why = nullptr) {
+    HRESULT hr = dev->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, reinterpret_cast<void**>(client.ReleaseAndGetAddressOf()));
+    if (why) *why = hr;
+    if (FAILED(hr)) return false;
     WAVEFORMATEX fmt{};
     fmt.wFormatTag = WAVE_FORMAT_IEEE_FLOAT;
     fmt.nChannels = 1;
@@ -77,7 +79,9 @@ bool OpenClient(IMMDevice* dev, bool eventDriven, HANDLE event, ComPtr<IAudioCli
     fmt.nAvgBytesPerSec = kRate * 4;
     DWORD flags = AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
     if (eventDriven) flags |= AUDCLNT_STREAMFLAGS_EVENTCALLBACK;
-    if (FAILED(client->Initialize(AUDCLNT_SHAREMODE_SHARED, flags, 200000 /*20 ms*/, 0, &fmt, nullptr))) return false;
+    hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, flags, 200000 /*20 ms*/, 0, &fmt, nullptr);
+    if (why) *why = hr;
+    if (FAILED(hr)) return false;
     return !eventDriven || SUCCEEDED(client->SetEventHandle(event));
 }
 
@@ -176,14 +180,26 @@ void DiscordBridge::RelayMain(std::stop_token st, std::wstring cableId) {
     ComPtr<IAudioRenderClient> render;
     ComPtr<IAudioCaptureClient> capture;
     UINT32 bufferFrames = 0;
-    if (!OpenClient(cable.Get(), true, event, out) || !OpenClient(mic.Get(), false, nullptr, in) ||
-        FAILED(out->GetBufferSize(&bufferFrames)) || FAILED(out->GetService(IID_PPV_ARGS(&render))) ||
+    HRESULT hrCable = S_OK, hrMic = S_OK;
+    const bool cableOk = OpenClient(cable.Get(), true, event, out, &hrCable);
+    const bool micOk = cableOk && OpenClient(mic.Get(), false, nullptr, in, &hrMic);
+    if (!cableOk || !micOk || FAILED(out->GetBufferSize(&bufferFrames)) || FAILED(out->GetService(IID_PPV_ARGS(&render))) ||
         FAILED(in->GetService(IID_PPV_ARGS(&capture))) || FAILED(in->Start()) || FAILED(out->Start())) {
+        // Lequel et pourquoi (0x88890004 = périphérique pris en exclusif, souvent par un pilote ASIO ; 0x88890008 = format
+        // refusé). Écrit une fois par panne, plus toutes les 30 s.
+        const std::string what = !cableOk ? std::format("le câble ({}) a refusé : 0x{:08X}", log::Narrow(FriendlyName(cable.Get())),
+                                                        static_cast<unsigned>(hrCable))
+                               : !micOk   ? std::format("le micro ({}) a refusé : 0x{:08X}{}", log::Narrow(FriendlyName(mic.Get())),
+                                                        static_cast<unsigned>(hrMic),
+                                                        hrMic == static_cast<HRESULT>(0x88890004) ? ", pris en exclusif (ASIO ?)" : "")
+                                          : std::string("démarrage du flux impossible");
+        bool fresh = false;
         {
             std::scoped_lock lock(mutex_);
-            problem_ = "ouverture du câble ou du micro impossible";
+            fresh = problem_ != what;
+            problem_ = what;
         }
-        log::Info("Discord: ouverture du câble ou du micro impossible");
+        if (fresh) log::Info("Discord: ouverture impossible, {}", what);
         CloseHandle(event);
         return;
     }

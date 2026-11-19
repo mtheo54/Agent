@@ -107,7 +107,10 @@ public:
     void OnBargeIn();  // l'utilisateur lui coupe la parole : il s'arrête et écoute
     // Ce qu'un pote vient de dire dans le call Discord, avec sa phrase audio (16 kHz) pour savoir qui c'est.
     void OnCallSpeech(std::string text, std::vector<float> pcm16k, std::chrono::steady_clock::time_point end);  // thread-safe
-    void UpdateConfig(const CompanionConfig& cfg);  // appliquée sur le thread de l'orchestrateur
+    void UpdateConfig(const CompanionConfig& cfg);
+    // Vu-mètre (thread de rendu) : affiché ? niveau court terme et crête de ce qu'il entend de FL, en dBFS.
+    [[nodiscard]] bool MeterVisible() const noexcept { return meterVisible_.load() && d_.loopback.Running(); }
+    [[nodiscard]] std::pair<float, float> MeterLevels() const { const auto m = d_.analyzer.Snapshot(); return {m.rmsDb, m.peakDb}; }  // appliquée sur le thread de l'orchestrateur
     void SetOpenSettingsCallback(std::function<void()> cb) { onOpenSettings_ = std::move(cb); }
     // Commandes de l'interface dites à la voix : 2 = cacher / montrer, 3 = quitter (mêmes identifiants que les raccourcis).
     void SetUiCommandCallback(std::function<void(int)> cb) { onUiCommand_ = std::move(cb); }
@@ -266,6 +269,9 @@ private:
     bool HandleSkillCommand(const std::string& text, const std::string& lower, std::stop_token stop);
     void CreateSkill(const std::string& request, std::stop_token stop);
     void RunSkill(const Skill& k, const std::string& text, std::stop_token stop);
+    std::optional<std::wstring> ProbeStudioInput(std::stop_token stop);  // FL en ASIO natif : l'entrée qui le reçoit
+    std::atomic<bool> studioOff_{false};     // « arrête le mode écoute »
+    std::atomic<bool> meterVisible_{false};  // vu-mètre affiché sous le personnage
     std::vector<TimedWord> aeWords_;  // voix off du montage AE, mot par mot (temps de la composition)
     std::string aeWordsKey_;          // fichier + taille + position : retranscrit seulement si ça change  // accords posés par un script piano roll
     // Call Discord (par ton micro) : rejoindre / quitter, réagir à ce que disent les autres

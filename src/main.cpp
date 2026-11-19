@@ -880,12 +880,19 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
                                    : caption.speaking  ? 1.f
                                                        : std::clamp(1.f - (caption.silentSeconds - 2.5f) / 0.6f, 0.f, 1.f);
         const bool captionChanged = caption.text != shownCaption || std::abs(captionAlpha - shownCaptionAlpha) > 0.02f;
-        const bool newFrame = avatar.Update(dt, voice.VoiceRms()) || forceFrame || captionChanged;
+        const bool meterOn = orchestrator.MeterVisible();  // vu-mètre : redessiné à chaque image tant qu'il est affiché
+        const bool newFrame = avatar.Update(dt, voice.VoiceRms()) || forceFrame || captionChanged || meterOn;
 
         if (newFrame && overlay.IsVisible()) {
             if (ID2D1DeviceContext* ctx = overlay.BeginFrame()) {
                 avatar.Render(ctx, overlay.D2DFactory(), overlay.Scale());
-                captionBar.Render(ctx, overlay.Scale(), {6.f, 424.f, 314.f, 420.f + CaptionBar::kHeight}, caption.text, captionAlpha);
+                // Vu-mètre affiché : la bulle de sous-titres lui laisse le bas.
+                captionBar.Render(ctx, overlay.Scale(), {6.f, 424.f, 314.f, 420.f + CaptionBar::kHeight - (meterOn ? 34.f : 0.f)}, caption.text,
+                                  captionAlpha);
+                if (meterOn) {
+                    const auto [rms, peak] = orchestrator.MeterLevels();
+                    captionBar.RenderMeter(ctx, overlay.Scale(), {20.f, 420.f + CaptionBar::kHeight - 30.f, 300.f, 420.f + CaptionBar::kHeight - 6.f}, rms, peak);
+                }
                 shownCaption = caption.text;
                 shownCaptionAlpha = captionAlpha;
                 if (!overlay.EndFrame()) {

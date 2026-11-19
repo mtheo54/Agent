@@ -17,13 +17,20 @@ public:
 
     // rect : zone logique (avant l'échelle) ; alpha 0 … 1.
     void Render(ID2D1DeviceContext* ctx, float scale, D2D1_RECT_F rect, const std::string& text, float alpha);
-    void ReleaseDeviceResources() { ctx_ = nullptr; }
+    // Vu-mètre (ce qu'il entend de FL) : barre de niveau court terme (vert -> jaune -> rouge), trait de crête, valeur en dB.
+    void RenderMeter(ID2D1DeviceContext* ctx, float scale, D2D1_RECT_F rect, float rmsDb, float peakDb);
+    void ReleaseDeviceResources() { ctx_ = nullptr; meterCtx_ = nullptr; }
 
 private:
+    const wchar_t* Family();
     Microsoft::WRL::ComPtr<IDWriteFactory> dwrite_;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> format_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> bg_, fg_, edge_;
     ID2D1DeviceContext* ctx_ = nullptr;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> mBg_, mGreen_, mYellow_, mRed_, mText_;
+    Microsoft::WRL::ComPtr<IDWriteTextFormat> mFormat_;
+    ID2D1DeviceContext* meterCtx_ = nullptr;
+    float shownDb_ = -60.f, holdPeak_ = -60.f;
 };
 
 }  // namespace companion

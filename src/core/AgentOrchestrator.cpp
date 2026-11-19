@@ -392,7 +392,8 @@ void AgentOrchestrator::UpdateStudioCapture() {
     if (studio) lastStudioMs_ = NowMs();
     // Le mode Studio clignote quand FL perd le focus (vu : Studio -> Interactive -> Studio en 2 s) : on garde
     // l'écoute 60 s, sinon l'analyse repartait de zéro au milieu de la prod.
-    const bool wanted = studio || NowMs() < listenUntilMs_.load() || NowMs() - lastStudioMs_.load() < 60'000;
+    if (!studio && studioOff_ && NowMs() - lastStudioMs_.load() > 60'000) studioOff_ = false;  // FL fermé : prochaine fois, il réécoute
+    const bool wanted = !studioOff_ && (studio || NowMs() < listenUntilMs_.load() || NowMs() - lastStudioMs_.load() < 60'000);
     if (wanted && !d_.loopback.Running()) {
         d_.analyzer.Reset();
         d_.analyzer.Start();
@@ -400,7 +401,8 @@ void AgentOrchestrator::UpdateStudioCapture() {
         const std::wstring proc(cfg_.studioProcess.begin(), cfg_.studioProcess.end());
         // 1) l'entrée de la carte qui reçoit FL (ASIO natif), 2) FL Studio seul dès qu'il tourne (sa voix à lui n'est pas
         // captée), 3) le mix système. Avant, hors mode Studio, c'était toujours le mix système.
-        const std::wstring input = log::Widen(cfg_.studioInput);
+        // Réglage studioInput, sinon l'entrée qu'Omnis a trouvée lui-même (« studio.input »).
+        const std::wstring input = log::Widen(!cfg_.studioInput.empty() ? cfg_.studioInput : d_.db.GetProfile("studio.input").value_or(""));
         if (!(!input.empty() && d_.loopback.StartInput(input, sink)) && !d_.loopback.Start(proc, sink)) d_.loopback.Start(L"", sink);
     } else if (!wanted && d_.loopback.Running()) {
         d_.loopback.Stop();
@@ -2642,7 +2644,9 @@ void AgentOrchestrator::Handle(const std::string& text, std::stop_token stop) {
     const bool mixAsk = ContainsAny(lower, {"écoute", "ecoute", "avis", "pense", "comment", "sonne", "analyse", "trouve",
                                             "entends", "aimé", "aime", "kiff", "t'en dis", "tu dis", "prêt", "pret"});
     // Juste après une écoute (« alors, qu'est-ce qu'on pense ? ») : c'est encore de la prod qu'on parle.
-    const bool afterListen = NowMs() < listenUntilMs_.load() + 120'000 && d_.analyzer.Snapshot().seconds >= 3.f &&
+    // (Sans exiger d'avoir déjà entendu : vu sur le terrain, FL muet -> « t'en penses quoi ? » partait en bavardage
+    // au lieu de lui dire franchement qu'il n'entend rien.)
+    const bool afterListen = NowMs() < listenUntilMs_.load() + 120'000 &&
                              ContainsAny(lower, {"t'en penses", "qu'est-ce qu'on pense", "qu'est ce qu'on pense", "alors ?", "ça donne quoi",
                                                  "ca donne quoi", "c'est comment", "t'as aimé", "t'as kiffé", "verdict", "ton avis"});
     // Jargon de beatmaker (lexique d'OMNIS) : « la basse elle bave », « mon kick tape pas »…
@@ -2706,7 +2710,39 @@ bool AgentOrchestrator::HandleLevel0(const std::string& text, std::stop_token st
     if (HandleHelp(lower)) return true;
     if (HandleSkillCommand(text, lower, stop)) return true;  // « apprends à… », compétences apprises
 
-    if (lower.find("entra") != std::string::npos && lower.find("toi") != std::string::npos) {  // « entraîne-toi »
+    // « Arrête le mode FL », « arrête d'écouter » : l'écoute du studio est coupée jusqu'à ce que FL ferme ou qu'on la redemande.
+    if (ContainsAny(lower, {"arrête d'écouter", "arrete d'ecouter", "arrête l'écoute", "arrete l'ecoute", "coupe l'écoute",
+                            "stop l'écoute", "arrête le studio", "quitte le mode studio", "sors du mode studio"}) ||
+        (ContainsAny(lower, {"arrête", "arrete", "coupe", "stop", "quitte", "sors"}) &&
+         ContainsAny(lower, {"mod fl", "mode fl", "mode écoute", "mod écoute", "mode ecoute", "mod ecoute", "mode studio", "mod studio",
+                             "écouter fl", "ecouter fl"}))) {
+        studioOff_ = true;
+        listenUntilMs_ = 0;
+        UpdateStudioCapture();
+        meterVisible_ = false;
+        Say("Ok, j'écoute plus FL. Dis écoute ma prod quand tu veux que je reprenne.");
+        return true;
+    }
+    // Vu-mètre : niveau de ce qu'il entend de FL, affiché dans la bulle sous lui.
+    if (ContainsAny(lower, {"vu-mètre", "vu mètre", "vumètre", "vu-metre", "vu metre", "vumetre", "vu meter", "vu-meter", "vu métier",
+                            "ton niveau", "niveau sonore", "les décibels", "les decibels"}) &&
+        !ContainsAny(lower, {"c'est quoi", "explique"})) {
+        meterVisible_ = !ContainsAny(lower, {"cache", "enlève", "enleve", "retire", "arrête", "arrete", "plus besoin"});
+        if (meterVisible_) {
+            listenUntilMs_ = NowMs() + 10 * 60'000;  // il écoute pendant qu'on regarde le vu-mètre
+            studioOff_ = false;
+            UpdateStudioCapture();
+            Say("Voilà mon vu-mètre, sous moi : ce que j'entends de FL, en direct. Dis cache le vu-mètre pour l'enlever.");
+        } else {
+            Say("Ok, je le cache.");
+        }
+        return true;
+    }
+    // « Entraîne-toi », « mode entraînement », « fais des recherches pour t'entraîner »
+    if (ContainsAny(lower, {"entraîne-toi", "entraine-toi", "entraîne toi", "entraine toi", "t'entraîner", "t'entrainer",
+                            "mode entraînement", "mode entrainement", "mod d'entraînement", "mod d'entrainement", "mode d'entraînement",
+                            "mode d'entrainement", "mod entraînement", "va t'entraîner", "séance d'entraînement"}) ||
+        (lower.find("entra") != std::string::npos && lower.find("toi") != std::string::npos)) {  // « entraîne-toi »
         StartTraining(/*manual=*/true);
         return true;
     }
@@ -3139,6 +3175,7 @@ bool AgentOrchestrator::HandleSystemCommand(const std::string& text, const std::
 void AgentOrchestrator::HandleStudioQuestion(const std::string& text, const std::vector<ChatTurn>& history,
                                              std::stop_token stop) {
     listenUntilMs_ = NowMs() + 90'000;
+    studioOff_ = false;
     UpdateStudioCapture();
     // Il faut au moins 3 s de son pour un avis fiable (fenêtre LUFS court terme).
     bool announced = false;
@@ -3157,11 +3194,26 @@ void AgentOrchestrator::HandleStudioQuestion(const std::string& text, const std:
         // qui contourne Windows. On le dit clairement, avec les deux solutions, et on note les entrées disponibles.
         const bool flRunning = WasapiLoopback::FindProcessId(std::wstring(cfg_.studioProcess.begin(), cfg_.studioProcess.end())) != 0;
         if (flRunning && !d_.loopback.IsInputCapture()) {
+            // ASIO natif (Antelope…) : il cherche lui-même l'entrée de la carte qui reçoit le son de FL, puis réécoute.
+            if (const auto found = ProbeStudioInput(stop)) {
+                d_.db.SetProfile("studio.input", log::Narrow(*found));
+                d_.loopback.Stop();
+                d_.analyzer.Stop();
+                UpdateStudioCapture();
+                Say("Trouvé, j'entends FL par " + log::Narrow(*found) + ". Je l'écoute.");
+                for (int i = 0; i < 60 && !stop.stop_requested() && d_.analyzer.Snapshot().seconds < 3.f; ++i) Sleep(100);
+                if (!stop.stop_requested() && d_.analyzer.Snapshot().seconds >= 1.f) {
+                    HandleStudioQuestion(text, history, stop);  // cette fois, il entend
+                    return;
+                }
+            }
+            if (stop.stop_requested()) return;
             std::string inputs;
             for (const auto& n : WasapiLoopback::InputNames()) inputs += (inputs.empty() ? "" : " | ") + log::Narrow(n);
             log::Info("Studio: FL tourne mais sa capture est muette (ASIO natif ?). Entrées disponibles : {}", inputs);
-            Say("FL tourne, mais je reçois rien. T'es sûrement en ASIO de ta carte son, ça passe pas par Windows. Dans FL, "
-                "Options, Audio, prends FL Studio ASIO, et là je t'entends direct.");
+            Say("FL tourne, mais je reçois rien : ta carte son est en ASIO direct, ça passe pas par Windows. Deux solutions. Dans FL, "
+                "touche F10, onglet Audio, Device : prends FL Studio ASIO. Ou dans le panneau de ta carte, envoie la sortie de FL "
+                "sur une entrée loopback, et redis-moi écoute ma prod pendant que ça joue.");
         } else {
             Say(Line("studioSilent", {}, "Je n'entends rien. Lance la lecture et redemande-moi."));
         }
@@ -3656,6 +3708,49 @@ void AgentOrchestrator::RunSkill(const Skill& k, const std::string& text, std::s
         return;
     }
     RunPilotSteps(t, ParsePilotPlan(k.steps), stop);
+}
+
+}  // namespace companion
+
+// ---------------------------------------------------------------------------
+namespace companion {
+
+// FL en ASIO natif : sa capture Windows est muette. On écoute 1,2 s chaque entrée de la carte (hors micros, webcams,
+// casques VR) pendant que FL joue, et on garde celle qui reçoit le plus de son (au-dessus de -50 dBFS).
+std::optional<std::wstring> AgentOrchestrator::ProbeStudioInput(std::stop_token stop) {
+    Say("Je cherche par où passe le son de FL. Fais tourner ta prod et parle pas pendant dix secondes.");
+    for (int i = 0; i < 60 && d_.voice.IsSpeaking(); ++i) Sleep(100);
+    Sleep(1500);  // le temps de lancer la lecture
+    std::optional<std::wstring> best;
+    double bestDb = -50.0;
+    for (const auto& name : WasapiLoopback::InputNames()) {
+        if (stop.stop_requested()) return std::nullopt;
+        const std::wstring l = [&] { std::wstring x = name; for (auto& c : x) c = static_cast<wchar_t>(towlower(c)); return x; }();
+        if (l.find(L"microphone") != std::wstring::npos || l.find(L"micro ") != std::wstring::npos || l.find(L"webcam") != std::wstring::npos ||
+            l.find(L"headset") != std::wstring::npos || l.find(L"oculus") != std::wstring::npos || l.find(L"steam") != std::wstring::npos ||
+            l.find(L"casque") != std::wstring::npos)
+            continue;
+        std::atomic<double> sum{0.0};
+        std::atomic<std::uint64_t> n{0};
+        WasapiLoopback probe;
+        if (!probe.StartInput(name, [&](const float* d, std::size_t frames) {
+                double acc = 0;
+                for (std::size_t i = 0; i < frames * WasapiLoopback::kChannels; ++i) acc += static_cast<double>(d[i]) * d[i];
+                sum = sum + acc;
+                n = n + frames * WasapiLoopback::kChannels;
+            }))
+            continue;
+        Sleep(1200);
+        probe.Stop();
+        const double db = n ? 10.0 * std::log10(sum / static_cast<double>(n) + 1e-12) : -120.0;
+        log::Info("Studio : entrée « {} » : {:.1f} dBFS", log::Narrow(name), db);
+        if (db > bestDb) {
+            bestDb = db;
+            best = name;
+        }
+    }
+    if (best) log::Info("Studio : FL passe par « {} » ({:.1f} dBFS)", log::Narrow(*best), bestDb);
+    return best;
 }
 
 }  // namespace companion

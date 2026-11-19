@@ -719,8 +719,9 @@ struct VoiceEngine::Impl {
         wp.print_special = false;
         wp.suppress_blank = true;
         // Vocabulaire attendu : Whisper l'orthographie juste (« FL Studio » et pas « fête studio »).
-        wp.initial_prompt = "Omnis, FL Studio, DAW, MAO, VST, 808, kick, snare, sidechain, mix, master, prod, beat, instru, "
-                            "League of Legends, LoL, Valorant, Yasuo, Jinx, Discord, AutoCAD Electrical.";
+        wp.initial_prompt = "Omnis, FL Studio, DAW, MAO, VST, ASIO, vu-mètre, limiteur, mode, 808, kick, snare, sidechain, mix, "
+                            "master, prod, beat, instru, Antelope, Zen Go, League of Legends, LoL, Valorant, Discord, AutoCAD "
+                            "Electrical, After Effects.";
 
         if (whisper_full(whisper, wp, pcm.data(), static_cast<int>(pcm.size())) != 0) {
             log::Info("whisper: échec de transcription");
