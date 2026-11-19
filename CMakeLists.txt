@@ -209,6 +209,7 @@ add_executable(CompanionAI WIN32
     src/render/OverlayWindow.cpp
     src/render/CartoonAvatar.cpp
     src/render/CaptionBar.cpp
+    src/render/StudioBoard.cpp
     src/ui/ConfigView.cpp
     src/ui/ConfigWindow.cpp
 )

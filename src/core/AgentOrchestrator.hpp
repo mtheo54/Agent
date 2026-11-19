@@ -109,7 +109,8 @@ public:
     void OnCallSpeech(std::string text, std::vector<float> pcm16k, std::chrono::steady_clock::time_point end);  // thread-safe
     void UpdateConfig(const CompanionConfig& cfg);
     // Vu-mètre (thread de rendu) : affiché ? niveau court terme et crête de ce qu'il entend de FL, en dBFS.
-    [[nodiscard]] bool MeterVisible() const noexcept { return meterVisible_.load() && d_.loopback.Running(); }
+    // Tableau du studio : sorti quand il écoute ta prod (demande d'avis, « montre ton vu-mètre », ou FL qui joue en mode Studio).
+    [[nodiscard]] bool MeterVisible() const;
     [[nodiscard]] std::pair<float, float> MeterLevels() const { const auto m = d_.analyzer.Snapshot(); return {m.rmsDb, m.peakDb}; }  // appliquée sur le thread de l'orchestrateur
     void SetOpenSettingsCallback(std::function<void()> cb) { onOpenSettings_ = std::move(cb); }
     // Commandes de l'interface dites à la voix : 2 = cacher / montrer, 3 = quitter (mêmes identifiants que les raccourcis).

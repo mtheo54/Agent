@@ -68,46 +68,4 @@ void CaptionBar::Render(ID2D1DeviceContext* ctx, float scale, D2D1_RECT_F rect, 
     ctx->SetTransform(D2D1::IdentityMatrix());
 }
 
-void CaptionBar::RenderMeter(ID2D1DeviceContext* ctx, float scale, D2D1_RECT_F rect, float rmsDb, float peakDb) {
-    if (!ctx) return;
-    if (!dwrite_ && FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
-                                               reinterpret_cast<IUnknown**>(dwrite_.GetAddressOf()))))
-        return;
-    if (!mFormat_ && FAILED(dwrite_->CreateTextFormat(Family(), nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL,
-                                                      DWRITE_FONT_STRETCH_NORMAL, 11.f, L"fr-fr", &mFormat_)))
-        return;
-    if (meterCtx_ != ctx) {
-        mBg_.Reset(); mGreen_.Reset(); mYellow_.Reset(); mRed_.Reset(); mText_.Reset();
-        ctx->CreateSolidColorBrush(D2D1::ColorF(0.04f, 0.04f, 0.06f, 0.82f), &mBg_);
-        ctx->CreateSolidColorBrush(D2D1::ColorF(0.3f, 0.95f, 0.5f, 1.f), &mGreen_);
-        ctx->CreateSolidColorBrush(D2D1::ColorF(1.f, 0.8f, 0.2f, 1.f), &mYellow_);
-        ctx->CreateSolidColorBrush(D2D1::ColorF(1.f, 0.25f, 0.25f, 1.f), &mRed_);
-        ctx->CreateSolidColorBrush(D2D1::ColorF(1.f, 1.f, 1.f, 0.9f), &mText_);
-        meterCtx_ = ctx;
-    }
-    if (!mBg_ || !mGreen_ || !mYellow_ || !mRed_ || !mText_) return;
-    // Lissage comme un vrai vu-mètre : monte vite, redescend doucement ; crête tenue puis relâchée.
-    rmsDb = std::clamp(rmsDb, -60.f, 0.f);
-    peakDb = std::clamp(peakDb, -60.f, 3.f);
-    shownDb_ = rmsDb > shownDb_ ? rmsDb : shownDb_ + (rmsDb - shownDb_) * 0.15f;
-    holdPeak_ = peakDb > holdPeak_ ? peakDb : holdPeak_ - 0.4f;
-    const auto x = [&](float db) { return rect.left + 34.f + (rect.right - rect.left - 82.f) * (std::clamp(db, -60.f, 0.f) + 60.f) / 60.f; };
-    ctx->SetTransform(D2D1::Matrix3x2F::Scale(scale, scale));
-    ctx->FillRoundedRectangle({rect, 7.f, 7.f}, mBg_.Get());
-    const float y0 = rect.top + 7.f, y1 = rect.bottom - 7.f;
-    ctx->DrawText(L"FL", 2, mFormat_.Get(), {rect.left + 8.f, rect.top + 3.f, rect.left + 32.f, rect.bottom}, mText_.Get());
-    // Zones : vert jusqu'à -18 dB, jaune jusqu'à -6, rouge au-delà.
-    const float v = x(shownDb_);
-    ctx->FillRectangle({x(-60.f), y0, std::min(v, x(-18.f)), y1}, mGreen_.Get());
-    if (v > x(-18.f)) ctx->FillRectangle({x(-18.f), y0, std::min(v, x(-6.f)), y1}, mYellow_.Get());
-    if (v > x(-6.f)) ctx->FillRectangle({x(-6.f), y0, v, y1}, mRed_.Get());
-    const float p = x(holdPeak_);
-    ctx->FillRectangle({p - 1.f, y0 - 2.f, p + 1.f, y1 + 2.f}, holdPeak_ > -1.f ? mRed_.Get() : mText_.Get());
-    wchar_t buf[24];
-    const int n = std::swprintf(buf, 24, L"%.0f dB", holdPeak_);
-    ctx->DrawText(buf, static_cast<UINT32>(std::max(n, 0)), mFormat_.Get(), {rect.right - 46.f, rect.top + 3.f, rect.right - 4.f, rect.bottom},
-                  holdPeak_ > -1.f ? mRed_.Get() : mText_.Get());
-    ctx->SetTransform(D2D1::IdentityMatrix());
-}
-
 }  // namespace companion

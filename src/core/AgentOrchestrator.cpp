@@ -2732,7 +2732,7 @@ bool AgentOrchestrator::HandleLevel0(const std::string& text, std::stop_token st
             listenUntilMs_ = NowMs() + 10 * 60'000;  // il écoute pendant qu'on regarde le vu-mètre
             studioOff_ = false;
             UpdateStudioCapture();
-            Say("Voilà mon vu-mètre, sous moi : ce que j'entends de FL, en direct. Dis cache le vu-mètre pour l'enlever.");
+            Say("Voilà mon tableau : ce que j'entends de FL, en direct. Dis cache le vu-mètre pour le ranger.");
         } else {
             Say("Ok, je le cache.");
         }
@@ -3819,4 +3819,13 @@ void AgentOrchestrator::SayProdOpinion(const std::string& question, const MixMet
     if (!stop.stop_requested() && !out.empty()) d_.db.AddMessage("assistant", out);
 }
 
+}  // namespace companion
+
+namespace companion {
+// Tableau du studio : sorti quand il écoute ta prod (demande d'avis, « montre ton vu-mètre », ou FL qui joue en mode Studio).
+bool AgentOrchestrator::MeterVisible() const {
+    if (!d_.loopback.Running() || studioOff_.load()) return false;
+    if (meterVisible_.load() || NowMs() < listenUntilMs_.load()) return true;
+    return mode_.load() == SystemMode::Studio && !d_.analyzer.Snapshot().silent;
+}
 }  // namespace companion

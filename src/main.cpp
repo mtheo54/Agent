@@ -52,6 +52,7 @@
 #endif
 #include "render/CartoonAvatar.hpp"
 #include "render/CaptionBar.hpp"
+#include "render/StudioBoard.hpp"
 #include "ui/ConfigWindow.hpp"
 
 #include <windows.h>
@@ -70,6 +71,7 @@
 #include <format>
 #include <fstream>
 #include <ranges>
+#include <tuple>
 #include <mutex>
 #include <vector>
 #include <string>
@@ -510,6 +512,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     }
     CartoonAvatar avatar;
     CaptionBar captionBar;
+    StudioBoard studioBoard;
     float swingAngle = 0.f, swingVel = 0.f;
     D2D1_POINT_2F swingPivot{160.f, 60.f};
     bool wasHeld = false;
@@ -815,6 +818,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
             // PC inactif depuis 5 min (et pas d'entraînement) : il pique du nez.
             avatar.SetMood(sleeping ? std::string("sleep") : avatarCmds.mood);
         }
+        // Il écoute ta prod : il sort son tableau (vu-mètre) de derrière lui, et danse quand il y a vraiment du son.
+        const float boardOut = studioBoard.Step(orchestrator.MeterVisible(), dt);
+        const bool boardOn = !studioBoard.Hidden();
+        float meterRms = -90.f, meterPeak = -90.f;
+        if (boardOn) {
+            std::tie(meterRms, meterPeak) = orchestrator.MeterLevels();
+            if (meterRms > -30.f && !sleeping) avatar.SetMood("dance");
+        }
         // Accessoires selon le contexte : jeu en cours, studio, entraînement, recherche, Claude, sommeil.
         {
             std::vector<std::string> contexts;
@@ -880,24 +891,19 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
                                    : caption.speaking  ? 1.f
                                                        : std::clamp(1.f - (caption.silentSeconds - 2.5f) / 0.6f, 0.f, 1.f);
         const bool captionChanged = caption.text != shownCaption || std::abs(captionAlpha - shownCaptionAlpha) > 0.02f;
-        const bool meterOn = orchestrator.MeterVisible();  // vu-mètre : redessiné à chaque image tant qu'il est affiché
-        const bool newFrame = avatar.Update(dt, voice.VoiceRms()) || forceFrame || captionChanged || meterOn;
+        const bool newFrame = avatar.Update(dt, voice.VoiceRms()) || forceFrame || captionChanged || boardOn;
 
         if (newFrame && overlay.IsVisible()) {
             if (ID2D1DeviceContext* ctx = overlay.BeginFrame()) {
+                studioBoard.Render(ctx, overlay.Scale(), boardOut, meterRms, meterPeak);  // avant lui : il sort de derrière
                 avatar.Render(ctx, overlay.D2DFactory(), overlay.Scale());
-                // Vu-mètre affiché : la bulle de sous-titres lui laisse le bas.
-                captionBar.Render(ctx, overlay.Scale(), {6.f, 424.f, 314.f, 420.f + CaptionBar::kHeight - (meterOn ? 34.f : 0.f)}, caption.text,
-                                  captionAlpha);
-                if (meterOn) {
-                    const auto [rms, peak] = orchestrator.MeterLevels();
-                    captionBar.RenderMeter(ctx, overlay.Scale(), {20.f, 420.f + CaptionBar::kHeight - 30.f, 300.f, 420.f + CaptionBar::kHeight - 6.f}, rms, peak);
-                }
+                captionBar.Render(ctx, overlay.Scale(), {6.f, 424.f, 314.f, 420.f + CaptionBar::kHeight}, caption.text, captionAlpha);
                 shownCaption = caption.text;
                 shownCaptionAlpha = captionAlpha;
                 if (!overlay.EndFrame()) {
                     avatar.ReleaseDeviceResources();
                     captionBar.ReleaseDeviceResources();
+                    studioBoard.ReleaseDeviceResources();
                 }
             }
         }
