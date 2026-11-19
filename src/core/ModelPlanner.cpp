@@ -62,6 +62,49 @@ const std::vector<ModelInfo>& ModelPlanner::Brains() {
     return brains;
 }
 
+const ExpertModel& ModelPlanner::Expert() {
+    // Qwen3.6-35B-A3B (Apache 2.0), quantification unsloth UD-Q4_K_M. Tailles lues dans l'en-tête GGUF :
+    // 2,56 Go hors experts, 19,57 Go d'experts sur 40 couches (256 experts, 8 actifs par mot).
+    static const ExpertModel m{"Qwen3.6 35B-A3B", "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+                               "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+                               22134528992ull, 2.56, 19.57, 40, "Qwen3.6-35B-A3B-mmproj-F16.gguf",
+                               "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/mmproj-F16.gguf", 899283680ull};
+    return m;
+}
+
+ExpertPlan ModelPlanner::PlanExpert(const HardwareInfo& hw, bool neuralVoice) {
+    const ExpertModel& e = Expert();
+    ExpertPlan p;
+    if (hw.ramGiB < kExpertMinRamGiB) {
+        p.why = std::format("{:.0f} Go de RAM : il en faut 32 pour le cerveau expert", hw.ramGiB);
+        return p;
+    }
+    const double perLayer = e.expertsGiB / e.layers;
+    // RAM : on laisse 8 Go au reste (Windows, FL Studio, le navigateur).
+    const int maxCpuLayers = static_cast<int>((hw.ramGiB - 8.0) / perLayer);
+    double budget = hw.vramGiB >= 0.9 ? hw.vramGiB * kNormalShare - (neuralVoice ? kNeuralVoiceGiB : 0.0) : 0.0;
+    // Carte : partie dense + contexte et tampons de calcul (~0,9 Go) ; le reste en couches d'experts.
+    double left = budget - e.denseGiB - 0.9;
+    if (left < 0.0) {
+        p.why = std::format("{:.1f} Go de VRAM pour Omnis : trop peu pour le cerveau expert", budget);
+        return p;
+    }
+    if (left >= 0.9 + 2 * perLayer) {
+        p.vision = true;
+        left -= 0.9;
+    }
+    const int gpuLayers = std::clamp(static_cast<int>(left / perLayer), 0, e.layers);
+    p.cpuMoeLayers = e.layers - gpuLayers;
+    if (p.cpuMoeLayers > maxCpuLayers) {
+        p.why = std::format("experts trop gros pour {:.0f} Go de RAM", hw.ramGiB);
+        return p;
+    }
+    p.possible = true;
+    p.why = std::format("{} : {} couches d'experts sur la carte, {} en RAM ({:.1f} Go){}", e.name, gpuLayers, p.cpuMoeLayers,
+                        p.cpuMoeLayers * perLayer, p.vision ? ", vision comprise" : "");
+    return p;
+}
+
 std::optional<VisionModule> ModelPlanner::VisionFor(const std::string& brainFile) {
     // Tailles relevées sur les dépôts unsloth (en-tête X-Linked-Size).
     struct V {

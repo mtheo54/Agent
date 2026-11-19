@@ -77,8 +77,35 @@ struct VisionModule {
     std::uint64_t bytes = 0;
 };
 
+// Cerveau expert (« mode pro ») : un gros MoE téléchargé à la demande, hors jeu seulement. Ses experts (le gros du
+// fichier) restent en RAM, la carte garde l'attention et quelques couches : 3 milliards de paramètres actifs par mot,
+// donc rapide, avec le savoir d'un 35B.
+struct ExpertModel {
+    const char* name;
+    const char* file;
+    const char* url;
+    std::uint64_t bytes;
+    double denseGiB;    // tout sauf les experts (va sur la carte)
+    double expertsGiB;  // experts, toutes couches
+    int layers;
+    const char* mmprojFile;
+    const char* mmprojUrl;
+    std::uint64_t mmprojBytes;
+};
+
+struct ExpertPlan {
+    bool possible = false;
+    int cpuMoeLayers = 0;  // experts des N premières couches en RAM
+    bool vision = false;   // le module de vision tient aussi sur la carte
+    std::string why;
+};
+
 class ModelPlanner {
 public:
+    static const ExpertModel& Expert();
+    static constexpr double kExpertMinRamGiB = 23.5;  // 32 Go conseillés (≈ 17 Go d'experts en RAM)
+    // Hors jeu, dans la moitié de la VRAM (moins la voix neuronale), comme le cerveau normal qu'il remplace.
+    static ExpertPlan PlanExpert(const HardwareInfo& hw, bool neuralVoice);
     static std::optional<VisionModule> VisionFor(const std::string& brainFile);
     static const std::vector<ModelInfo>& Brains();  // du plus petit au plus gros
     static const ModelInfo* FindByFile(const std::string& file);

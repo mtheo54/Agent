@@ -324,6 +324,13 @@ Omnis écoute la sortie de FL Studio directement (pas ton micro), via la capture
    `"studioInput": "Loopback"` (un morceau du nom suffit ; la liste des entrées est dans `omnis.log`, ligne
    « Entrées audio »).
 
+## Mode expert : niveau pro par domaine
+
+- **Grand cerveau local** : Qwen3.6 35B-A3B (Apache 2.0, unsloth UD-Q4_K_M, 22 Go + 0,9 Go de vision), téléchargé à la demande (« mode expert ») ou proposé une fois après une question de métier. MoE à 256 experts dont 8 actifs : 3 milliards de paramètres calculés par mot. Les experts des premières couches restent en RAM (comme `--n-cpu-moe` de llama.cpp), la carte garde l'attention et les dernières couches, toujours dans la moitié de la VRAM. Sur 16 Go de VRAM + 32 Go de RAM : ~17 Go d'experts en RAM. Il faut 32 Go de RAM ; jamais en jeu ; retour au cerveau normal après 15 min sans question de pro ou sur « mode normal ».
+- **Méthodes de pro** (`assets/knowledge/playbooks.json`) : FL Studio et mixage, montage et motion design (After Effects, Premiere, DaVinci, CapCut), AutoCAD Electrical, LoL, Valorant, streaming OBS, code, électricité. Le domaine est reconnu dans la question, la méthode va dans le prompt système (photo d'état par domaine : pas de recalcul) ; le cerveau expert prend le relais tout seul s'il est installé.
+- **After Effects** : au premier plan, « fais apparaître les titres en pop », « titre ABONNE-TOI qui glisse du bas »… D'abord une recette (menu fermé de gestes de pro sous grammaire, code écrit par Omnis : pop avec rebond, glissé, fondus, tremblement, cascade, ombre, lueur, couleur), sinon un script ExtendScript libre. Tout dans un seul groupe d'annulation, contrôle de sécurité (ni fichiers, ni système, ni réseau, ni fermeture du projet), rapport lu par Omnis et empreinte de la composition avant/après (un script qui ne change rien est une erreur), une correction automatique. Lancé par `AfterFX.exe -r`. Il faut cocher « Autoriser les scripts à écrire des fichiers » pour qu'il voie le résultat.
+- **FL Studio, accords** : « fais-moi une suite d'accords trap sombre ». Le modèle donne la tonalité et les degrés (grammaire), Omnis empile les tierces dans la gamme (toujours dans la tonalité), choisit les renversements qui bougent le moins et ajoute la basse ; script piano roll `Omnis - accords.pyscript` (FL 21.2+, menu Outils → Scripts).
+
 ## Deux modes : technique ou rage bait
 
 Avant chaque réponse, Omnis décide du mode **dans le code**, pas au hasard du modèle (`OmnisModes.hpp`) :

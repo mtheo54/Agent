@@ -261,6 +261,7 @@ int RunSelfTest() {
         save({});
     };
     check(fs::exists(root / L"assets" / L"avatar" / L"rig.json"), true, "personnage (assets/avatar/rig.json)");
+    check(fs::exists(root / L"assets" / L"knowledge" / L"playbooks.json"), false, "méthodes de pro (assets/knowledge/playbooks.json)");
     check(fs::exists(root / L"espeak-ng-data" / L"phondata") && fs::exists(root / L"espeak-ng-data" / L"fr_dict"), true,
           "données de phonèmes (espeak-ng-data, français)");
     const CompanionConfig cfg = LoadConfig(root / L"companion.json");

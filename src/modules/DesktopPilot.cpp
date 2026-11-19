@@ -168,6 +168,7 @@ PilotTarget DesktopPilot::Foreground() {
         DWORD len = 512;
         if (QueryFullProcessImageNameW(h, 0, buf, &len)) {
             std::wstring full(buf, len);
+            t.path = full;
             t.exe = full.substr(full.find_last_of(L"\\/") + 1);
             for (auto& c : t.exe) c = static_cast<wchar_t>(std::towlower(c));
         }
@@ -175,6 +176,7 @@ PilotTarget DesktopPilot::Foreground() {
     }
     if (t.exe.starts_with(L"acad")) t.app = PilotApp::AutoCad;
     else if (t.exe == L"fl64.exe" || t.exe == L"fl.exe") t.app = PilotApp::FlStudio;
+    else if (t.exe == L"afterfx.exe") t.app = PilotApp::AfterEffects;
     return t;
 }
 

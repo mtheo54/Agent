@@ -104,6 +104,7 @@ CompanionConfig LoadConfig(const std::filesystem::path& jsonFile) {
         cfg.cloudEnabled = j.value("cloudEnabled", cfg.cloudEnabled);
         cfg.cloudAsksPermission = j.value("cloudAsksPermission", cfg.cloudAsksPermission);
         cfg.captions = j.value("captions", cfg.captions);
+        cfg.expertAuto = j.value("expertAuto", cfg.expertAuto);
         cfg.studioInput = j.value("studioInput", cfg.studioInput);
         cfg.avatarX = j.value("avatarX", cfg.avatarX);
         cfg.avatarY = j.value("avatarY", cfg.avatarY);
@@ -157,6 +158,7 @@ bool SaveConfig(const CompanionConfig& cfg, const std::filesystem::path& jsonFil
     j["cloudEnabled"] = cfg.cloudEnabled;
     j["cloudAsksPermission"] = cfg.cloudAsksPermission;
     j["captions"] = cfg.captions;
+    j["expertAuto"] = cfg.expertAuto;
     j["studioInput"] = cfg.studioInput;
     j["avatarX"] = cfg.avatarX;
     j["avatarY"] = cfg.avatarY;

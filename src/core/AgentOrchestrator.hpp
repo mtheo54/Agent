@@ -34,6 +34,7 @@
 #include "modules/Soundboard.hpp"
 #include "core/LocalBrain.hpp"
 #include "core/MemoryDB.hpp"
+#include "core/Playbooks.hpp"
 #include "core/PermissionGate.hpp"
 #include "core/ResourceGovernor.hpp"
 #include "modules/DesktopPilot.hpp"
@@ -250,6 +251,8 @@ private:
     // Prise en main du clavier / de la souris (« prends la main », AutoCAD, FL Studio)
     DesktopPilot pilot_;
     bool HandlePilot(const std::string& text, const std::string& lower, std::stop_token stop);
+    bool HandleAfterEffects(const PilotTarget& t, const std::string& text, std::stop_token stop);  // script ExtendScript vérifié
+    bool HandleFlChords(const std::string& text, std::stop_token stop);  // accords posés par un script piano roll
     // Call Discord (par ton micro) : rejoindre / quitter, réagir à ce que disent les autres
     bool HandleCallCommand(const std::string& lower, std::stop_token stop);
     // « Prends ma voix » / « reprends ta voix » / « oublie ma voix » : clone local de la voix de l'utilisateur.
@@ -317,6 +320,20 @@ private:
     int wordsSinceDisfluency_ = 0;  // une hésitation tous les ~22 mots (Disfluency)                          // bruitages proposés une fois par session
     void OfferSounds(std::stop_token stop);
     int InstallStarterSounds(std::stop_token stop);
+    // Mode expert : un gros cerveau MoE (hors jeu) pour les questions de pro, et la méthode du domaine (playbook).
+    std::vector<Playbook> playbooks_;
+    const Playbook* playbook_ = nullptr;  // domaine de la question en cours
+    bool expertActive_ = false;
+    bool expertOffered_ = false;
+    std::chrono::steady_clock::time_point expertLastUse_{};
+    std::jthread expertDownload_;
+    std::atomic<bool> expertDownloading_{false};
+    [[nodiscard]] std::filesystem::path ExpertPath() const;
+    [[nodiscard]] bool ExpertInstalled() const;
+    bool HandleExpertCommand(const std::string& lower, std::stop_token stop);
+    void StartExpertDownload();
+    void MaybeUseExpert(const std::string& lower, std::stop_token stop);
+    void OfferExpert(std::stop_token stop);
 };
 
 }  // namespace companion

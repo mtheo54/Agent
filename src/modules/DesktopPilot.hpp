@@ -26,12 +26,13 @@
 
 namespace companion {
 
-enum class PilotApp : std::uint8_t { Other, AutoCad, FlStudio };
+enum class PilotApp : std::uint8_t { Other, AutoCad, FlStudio, AfterEffects };
 
 struct PilotTarget {
     HWND hwnd = nullptr;
     DWORD pid = 0;
     std::wstring exe;    // minuscules, ex. « acad.exe »
+    std::wstring path;   // chemin complet de l'exécutable
     std::string title;   // titre de la fenêtre (UTF-8)
     PilotApp app = PilotApp::Other;
 };

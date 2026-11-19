@@ -164,6 +164,7 @@ struct CompanionConfig {
     bool cloudEnabled = true;
     bool cloudAsksPermission = true;
     bool captions = true;             // sous-titres sous le personnage (ce qu'il dit)
+    bool expertAuto = true;           // question de pro (FL, montage, AutoCAD…) : le cerveau expert prend le relais s'il est installé
     // Saisie de la fenêtre de réglages, jamais écrite dans companion.json : la clé va dans le coffre de Windows.
     std::string claudeKeyEntry;
     bool claudeKeyRemove = false;  // chaque appel cloud demande ton accord (sauf "toujours")

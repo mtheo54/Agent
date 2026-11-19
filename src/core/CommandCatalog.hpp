@@ -56,6 +56,8 @@ inline const std::vector<OmnisCommand>& Commands() {
         {"voix_prends", "prends ma voix", "copier la voix de l'utilisateur", "voix"},
         {"voix_reprends", "reprends ta voix", "revenir à sa propre voix", "voix"},
         {"voix_oublie", "oublie ma voix", "effacer la voix copiée", "voix"},
+        {"expert", "mode expert", "passer en mode expert / mode pro : sortir le grand cerveau pour les questions de pro", "base"},
+        {"expert_stop", "mode normal", "quitter le mode expert, revenir au cerveau normal", "base"},
         {"entraine", "entraîne-toi", "lancer une séance d'entraînement maintenant", "entrainement"},
         {"surfe", "tu peux surfer cette nuit", "s'entraîner sur internet cette nuit", "entrainement"},
         {"surfe_stop", "arrête de surfer", "arrêter de surfer sur internet", "entrainement"},
@@ -115,7 +117,7 @@ inline bool LooksLikeCommand(const std::string& lower) {
 inline const char* kHelpSummary =
     "En gros, je fais six trucs. J'écoute ta prod dans FL Studio et je te donne mon avis. Je regarde ton écran ou des vidéos "
     "avec toi. Je t'aide en jeu, sans te faire perdre de FPS. Je viens dans tes calls Discord. Je peux prendre la main sur "
-    "ta souris si tu me le demandes. Et je m'entraîne tout seul. T'as pas besoin de retenir des phrases : demande-moi "
+    "ta souris si tu me le demandes. Et je m'entraîne tout seul. Pour du niveau pro, dis « mode expert ». T'as pas besoin de retenir des phrases : demande-moi "
     "comme tu veux, ou dis « ouvre l'aide » pour la page complète.";
 
 }  // namespace companion

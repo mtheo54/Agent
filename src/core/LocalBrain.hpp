@@ -40,6 +40,9 @@ struct LocalBrainConfig {
     int gpuLayers = 99;
     int threads = 4;
     int ubatch = 512;  // en jeu sur la carte : 64, des calculs courts qui laissent passer les images du jeu
+    // Modèle MoE (cerveau expert) : les experts des N premières couches restent en RAM (calculés par le
+    // processeur), le reste (attention, experts partagés, dernières couches) va sur la carte. 0 = tout sur la carte.
+    int cpuMoeLayers = 0;
 };
 
 struct GenerateOptions {
@@ -103,6 +106,7 @@ private:
     llama_model* model_ = nullptr;
     llama_context* ctx_ = nullptr;
     mtmd_context* mtmd_ = nullptr;
+    std::vector<std::string> overridePatterns_;  // motifs des experts gardés en RAM (vivants pendant le chargement)
     std::vector<int> cachedTokens_;  // tokens présents dans le cache KV (séquence 0)
     // Modèles récurrents / hybrides (Qwen3.5…) : leur état ne se « rembobine » pas, la réutilisation du
     // préfixe échoue. On garde donc une photo de l'état juste après la personnalité (prompt système,

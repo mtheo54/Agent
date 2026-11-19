@@ -6,11 +6,15 @@
 #include "core/CommandCatalog.hpp"
 #include "core/TextFr.hpp"
 #include "audio/NeuralVoice.hpp"
+#include "modules/AeScript.hpp"
+#include "modules/ChordScript.hpp"
 
 #include <objbase.h>
 #include <shellapi.h>
+#include <shlobj.h>
 
 #include <nlohmann/json.hpp>
+#include <tuple>
 
 #include <algorithm>
 #include <ctime>
@@ -73,6 +77,8 @@ AgentOrchestrator::~AgentOrchestrator() { Stop(); }
 
 void AgentOrchestrator::Start() {
     LoadKnowledgePack();
+    playbooks_ = LoadPlaybooks(d_.assetsDir / L"knowledge" / L"playbooks.json");
+    log::Info("Méthodes de pro : {} domaines", playbooks_.size());
     if (!worker_.joinable()) worker_ = std::jthread([this](std::stop_token st) { WorkerMain(st); });
 }
 
@@ -363,6 +369,12 @@ void AgentOrchestrator::WorkerMain(std::stop_token st) {
             StartTraining(/*manual=*/false);
 
         // Budget RAM veille (< 80 Mo) : on décharge le modèle après une période sans conversation.
+        // Cerveau expert : ~17 Go de RAM. 15 min sans question de pro -> retour au cerveau normal (rechargé à la demande).
+        if (expertActive_ && std::chrono::steady_clock::now() - expertLastUse_ > std::chrono::minutes(15)) {
+            expertActive_ = false;
+            if (d_.brain.IsLoaded() && d_.brain.ModelPath() == ExpertPath()) d_.brain.Unload();
+            log::Info("Orchestrator: fin du mode expert (inactivité)");
+        }
         if (d_.brain.IsLoaded() &&
             std::chrono::steady_clock::now() - lastBrainUse_ > std::chrono::minutes(cfg_.llmUnloadAfterMinutes)) {
             d_.brain.Unload();
@@ -410,7 +422,13 @@ std::string AgentOrchestrator::PersonaPrompt() const { return companion::Persona
 
 // Système selon le mode de la question en cours (chacun a sa photo d'état : pas de recalcul à chaque fois).
 std::string AgentOrchestrator::ModePrompt() const {
-    if (chatMode_ == ChatMode::Technical) return TechnicalPrompt(cfg_.name);
+    if (chatMode_ == ChatMode::Technical) {
+        if (!playbook_) return TechnicalPrompt(cfg_.name);
+        return TechnicalPrompt(cfg_.name) + "\nMÉTHODE DE PRO (" + playbook_->name + ") : pense comme un professionnel de ce domaine. "
+               "Prends seulement les 2 ou 3 points de cette méthode qui répondent à SA question (pas toute la méthode), en 3 à 5 phrases, et finis par la prochaine chose à faire. Parle comme si c'était ton expérience : ne "
+               "dis jamais « la méthode », « étape 5 » ni un numéro de point.\n" +
+               playbook_->method;
+    }
     return RageBaitChatPrompt(cfg_.name);
 }
 
@@ -445,6 +463,20 @@ bool AgentOrchestrator::EnsureBrain() {
     const bool gaming = mode_.load() == SystemMode::Gaming;
     std::filesystem::path wanted = cfg_.llmModel;
     bool gpu = cfg_.llmGpuLayers > 0;
+    // Mode expert : hors jeu seulement (en jeu, la RAM et la carte sont au jeu), et jamais en mode prudent CPU.
+    if (gaming) expertActive_ = false;
+    ExpertPlan xp;
+    if (expertActive_ && ExpertInstalled() && gpu && cfg_.gpuSafeStage < 2 && d_.probe) {
+        xp = ModelPlanner::PlanExpert(d_.probe(), cfg_.neuralVoice);
+        if (xp.possible) {
+            wanted = ExpertPath();
+            expertLastUse_ = std::chrono::steady_clock::now();
+        } else {
+            log::Info("Mode expert impossible : {}", xp.why);
+            expertActive_ = false;
+        }
+    }
+    const bool expert = xp.possible;
     if (gaming) {
         wanted = cfg_.llmGamingModel;
         gpu = false;
@@ -495,6 +527,14 @@ bool AgentOrchestrator::EnsureBrain() {
     bc.mmproj = lightBrain ? std::filesystem::path{} : cfg_.llmMmproj;  // pas de vision avec le petit cerveau
     bc.lora = lightBrain ? std::filesystem::path{} : cfg_.loraAdapter;
     bc.contextTokens = cfg_.llmContext;
+    if (expert) {
+        // Experts des premières couches en RAM, le reste sur la carte (la moitié de la VRAM, comme d'habitude).
+        bc.cpuMoeLayers = xp.cpuMoeLayers;
+        const auto mm = wanted.parent_path() / log::Widen(ModelPlanner::Expert().mmprojFile);
+        bc.mmproj = xp.vision && std::filesystem::exists(mm) ? mm : std::filesystem::path{};
+        bc.contextTokens = std::max(cfg_.llmContext, 8192);  // méthode du domaine + fiches + historique
+        log::Info("Cerveau expert : {}", xp.why);
+    }
     bc.gpuLayers = 99;
     bc.threads = gaming ? cfg_.llmThreadsGaming : cfg_.llmThreads;
     bc.ubatch = ubatch;
@@ -503,6 +543,11 @@ bool AgentOrchestrator::EnsureBrain() {
               gpu ? "la carte graphique" : "le processeur", ubatch);
     const bool ok = d_.brain.Load(bc);
     log::Info("Cerveau : {}", ok ? "prêt" : "échec du chargement");
+    if (!ok && expert) {  // pas assez de mémoire en ce moment : retour au cerveau normal plutôt que rien
+        expertActive_ = false;
+        log::Info("Cerveau expert : chargement impossible, retour au cerveau normal");
+        return EnsureBrain();
+    }
     return ok;
 }
 
@@ -1726,6 +1771,26 @@ void AgentOrchestrator::DoActivity(std::optional<std::string> request) {
 
 bool AgentOrchestrator::HandlePilot(const std::string& text, const std::string& lower, std::stop_token stop) {
     if (!cfg_.pilotEnabled) return false;
+    {
+        // Demande d'action (pas une question « comment je… ») dans After Effects : il monte lui-même, par script.
+        const PilotTarget fg = DesktopPilot::Foreground();
+        const bool question = lower.starts_with("comment") || lower.starts_with("pourquoi") || lower.starts_with("c'est quoi") ||
+                              lower.starts_with("est-ce que") || lower.find("explique") != std::string::npos;
+        if (fg.app == PilotApp::AfterEffects && !question &&
+            ContainsAny(lower, {"anime", "animer", "ajoute", "crée", "cree", "créer", "creer", "mets ", "met ", "applique", "fais ",
+                                "fais-", "génère", "genere", "rends", "change", "décale", "decale", "précompose", "precompose",
+                                "prends la main", "monte", "aligne", "centre", "colore", "écris", "ecris"}) &&
+            ContainsAny(lower, {"texte", "calque", "titre", "anim", "keyframe", "clé", "cle ", "compo", "effet", "flou", "lueur",
+                                "glow", "ombre", "transition", "logo", "fondu", "zoom", "wiggle", "motion", "sous-titre", "forme",
+                                "null", "position", "échelle", "echelle", "opacité", "opacite", "rotation", "couleur", "rebond",
+                                "easing", "shake", "tremble", "apparai", "glisse", "slide", "pop", "lettre", "mot "}))
+            return HandleAfterEffects(fg, text, stop);
+        // « fais-moi une suite d'accords trap sombre » : posée dans le piano roll de FL Studio par un script.
+        if ((fg.app == PilotApp::FlStudio || mode_.load() == SystemMode::Studio) && !question &&
+            ContainsAny(lower, {"accords", "accord ", "progression", "grille d'accords", "suite d'accords"}) &&
+            ContainsAny(lower, {"fais", "génère", "genere", "crée", "cree", "écris", "ecris", "propose", "mets", "trouve", "donne"}))
+            return HandleFlChords(text, stop);
+    }
     const bool asked = ContainsAny(lower, {"prends la main", "prends le contrôle", "prends le controle", "fais-le pour moi",
                                            "fais le pour moi", "fais-le à ma place", "fais le à ma place", "clique sur",
                                            "appuie sur", "contrôle ma souris", "controle ma souris", "prends ma souris", "prends mon clavier"});
@@ -1827,6 +1892,200 @@ bool AgentOrchestrator::HandlePilot(const std::string& text, const std::string& 
         Say("J'ai bloqué : " + error + ".");
     }
     log::Info("Pilot: {}", result == DesktopPilot::Result::Done ? "terminé" : error);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// After Effects : un script ExtendScript écrit pour la demande, lancé dans l'AE ouvert, vérifié, corrigé une fois.
+bool AgentOrchestrator::HandleAfterEffects(const PilotTarget& t, const std::string& text, std::stop_token stop) {
+    if (t.path.empty()) {
+        Say("Je trouve pas After Effects sur ton PC, bizarre.");
+        return true;
+    }
+    if (!expertActive_ && ExpertInstalled() && mode_.load() != SystemMode::Gaming) {
+        expertActive_ = true;  // le grand cerveau écrit de bien meilleurs scripts
+        if (!(d_.brain.IsLoaded() && d_.brain.ModelPath() == ExpertPath())) Say("Je sors le grand cerveau pour After Effects, deux secondes.");
+    }
+    if (!EnsureBrain()) {
+        Say("Il me faut mon cerveau local pour ça, et il n'est pas installé.");
+        return true;
+    }
+    if (!d_.gate.Request(PermissionScope::System, "after-effects-script",
+                         "Je lance un script dans ton After Effects ? Un seul Ctrl Z annule tout.", std::chrono::seconds(20), stop)) {
+        if (!stop.stop_requested()) Say("Ok, je touche à rien.");
+        return true;
+    }
+    const auto dir = d_.dataDir / L"after-effects";
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    const auto jsx = dir / L"omnis.jsx", result = dir / L"resultat.txt";
+    std::string resultFwd = log::Narrow(result.wstring());
+    std::ranges::replace(resultFwd, '\\', '/');
+    // Lance un script et attend le rapport (« OK|phrase » / « ERREUR|… ») ; nullopt = lancement impossible ou pas de rapport.
+    bool noReport = false;
+    const auto run = [&](const std::string& body) -> std::optional<std::string> {
+        {
+            std::ofstream f(jsx, std::ios::binary | std::ios::trunc);
+            f << "\xEF\xBB\xBF" << AeWrap(body, resultFwd);
+        }
+        std::filesystem::remove(result, ec);
+        std::wstring cmd = L"\"" + t.path + L"\" -r \"" + jsx.wstring() + L"\"";
+        STARTUPINFOW si{};
+        si.cb = sizeof(si);
+        PROCESS_INFORMATION pi{};
+        if (!CreateProcessW(t.path.c_str(), cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) return std::nullopt;
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        for (int i = 0; i < 120 && !stop.stop_requested(); ++i) {  // 30 s au plus
+            if (std::filesystem::exists(result, ec) && std::filesystem::file_size(result, ec) > 0) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                std::ifstream in(result, std::ios::binary);
+                std::string r((std::istreambuf_iterator<char>(in)), {});
+                if (r.starts_with("\xEF\xBB\xBF")) r.erase(0, 3);
+                log::Info("After Effects : {}", r);
+                return r;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        }
+        noReport = true;
+        return std::nullopt;
+    };
+    const auto split = [&](const std::string& r, std::string& report) {
+        const auto bar = r.find('|');
+        report = bar == std::string::npos ? std::string{} : Trim(r.substr(bar + 1));
+        return r.substr(0, bar) == "OK";
+    };
+    const auto noReportHint = [&] {
+        Say("C'est lancé. Pour que je vérifie moi-même le résultat, coche dans After Effects : Préférences, Scripts et "
+            "expressions, Autoriser les scripts à écrire des fichiers.");
+    };
+
+    // 1) Recette : gestes de pro choisis dans un menu fermé, code écrit par Omnis (fiable, même avec le petit cerveau).
+    {
+        GenerateOptions ro;
+        ro.grammar = kAeRecipeGrammar;
+        ro.maxTokens = 80;
+        ro.temperature = 0.2f;
+        ro.stop = stop;
+        activity_ = AgentActivity::Thinking;
+        const std::string plan = d_.brain.Generate({{"system", kAeRecipeSystem}, {"user", text}}, ro).value_or("");
+        if (stop.stop_requested()) return true;
+        std::string said;
+        const std::string body = AeRecipeBody(plan, said, Lower(text));
+        log::Info("After Effects : recette\n{}", plan);
+        if (!body.empty()) {
+            Say("C'est parti.");
+            const auto r = run(body);
+            if (stop.stop_requested()) return true;
+            std::string report;
+            if (r && split(*r, report)) {
+                Say((report.empty() ? std::string("C'est fait.") : report) + " Ctrl Z si ça te va pas.");
+                return true;
+            }
+            if (!r && noReport) { noReportHint(); return true; }
+            if (!r) { Say("After Effects a refusé de lancer le script."); return true; }
+            log::Info("After Effects : la recette a échoué ({}), script libre", report);
+        }
+    }
+
+    // 2) Script libre (la demande sort du menu), vérifié et corrigé une fois.
+    std::vector<ChatTurn> msgs{{"system", kAeSystem}, {"user", "Projet ouvert : « " + t.title + " ».\nDemande : " + text}};
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        GenerateOptions o;
+        o.maxTokens = 900;
+        o.temperature = 0.2f;
+        o.stop = stop;
+        activity_ = AgentActivity::Thinking;
+        const auto out = d_.brain.Generate(msgs, o);
+        if (stop.stop_requested()) return true;
+        const std::string code = Trim(AeStripFences(out.value_or("")));
+        log::Info("After Effects : script (essai {})\n{}", attempt + 1, code);
+        if (code.empty()) break;
+        if (code.starts_with("throw new Error(")) {  // il pose une question au lieu d'agir
+            const auto a = code.find('"'), b = code.rfind('"');
+            Say(a != std::string::npos && b > a ? code.substr(a + 1, b - a - 1) : "Redis-moi ce que tu veux exactement.");
+            return true;
+        }
+        if (const std::string why = AeForbidden(code); !why.empty()) {
+            Say("Le script voulait " + why + ", je l'ai bloqué. Redis-le autrement.");
+            return true;
+        }
+        if (const std::string old = AeModernSyntax(code); !old.empty()) {
+            msgs.push_back({"assistant", code});
+            msgs.push_back({"user", "Erreur : " + old + ". Réécris le script complet."});
+            continue;
+        }
+        Say(attempt == 0 ? "C'est parti." : "Je relance, corrigé.");
+        const auto r = run(code);
+        if (stop.stop_requested()) return true;
+        if (!r) {
+            if (noReport) noReportHint();
+            else Say("After Effects a refusé de lancer le script.");
+            return true;
+        }
+        std::string report;
+        if (split(*r, report)) {
+            Say((report.empty() ? std::string("C'est fait.") : report) + " Ctrl Z si ça te va pas.");
+            return true;
+        }
+        if (attempt == 0) {
+            msgs.push_back({"assistant", code});
+            msgs.push_back({"user", "After Effects a répondu : " + report + ". Corrige et réécris le script complet."});
+            Say("Petite erreur, je corrige.");
+            continue;
+        }
+        Say("After Effects bloque : " + report + ". Fais Ctrl Z si un bout est passé.");
+        return true;
+    }
+    Say("J'arrive pas à écrire ce script, redis-le autrement.");
+    return true;
+}
+
+// FL Studio : suite d'accords (le modèle choisit la musique, les notes sont calculées), posée par un script piano roll.
+bool AgentOrchestrator::HandleFlChords(const std::string& text, std::stop_token stop) {
+    if (!expertActive_ && ExpertInstalled() && mode_.load() != SystemMode::Gaming) expertActive_ = true;
+    if (!EnsureBrain()) {
+        Say("Il me faut mon cerveau local pour ça, et il n'est pas installé.");
+        return true;
+    }
+    const std::string sys =
+        "Tu es un compositeur et beatmaker professionnel. Donne la tonalité puis les DEGRÉS de la suite d'accords (les "
+        "accords sont construits dans la gamme, toujours justes). Format : TONALITE <note anglaise A à G, # ou b> mineur|majeur, "
+        "puis une ligne par accord : DEGRE <1 à 7> [+7 ou +9 pour un accord enrichi] <nombre de mesures 1 ou 2>. Exactement 4 "
+        "accords (une boucle). Recettes de pro : trap / drill sombre = mineur, 1 6 3 7, ou 1 4 5 1, ou 1 6 7 1 ; RnB, lo-fi, néo-soul = +7 "
+        "ou +9 partout, 2 5 1 1 en majeur ou 1 4 7 3 en mineur ; pop joyeuse = majeur, 1 5 6 4 ; triste et planant = mineur, "
+        "1 7 6 7. Si l'utilisateur donne une tonalité (en sol = G, la mineur = A mineur), garde-la.";
+    GenerateOptions o;
+    o.grammar = kChordGrammar;
+    o.maxTokens = 80;
+    o.temperature = 0.6f;
+    o.stop = stop;
+    activity_ = AgentActivity::Thinking;
+    const auto out = d_.brain.Generate({{"system", sys}, {"user", text}}, o);
+    if (stop.stop_requested()) return true;
+    const auto chords = ParseChordPlan(out.value_or(""));
+    if (chords.size() < 2) {
+        Say("J'ai rien trouvé de propre, redis-moi le style.");
+        return true;
+    }
+    PWSTR docs = nullptr;
+    std::filesystem::path dir;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Documents, 0, nullptr, &docs)))
+        dir = std::filesystem::path(docs) / L"Image-Line" / L"FL Studio" / L"Settings" / L"Piano roll scripts";
+    CoTaskMemFree(docs);
+    std::error_code ec;
+    if (dir.empty() || (!std::filesystem::create_directories(dir, ec) && ec)) {
+        Say("J'arrive pas à écrire dans tes documents FL Studio.");
+        return true;
+    }
+    {
+        std::ofstream f(dir / L"Omnis - accords.pyscript", std::ios::binary | std::ios::trunc);
+        f << ChordPyScript(chords, VoiceChords(chords));
+    }
+    std::string names;
+    for (const auto& c : chords) names += (names.empty() ? "" : ", ") + c.name;
+    log::Info("FL Studio : accords {}", names);
+    Say("J'ai écrit " + names + ". Dans le piano roll, menu Outils, Scripts, Omnis accords : les notes arrivent, avec la basse.");
     return true;
 }
 
@@ -2335,6 +2594,7 @@ bool AgentOrchestrator::HandleLevel0(const std::string& text, std::stop_token st
         return true;
     }
     if (HandleVoiceClone(lower, stop)) return true;   // « prends ma voix », « reprends ta voix »
+    if (HandleExpertCommand(lower, stop)) return true;  // « mode expert », « mode normal »
     if (HandleCallCommand(lower, stop)) return true;  // « rejoins le call », « quitte le call »
     if (HandleWatchCommand(lower)) return true;       // « regarde avec moi », « arrête de regarder »
     // « Tu peux surfer cette nuit » : surf libre pour s'entraîner jusqu'à 10 h le lendemain (14 h au plus).
@@ -2412,7 +2672,11 @@ void AgentOrchestrator::HandleLevel1(const std::string& text, const std::vector<
     // Mode décidé AVANT de répondre : technique (prioritaire en cas de doute) ou rage bait (bavardage, excuses, ego).
     chatMode_ = DetectChatMode(Lower(text));
     searchRound_ = 0;
-    log::Info("Orchestrator: mode {}", chatMode_ == ChatMode::Technical ? "technique" : "rage bait");
+    // Domaine de pro (FL Studio, montage, AutoCAD Electrical, LoL…) : sa méthode, et le cerveau expert s'il est là.
+    playbook_ = chatMode_ == ChatMode::Technical ? DetectPlaybook(playbooks_, Lower(text)) : nullptr;
+    if (playbook_) MaybeUseExpert(Lower(text), stop);
+    log::Info("Orchestrator: mode {}{}{}", chatMode_ == ChatMode::Technical ? "technique" : "rage bait",
+              playbook_ ? ", méthode " + playbook_->id : std::string{}, expertActive_ ? ", cerveau expert" : "");
     std::vector<ChatTurn> messages{{"system", ModePrompt()}};
     messages.insert(messages.end(), history.begin(), history.end());
     // Technique : rien qui distraie (memes, bruitages, rage bait) ; rage bait : tout le sel habituel.
@@ -2445,13 +2709,14 @@ void AgentOrchestrator::HandleLevel1(const std::string& text, const std::vector<
     bool escalation = false;
     // Rage bait : 2 à 3 phrases, sec ; technique : de quoi expliquer.
     const std::string out = GenerateSpoken(messages, kEscalateGrammar, stop, escalation, nullptr,
-                                           chatMode_ == ChatMode::Technical ? 260 : 70);
+                                           chatMode_ == ChatMode::Technical ? (expertActive_ ? 340 : 260) : 70);
     if (stop.stop_requested()) return;
     if (!escalation) {
         if (!out.empty()) {
             d_.db.AddMessage("assistant", out);
             RememberOpener(out);
         }
+        if (playbook_ && !expertActive_) OfferExpert(stop);
         return;
     }
 
@@ -2853,6 +3118,125 @@ void AgentOrchestrator::AdviseLolBuild(const LolSnapshot& lol, const std::string
     } else {
         Say(advice);  // sans modèle local : l'analyse brute, lisible telle quelle
     }
+}
+
+}  // namespace companion
+
+// ---------------------------------------------------------------------------
+// Mode expert : Qwen3.6 35B-A3B, téléchargé à la demande (22 Go), hors jeu. Ses experts restent en RAM, la carte garde
+// l'attention : le savoir d'un 35B, au débit d'un 3B. Il remplace le cerveau normal tant qu'on parle métier, puis s'efface.
+namespace companion {
+
+std::filesystem::path AgentOrchestrator::ExpertPath() const {
+    return cfg_.llmModel.parent_path() / log::Widen(ModelPlanner::Expert().file);
+}
+
+bool AgentOrchestrator::ExpertInstalled() const { return !expertDownloading_.load() && std::filesystem::exists(ExpertPath()); }
+
+void AgentOrchestrator::StartExpertDownload() {
+    if (expertDownloading_.exchange(true)) return;
+    const auto dir = ExpertPath().parent_path();
+    expertDownload_ = std::jthread([this, dir, ua = cfg_.userAgent](std::stop_token st) {
+        log::SetCurrentThreadName(L"Companion.ExpertDownload");
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+        const ExpertModel& e = ModelPlanner::Expert();
+        HttpClient net(ua);
+        bool ok = true;
+        const std::uint64_t total = e.bytes + e.mmprojBytes;
+        std::uint64_t before = 0;
+        for (const auto& [url, file, bytes] : {std::tuple{e.url, e.file, e.bytes}, std::tuple{e.mmprojUrl, e.mmprojFile, e.mmprojBytes}}) {
+            int lastPct = -1;
+            std::string err;
+            const bool got = net.DownloadToFile(url, dir / log::Widen(file), [&](std::uint64_t done, std::uint64_t) {
+                const int pct = static_cast<int>(100.0 * static_cast<double>(before + done) / static_cast<double>(total));
+                if (pct != lastPct) { lastPct = pct; log::Info("Cerveau expert : {} %", pct); }
+                return !st.stop_requested();
+            }, &err);
+            if (!got) { ok = false; log::Info("Cerveau expert : téléchargement de {} impossible ({})", file, err); break; }
+            before += bytes;
+        }
+        expertDownloading_ = false;
+        if (st.stop_requested()) return;
+        Post([this, ok](std::stop_token) {
+            Say(ok ? "Mon grand cerveau est installé. Pour les questions de pro, je le sors tout seul. Tu peux aussi dire mode expert."
+                   : "Le téléchargement du grand cerveau a raté. Redis mode expert pour reprendre où il s'est arrêté.");
+        });
+    });
+}
+
+bool AgentOrchestrator::HandleExpertCommand(const std::string& lower, std::stop_token stop) {
+    const bool names = ContainsAny(lower, {"mode expert", "mode pro", "grand cerveau", "gros cerveau", "cerveau expert", "passe en expert"});
+    const bool leave = ContainsAny(lower, {"quitte", "sors du", "arrête", "arrete", "désactive", "desactive", "plus de mode", "enlève", "enleve"});
+    if (ContainsAny(lower, {"mode normal", "petit cerveau", "cerveau normal"}) || (names && leave)) {
+        expertActive_ = false;
+        if (d_.brain.IsLoaded() && d_.brain.ModelPath() == ExpertPath()) d_.brain.Unload();
+        Say("Ok, je reprends mon cerveau normal.");
+        return true;
+    }
+    if (!names) return false;
+    if (mode_.load() == SystemMode::Gaming) {
+        Say("Pas en jeu : le grand cerveau prendrait la mémoire de ton jeu. Redemande-moi après ta partie.");
+        return true;
+    }
+    const ExpertPlan xp = ModelPlanner::PlanExpert(d_.probe ? d_.probe() : HardwareInfo{}, cfg_.neuralVoice);
+    if (!xp.possible) {
+        Say("Ton PC peut pas porter le grand cerveau : " + xp.why + ".");
+        return true;
+    }
+    if (!ExpertInstalled()) {
+        if (expertDownloading_) {
+            Say("Je le télécharge encore, je te préviens quand c'est prêt.");
+            return true;
+        }
+        std::error_code ec;
+        const auto space = std::filesystem::space(ExpertPath().parent_path(), ec);
+        if (!ec && space.available < ModelPlanner::Expert().bytes + 3'000'000'000ull) {
+            Say(std::format("Il me faut 25 gigas de libre sur le disque pour le grand cerveau, t'en as {}.",
+                            static_cast<int>(space.available / 1'000'000'000ull)));
+            return true;
+        }
+        if (d_.gate.Request(PermissionScope::Web, "huggingface.co",
+                            "Le grand cerveau fait 23 gigas. Je le télécharge en arrière-plan ? Ça peut prendre une demi-heure.",
+                            std::chrono::seconds(30), stop)) {
+            StartExpertDownload();
+            Say("C'est parti. Je te préviens quand il est prêt.");
+        } else if (!stop.stop_requested()) {
+            Say("Ok, je reste comme ça.");
+        }
+        return true;
+    }
+    expertActive_ = true;
+    Say("Je sors le grand cerveau, deux secondes.");
+    const bool ok = EnsureBrain() && d_.brain.ModelPath() == ExpertPath();
+    if (!ok) expertActive_ = false;
+    Say(ok ? "Mode expert. Vas-y, pose ta question." : "Il a pas voulu se charger, je reste en normal.");
+    return true;
+}
+
+// Question de pro dans un domaine connu : le cerveau expert prend la main s'il est installé (« mode expert » auto).
+void AgentOrchestrator::MaybeUseExpert(const std::string& lower, std::stop_token) {
+    if (expertActive_ || !cfg_.expertAuto || mode_.load() == SystemMode::Gaming || !ExpertInstalled()) return;
+    const bool deep = lower.size() > 45 || ContainsAny(lower, {"comment", "explique", "pourquoi", "méthode", "methode", "workflow",
+                                                               "étape", "etape", "conseil", "améliorer", "ameliorer", "optimiser",
+                                                               "technique", "astuce", "niveau pro", "comme un pro"});
+    if (!deep) return;
+    expertActive_ = true;
+    if (!(d_.brain.IsLoaded() && d_.brain.ModelPath() == ExpertPath())) Say("Je sors le grand cerveau, deux secondes.");
+}
+
+// Après une réponse de métier, une fois par session : proposer le grand cerveau (si le PC le porte et qu'il manque).
+void AgentOrchestrator::OfferExpert(std::stop_token stop) {
+    if (expertOffered_ || expertDownloading_ || stop.stop_requested() || std::filesystem::exists(ExpertPath())) return;
+    expertOffered_ = true;
+    if (const auto p = d_.db.GetProfile("expert.offer"); p && *p == "non") return;
+    if (!ModelPlanner::PlanExpert(d_.probe ? d_.probe() : HardwareInfo{}, cfg_.neuralVoice).possible) return;
+    for (int i = 0; i < 120 && d_.voice.IsSpeaking(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    if (d_.gate.Request(PermissionScope::Web, "huggingface.co",
+                        "Au fait, pour ce genre de question j'ai un grand cerveau de pro, 23 gigas. Je le télécharge en arrière-plan ?",
+                        std::chrono::seconds(20), stop))
+        StartExpertDownload();
+    else if (!stop.stop_requested())
+        d_.db.SetProfile("expert.offer", "non");  // plus proposé ; « mode expert » reste possible
 }
 
 }  // namespace companion

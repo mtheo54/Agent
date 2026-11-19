@@ -51,6 +51,18 @@ bool LocalBrain::Load(const LocalBrainConfig& cfg) {
     }
     llama_model_params mp = llama_model_default_params();
     mp.n_gpu_layers = useGpu_ ? cfg.gpuLayers : 0;
+    // MoE : experts des premières couches en RAM (comme --n-cpu-moe de llama.cpp).
+    std::vector<llama_model_tensor_buft_override> overrides;
+    overridePatterns_.clear();
+    if (useGpu_ && cfg.cpuMoeLayers > 0) {
+        overridePatterns_.reserve(static_cast<size_t>(cfg.cpuMoeLayers));
+        for (int i = 0; i < cfg.cpuMoeLayers; ++i)
+            overridePatterns_.push_back("blk\\." + std::to_string(i) + "\\.ffn_(up|down|gate|gate_up)_(ch|)exps");
+        for (const auto& pat : overridePatterns_) overrides.push_back({pat.c_str(), ggml_backend_cpu_buffer_type()});
+        overrides.push_back({nullptr, nullptr});
+        mp.tensor_buft_overrides = overrides.data();
+        log::Info("LocalBrain: experts de {} couches gardés en RAM", cfg.cpuMoeLayers);
+    }
     // load_mode par défaut = mmap : un rechargement GPU <-> CPU relit le cache disque de Windows.
     model_ = llama_model_load_from_file(log::Narrow(cfg.model.wstring()).c_str(), mp);
     if (!model_) {
