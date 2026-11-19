@@ -135,6 +135,20 @@ inline std::string StudyPrompt(const std::string& title, const std::string& tran
            "genre, le physique, un handicap, la famille, la santé ou l'argent.";
 }
 
+// Tutoriels (FL Studio, mixage, AutoCAD Electrical, jeux…) : fiche technique FIDÈLE à la transcription.
+inline constexpr const char* kTutorialSystem =
+    "Tu lis la transcription d'un tutoriel vidéo pour en faire une fiche technique fiable, en français. Tu ne gardes que ce "
+    "qui est dit dans la vidéo : jamais un réglage, un menu ou un chiffre inventé.";
+
+inline std::string TutorialPrompt(const std::string& title, const std::string& transcript) {
+    return "Tutoriel : « " + title + " »\n[Transcription]\n" + transcript.substr(0, 9000) +
+           "\nSi ce n'est pas un vrai tutoriel exploitable (vlog, pub, contenu flou), réponds seulement AUCUN.\nSinon réponds "
+           "exactement sur ce modèle :\nSujet : <3 à 5 mots-clés en minuscules, ex. « fl studio sidechain 808 »>\nFiche : <5 à 10 "
+           "phrases courtes : le but, les étapes dans l'ordre avec les noms exacts des menus, boutons et réglages tels qu'ils sont "
+           "dits, les valeurs chiffrées données, et les pièges signalés>\nRègle stricte : n'emploie AUCUN nom d'instrument, de "
+           "logiciel, de réglage ou de chiffre qui n'est pas dans la transcription (pas de synonyme : « kick » reste « kick »).";
+}
+
 // Images d'une vidéo regardée ensemble : début à gauche, plus tard à droite.
 inline constexpr const char* kWatchVisionPrompt =
     "Deux captures d'une même vidéo courte (Reel, TikTok ou YouTube) : à gauche le début, à droite un peu plus tard. "

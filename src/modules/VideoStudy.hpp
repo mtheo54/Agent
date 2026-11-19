@@ -42,6 +42,14 @@ struct VideoStudyConfig {
                                            "site:instagram.com/reel humour vanne", "site:instagram.com/reel rage bait",
                                            "site:youtube.com/shorts vanne"};
     std::filesystem::path whisperModel;  // vide = pas de transcription audio (sous-titres seulement)
+    // Tutoriels : à tour de rôle, une vidéo de 20 min au plus, fiche technique rangée dans la mémoire (leçons).
+    int tutorialsPerSession = 1;
+    std::vector<std::string> tutorialQueries{
+        "tuto FL Studio mixage voix rap", "tuto FL Studio sidechain 808", "tuto FL Studio mastering plugins d'origine",
+        "tuto FL Studio raccourcis workflow", "tuto 808 glide FL Studio", "tuto mixer un beat trap FL Studio",
+        "tuto FL Studio automation", "tuto FL Studio enregistrer voix", "tuto AutoCAD Electrical débutant",
+        "tuto AutoCAD Electrical numérotation des fils", "tuto Valorant crosshair placement", "tuto League of Legends wave management",
+        "tuto Discord réglages micro", "Antelope Zen Go Synergy Core tutorial routing"};
 };
 
 class VideoStudy {
@@ -59,8 +67,10 @@ public:
     // Séance : vidéos de la file puis recherches ; leçons dans la base, formes dans la banque. Rapport court.
     std::string RunSession(LocalBrain& brain, MemoryDB& db, BaitBank& bank, std::stop_token stop);
 
-    // Ajoute un lien à la file (YouTube / TikTok seulement). Faux si refusé.
-    static bool QueueLink(const std::filesystem::path& dataDir, const std::string& url);
+    // Ajoute un lien à la file (YouTube / TikTok seulement). Faux si refusé. tutorial : file des tutoriels (fiche technique).
+    static bool QueueLink(const std::filesystem::path& dataDir, const std::string& url, bool tutorial = false);
+    // Séance de tutoriels : file « apprends ce tuto », puis recherches à tour de rôle. Rapport court.
+    std::string RunTutorialSession(LocalBrain& brain, MemoryDB& db, std::stop_token stop);
 
 private:
     HttpClient& http_;

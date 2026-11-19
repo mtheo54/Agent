@@ -82,6 +82,7 @@ int RunTrainerSession(const CompanionConfig& cfg, const std::filesystem::path& d
     if (cfg.videoStudy) {
         VideoStudyConfig vc;
         vc.perSession = cfg.videoStudyPerSession * (freeWeb ? 2 : 1);
+        vc.tutorialsPerSession = freeWeb ? 3 : 1;  // nuit de surf : plus de tutos
         if (!cfg.videoStudyQueries.empty()) vc.queries = cfg.videoStudyQueries;
         for (const wchar_t* w : {L"ggml-base-q5_1.bin", L"ggml-tiny-q5_1.bin"})
             if (!assetsDir.empty() && std::filesystem::exists(assetsDir / L"models" / w)) {
@@ -92,6 +93,8 @@ int RunTrainerSession(const CompanionConfig& cfg, const std::filesystem::path& d
         bank.Load(assetsDir / L"persona" / L"baits.json", dataDir / L"learned_baits.json");
         VideoStudy vs(http, dataDir, vc);
         videoReport = vs.RunSession(brain, db, bank, {});
+        if (const std::string tuto = vs.RunTutorialSession(brain, db, {}); !tuto.empty())
+            videoReport += (videoReport.empty() ? "" : " ") + tuto;
     }
 
     std::error_code ec;

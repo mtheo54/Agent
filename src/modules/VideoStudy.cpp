@@ -347,12 +347,84 @@ bool VideoStudy::Fetch(const std::string& url, std::string& title, std::string& 
     return true;
 }
 
-bool VideoStudy::QueueLink(const std::filesystem::path& dataDir, const std::string& url) {
+bool VideoStudy::QueueLink(const std::filesystem::path& dataDir, const std::string& url, bool tutorial) {
     std::string u = url;
     while (!u.empty() && (u.back() == ' ' || u.back() == '\n' || u.back() == '\r')) u.pop_back();
     if (!IsSocialVideoUrl(u)) return false;  // vidéos publiques YouTube / TikTok / Instagram ; jamais DM, stories, profils
-    std::ofstream(dataDir / L"to_watch.txt", std::ios::app) << u << "\n";
+    std::ofstream(dataDir / (tutorial ? L"to_learn.txt" : L"to_watch.txt"), std::ios::app) << u << "\n";
     return true;
+}
+
+std::string VideoStudy::RunTutorialSession(LocalBrain& brain, MemoryDB& db, std::stop_token stop) {
+    std::string err;
+    if (cfg_.tutorialsPerSession <= 0 || !EnsureTools(err)) return {};
+    std::vector<std::string> seen;
+    try {
+        seen = nlohmann::json::parse(db.GetProfile("tutorials.seen").value_or("[]")).get<std::vector<std::string>>();
+    } catch (const std::exception&) {
+    }
+    std::vector<std::string> todo;
+    {  // 1) « apprends ce tuto » : tes liens d'abord
+        std::ifstream q(dir_ / L"to_learn.txt");
+        for (std::string l; std::getline(q, l);)
+            if (!l.empty() && std::ranges::find(seen, l) == seen.end()) todo.push_back(l);
+    }
+    // 2) recherches YouTube à tour de rôle (vidéos de 2 à 20 min)
+    int qi = std::atoi(db.GetProfile("tutorials.q").value_or("0").c_str());
+    for (int tries = 0; static_cast<int>(todo.size()) < cfg_.tutorialsPerSession + 1 && tries < 2 && !cfg_.tutorialQueries.empty(); ++tries) {
+        const std::string& query = cfg_.tutorialQueries[static_cast<std::size_t>(qi++) % cfg_.tutorialQueries.size()];
+        for (const auto& v : Search(query, 8))
+            if (v.seconds >= 120 && v.seconds <= 1200 && std::ranges::find(seen, v.url) == seen.end() &&
+                std::ranges::find(todo, v.url) == todo.end()) {
+                todo.push_back(v.url);
+                break;  // la meilleure de chaque recherche
+            }
+    }
+    db.SetProfile("tutorials.q", std::to_string(qi));
+    int learned = 0;
+    std::vector<std::string> subjects;
+    const int keepMax = cfg_.maxSeconds;
+    cfg_.maxSeconds = 1200;  // un tuto dure plus longtemps qu'une vanne
+    for (const auto& url : todo) {
+        if (learned >= cfg_.tutorialsPerSession || stop.stop_requested()) break;
+        seen.push_back(url);
+        std::string title, transcript, comments;
+        if (!Fetch(url, title, transcript, comments, err)) {
+            log::Info("Tutoriel: {} ignoré ({})", url, err);
+            continue;
+        }
+        GenerateOptions o;
+        o.maxTokens = 450;
+        o.temperature = 0.2f;
+        o.stop = stop;
+        const auto out = brain.Generate({{"system", kTutorialSystem}, {"user", TutorialPrompt(title, transcript)}}, o);
+        if (!out || out->find("AUCUN") != std::string::npos) {
+            log::Info("Tutoriel: « {} » : rien d'exploitable", title);
+            continue;
+        }
+        const auto sp = out->find("Sujet :"), fp = out->find("Fiche :");
+        if (sp == std::string::npos || fp == std::string::npos || fp < sp) continue;
+        std::string subject = out->substr(sp + 7, out->find('\n', sp) - sp - 7);
+        std::string fiche = out->substr(fp + 7);
+        const auto trim = [](std::string& s) {
+            while (!s.empty() && (s.front() == ' ' || s.front() == '<' || s.front() == '"')) s.erase(s.begin());
+            while (!s.empty() && (s.back() == ' ' || s.back() == '\n' || s.back() == '>' || s.back() == '"')) s.pop_back();
+        };
+        trim(subject);
+        trim(fiche);
+        if (subject.size() < 4 || fiche.size() < 80) continue;
+        db.AddLesson(subject, title, fiche + " (Source : tutoriel « " + title + " », " + url + ")");
+        ++learned;
+        subjects.push_back(subject);
+        log::Info("Tutoriel: « {} » -> fiche « {} »", title, subject);
+    }
+    cfg_.maxSeconds = keepMax;
+    if (seen.size() > 500) seen.erase(seen.begin(), seen.end() - 500);
+    db.SetProfile("tutorials.seen", nlohmann::json(seen).dump());
+    if (!learned) return {};
+    std::string list;
+    for (const auto& s : subjects) list += (list.empty() ? "" : ", ") + s;
+    return "J'ai aussi regardé " + std::to_string(learned) + " tuto" + (learned > 1 ? "s" : "") + " : " + list + ".";
 }
 
 std::string VideoStudy::RunSession(LocalBrain& brain, MemoryDB& db, BaitBank& bank, std::stop_token stop) {
