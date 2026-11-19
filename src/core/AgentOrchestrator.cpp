@@ -538,6 +538,8 @@ bool AgentOrchestrator::EnsureBrain() {
     }
     bc.gpuLayers = 99;
     bc.threads = gaming ? cfg_.llmThreadsGaming : cfg_.llmThreads;
+    // Cerveau expert : ses experts sont calculés par le processeur, donc tous les cœurs physiques (hors jeu seulement).
+    if (expert) bc.threads = std::max(bc.threads, static_cast<int>(std::max(2u, std::thread::hardware_concurrency() / 2)));
     bc.ubatch = ubatch;
     d_.brain.Configure(gpu, bc.threads);
     log::Info("Cerveau : chargement de {} sur {} (lots de {})", log::Narrow(wanted.filename().wstring()),
@@ -1921,14 +1923,6 @@ bool AgentOrchestrator::HandleAfterEffects(const PilotTarget& t, const std::stri
         Say("Je trouve pas After Effects sur ton PC, bizarre.");
         return true;
     }
-    if (!expertActive_ && ExpertInstalled() && mode_.load() != SystemMode::Gaming) {
-        expertActive_ = true;  // le grand cerveau écrit de bien meilleurs scripts
-        if (!(d_.brain.IsLoaded() && d_.brain.ModelPath() == ExpertPath())) Say("Je sors le grand cerveau pour After Effects, quelques secondes.");
-    }
-    if (!EnsureBrain()) {
-        Say("Il me faut mon cerveau local pour ça, et il n'est pas installé.");
-        return true;
-    }
     if (!d_.gate.Request(PermissionScope::System, "after-effects-script",
                          "Je lance un script dans ton After Effects ? Un seul Ctrl Z annule tout.", std::chrono::seconds(20), stop)) {
         if (!stop.stop_requested()) Say("Ok, je touche à rien.");
@@ -2037,7 +2031,7 @@ bool AgentOrchestrator::HandleAfterEffects(const PilotTarget& t, const std::stri
         if (key == aeWordsKey_ && !aeWords_.empty()) return true;
         auto whisper = cfg_.llmModel.parent_path() / L"ggml-base-q5_1.bin";
         if (!std::filesystem::exists(whisper)) whisper = cfg_.llmModel.parent_path() / L"ggml-tiny-q5_1.bin";
-        Say("J'écoute ta voix off, quelques secondes.");
+        Say("J'écoute ta voix off. Si elle est longue, ça prend un petit moment.");
         activity_ = AgentActivity::Thinking;
         auto words = TranscribeWords(audio, whisper);
         if (stop.stop_requested()) return false;
@@ -2100,6 +2094,16 @@ bool AgentOrchestrator::HandleAfterEffects(const PilotTarget& t, const std::stri
         else if (r) Say("After Effects bloque : " + report + ". Fais Ctrl Z si un bout est passé.");
         else if (noReport) noReportHint();
         else Say("After Effects a refusé de lancer le script.");
+        return true;
+    }
+
+    // Le cerveau n'est chargé qu'ici : sous-titres et compétences apprises n'en ont pas besoin (pas 22 Go chargés pour rien).
+    if (!expertActive_ && ExpertInstalled() && mode_.load() != SystemMode::Gaming) {
+        expertActive_ = true;  // le grand cerveau écrit de bien meilleurs scripts
+        if (!(d_.brain.IsLoaded() && d_.brain.ModelPath() == ExpertPath())) Say("Je sors le grand cerveau pour After Effects, quelques secondes.");
+    }
+    if (!EnsureBrain()) {
+        Say("Il me faut mon cerveau local pour ça, et il n'est pas installé.");
         return true;
     }
 

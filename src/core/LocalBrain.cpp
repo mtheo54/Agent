@@ -291,12 +291,37 @@ void LocalBrain::SaveSnapshot() const {
         if (!f) return;
     }
     std::filesystem::rename(tmp, file, ec);  // écriture atomique : jamais de fichier à moitié écrit
+    PruneSnapshots();
+}
+
+// Les photos d'état s'accumulaient sans fin (une par consigne : le pilote met le titre de la fenêtre dans la sienne, donc
+// presque une par appel, 30 à 70 Mo chacune). On garde les plus récemment servies : 24 fichiers et 1,5 Go au plus.
+void LocalBrain::PruneSnapshots() const {
+    std::error_code ec;
+    struct F {
+        std::filesystem::path p;
+        std::filesystem::file_time_type t;
+        std::uintmax_t size;
+    };
+    std::vector<F> files;
+    for (const auto& e : std::filesystem::directory_iterator(stateDir_, ec))
+        if (e.path().extension() == L".state" || e.path().extension() == L".tmp")
+            files.push_back({e.path(), e.last_write_time(ec), e.file_size(ec)});
+    std::sort(files.begin(), files.end(), [](const F& a, const F& b) { return a.t > b.t; });  // plus récent d'abord
+    std::uintmax_t total = 0;
+    for (size_t i = 0; i < files.size(); ++i) {
+        total += files[i].size;
+        if (i >= 24 || total > 1'500'000'000ull) std::filesystem::remove(files[i].p, ec);
+    }
 }
 
 void LocalBrain::LoadSnapshot(const std::vector<int>& sysTokens) {
     if (stateDir_.empty()) return;
-    std::ifstream f(SnapshotFile(sysTokens), std::ios::binary);
+    const auto file = SnapshotFile(sysTokens);
+    std::ifstream f(file, std::ios::binary);
     if (!f) return;
+    std::error_code tec;
+    std::filesystem::last_write_time(file, std::filesystem::file_time_type::clock::now(), tec);  // servie : gardée en priorité
     std::uint32_t magic = 0, version = 0;
     std::uint64_t nt = 0, nb = 0;
     f.read(reinterpret_cast<char*>(&magic), 4).read(reinterpret_cast<char*>(&version), 4).read(reinterpret_cast<char*>(&nt), 8);

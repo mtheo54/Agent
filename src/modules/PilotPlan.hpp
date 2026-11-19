@@ -105,9 +105,9 @@ inline std::optional<KeyChord> ParseChord(std::string_view text) {
             continue;
         }
         if (k.vk) return std::nullopt;  // deux touches principales
-        if (part.size() == 1 && std::isalpha(static_cast<unsigned char>(part[0]))) k.vk = static_cast<std::uint16_t>(std::toupper(part[0]));
+        if (part.size() == 1 && std::isalpha(static_cast<unsigned char>(part[0]))) k.vk = static_cast<std::uint16_t>(std::toupper(static_cast<unsigned char>(part[0])));
         else if (part.size() == 1 && std::isdigit(static_cast<unsigned char>(part[0]))) k.vk = static_cast<std::uint16_t>(part[0]);
-        else if (part.size() >= 2 && part[0] == 'f' && std::all_of(part.begin() + 1, part.end(), ::isdigit)) {
+        else if (part.size() >= 2 && part[0] == 'f' && std::all_of(part.begin() + 1, part.end(), [](char c) { return std::isdigit(static_cast<unsigned char>(c)) != 0; })) {
             const int n = std::atoi(part.c_str() + 1);
             if (n < 1 || n > 24) return std::nullopt;
             k.vk = static_cast<std::uint16_t>(0x70 + n - 1);

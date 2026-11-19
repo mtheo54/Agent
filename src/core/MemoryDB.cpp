@@ -84,6 +84,11 @@ bool MemoryDB::Open(const std::filesystem::path& file) {
     }
     sqlite3_busy_timeout(db_, 5000);  // le SelfTrainer (autre processus) écrit dans la même base
     if (!Exec(kSchema)) return false;
+    // Ménage au démarrage (la base ne grossit plus sans fin) : 20 000 derniers messages, pages web de plus de 120 jours
+    // (rechargées si besoin ; leçons et souvenirs, eux, sont gardés), escalades de plus d'un an.
+    Exec("DELETE FROM messages WHERE id <= (SELECT MAX(id) - 20000 FROM messages);"
+         "DELETE FROM knowledge WHERE CAST(ts AS INTEGER) < strftime('%s','now') - 120*86400;"
+         "DELETE FROM escalations WHERE ts < strftime('%s','now') - 365*86400;");
     // Migration étape 4 : question d'origine des escalades (erreur ignorée si la colonne existe déjà).
     sqlite3_exec(db_, "ALTER TABLE escalations ADD COLUMN question TEXT", nullptr, nullptr, nullptr);
     return true;

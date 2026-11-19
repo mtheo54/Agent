@@ -3,6 +3,9 @@
 #include "audio/AudioDecode.hpp"
 #include "core/Log.hpp"
 
+#include <algorithm>
+#include <thread>
+
 #if COMPANION_WITH_WHISPER
 #include <whisper.h>
 #endif
@@ -26,7 +29,7 @@ std::vector<TimedWord> TranscribeWordsPcm(const std::vector<float>& pcm, const s
     if (!w) return words;
     whisper_full_params wp = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
     wp.language = "fr";
-    wp.n_threads = 4;
+    wp.n_threads = static_cast<int>(std::max(2u, std::thread::hardware_concurrency() / 2));  // un seul gros calcul : tous les cœurs physiques
     wp.print_progress = wp.print_realtime = wp.print_timestamps = wp.print_special = false;
     // Un segment par mot, avec ses instants de début et de fin (centièmes de seconde).
     wp.token_timestamps = true;

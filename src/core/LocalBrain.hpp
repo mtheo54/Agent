@@ -117,6 +117,7 @@ private:
     std::filesystem::path stateDir_;
     [[nodiscard]] std::filesystem::path SnapshotFile(const std::vector<int>& sysTokens) const;
     void SaveSnapshot() const;
+    void PruneSnapshots() const;
     void LoadSnapshot(const std::vector<int>& sysTokens);
 };
 
