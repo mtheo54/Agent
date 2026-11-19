@@ -505,13 +505,15 @@ void ConfigView::Render(ID2D1DeviceContext* ctx, float scale) {
     }
 
     // --- Affichage ------------------------------------------------------------------------------
-    box = {R, 740, R + RW, 816};
-    Box(box, L"AFFICHAGE");
-    Leader(R + 18, box.top + 44, RW - 36, L"sous-titres sous le personnage", cfg_.captions ? L"activé" : L"désactivé",
+    box = {R, 740, R + RW, 830};
+    Box(box, L"AFFICHAGE ET CERVEAU");
+    Leader(R + 18, box.top + 38, RW - 36, L"sous-titres sous le personnage", cfg_.captions ? L"activé" : L"désactivé",
            cfg_.captions ? "green" : "muted", Field::Captions);
+    Leader(R + 18, box.top + 62, RW - 36, L"grand cerveau (pro)", cfg_.expertAuto ? L"auto" : L"sur demande",
+           cfg_.expertAuto ? "green" : "muted", Field::ExpertAuto);
 
     // --- Journal de la conversation -------------------------------------------------------------
-    box = {L, 834, R + RW, 1082};
+    box = {L, 840, R + RW, 1082};
     Box(box, L"CONVERSATION");
     RenderConversation({box.left + 22, box.top + 42, box.right - 22, box.bottom - 10});
 
@@ -600,6 +602,7 @@ ConfigView::Action ConfigView::MouseDown(float x, float y) {
                 cfg_.claudeKeyRemove = status_.claudeKey;
                 return Action::None;
             case Field::Captions: cfg_.captions = !cfg_.captions; return Action::None;
+            case Field::ExpertAuto: cfg_.expertAuto = !cfg_.expertAuto; return Action::None;
             case Field::Expression: {
                 const std::wstring clip = kExpressions[h.value][1];
                 const std::string c(clip.begin(), clip.end());

@@ -58,6 +58,7 @@ inline const std::vector<OmnisCommand>& Commands() {
         {"voix_oublie", "oublie ma voix", "effacer la voix copiée", "voix"},
         {"expert", "mode expert", "passer en mode expert / mode pro : sortir le grand cerveau pour les questions de pro", "base"},
         {"expert_stop", "mode normal", "quitter le mode expert, revenir au cerveau normal", "base"},
+        {"bug", "signale un bug", "préparer un rapport de bug (quand il a fait n'importe quoi ou planté)", "base"},
         {"competences", "quelles compétences t'as", "dire quelles compétences il s'est apprises", "base"},
         {"entraine", "entraîne-toi", "lancer une séance d'entraînement maintenant", "entrainement"},
         {"surfe", "tu peux surfer cette nuit", "s'entraîner sur internet cette nuit", "entrainement"},
@@ -96,7 +97,8 @@ inline bool LooksLikeCommand(const std::string& lower) {
                                    "arrete", "écoute", "ecoute", "regarde", "prends", "prend", "copie", "passe", "monte",
                                    "baisse", "coupe", "installe", "étudie", "etudie", "entraîne", "entraine", "ferme", "cache",
                                    "quitte", "active", "désactive", "remets", "affiche", "montre", "peux", "pourrais", "connecte",
-                                   "rentre", "allume", "éteins", "eteins", "change", "règle", "regle", "fais"};
+                                   "rentre", "allume", "éteins", "eteins", "change", "règle", "regle", "fais", "reviens", "repasse", "retourne",
+                                   "sors", "signale", "note"};
     std::string w;
     const auto check = [&] {
         for (const char* v : kVerbs)

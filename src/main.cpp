@@ -636,6 +636,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
         cfg.cloudEnabled = edited.cloudEnabled;
         cfg.cloudAsksPermission = edited.cloudAsksPermission;
         cfg.captions = edited.captions;
+        cfg.expertAuto = edited.expertAuto;
         // Clé Claude : coffre de Windows (jamais companion.json) ; une clé saisie active le recours à Claude.
         if (!edited.claudeKeyEntry.empty()) {
             claude.SetApiKey(edited.claudeKeyEntry);

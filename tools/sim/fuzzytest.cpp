@@ -10,7 +10,7 @@ int main(int, char** argv) {
     LocalBrainConfig bc; bc.model = argv[1]; bc.contextTokens = 4096; bc.gpuLayers = 0; bc.threads = 4;
     if (!brain.Load(bc)) return 1;
     const std::string sys = CommandClassifierPrompt(), gram = CommandGrammar();
-    for (const char* t : {"Viens sur Discord avec nous", "Tu peux te mettre en mode léger stp", "Tu peux m'expliquer le sidechain ?",
+    for (const char* t : {"Passe en mode pro pour cette question", "Il a bugué là, note-le", "Tu sais faire quoi comme compétences apprises ?", "Reviens à ton cerveau normal", "Viens sur Discord avec nous", "Tu peux te mettre en mode léger stp", "Tu peux m'expliquer le sidechain ?",
                           "Regarde un peu ce qu'il y a sur mon écran", "T'as mangé quoi toi ?", "Écoute un peu ma prod là",
                           "Baisse un peu le volume stp", "Tu peux te fermer si tu veux genre partir ça va aller",
                           "Va dans le vocal avec les gars", "Mets-toi à regarder des tiktoks avec moi", "Tu peux copier ma voix ?",

@@ -3409,6 +3409,38 @@ void AgentOrchestrator::ReloadSkills() {
 }
 
 bool AgentOrchestrator::HandleSkillCommand(const std::string& text, const std::string& lower, std::stop_token stop) {
+    // « Signale un bug » : la fin du journal et les derniers échanges dans un fichier sur le Bureau, prêt à envoyer.
+    if (ContainsAny(lower, {"signale un bug", "signaler un bug", "rapport de bug", "il y a un bug", "y a un bug", "t'as bugué",
+                            "t'as bugé", "ça a bugué", "ca a bugue", "a bugué", "a bugé", "a bugue", "t'as bug", "omnis bug"})) {
+        PWSTR desk = nullptr;
+        std::filesystem::path dir;
+        if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Desktop, 0, nullptr, &desk))) dir = desk;
+        CoTaskMemFree(desk);
+        if (dir.empty()) dir = d_.dataDir;
+        const std::time_t now = std::time(nullptr);
+        std::tm tm{};
+        localtime_s(&tm, &now);
+        char name[64];
+        std::strftime(name, sizeof name, "omnis-bug-%Y%m%d-%H%M.txt", &tm);
+        const auto file = dir / name;
+        std::string logTail;
+        {
+            std::ifstream in(d_.dataDir / L"omnis.log", std::ios::binary);
+            std::string all((std::istreambuf_iterator<char>(in)), {});
+            logTail = all.size() > 60000 ? all.substr(all.size() - 60000) : all;  // les dernières minutes
+        }
+        std::ofstream out(file, std::ios::binary | std::ios::trunc);
+        out << "\xEF\xBB\xBF=== Rapport de bug d'Omnis ===\nCe que tu as dit : " << text << "\n\n=== Derniers échanges ===\n";
+        for (const auto& m : d_.db.RecentMessages(30)) out << "[" << m.role << "] " << m.content << "\n";
+        out << "\n=== Fin du journal (omnis.log) ===\n" << logTail;
+        out.close();
+        // Le fichier est montré dans l'Explorateur (sélectionné) ; rien n'est envoyé nulle part.
+        const std::wstring arg = L"/select,\"" + file.wstring() + L"\"";
+        ShellExecuteW(nullptr, L"open", L"explorer.exe", arg.c_str(), nullptr, SW_SHOWNORMAL);
+        log::Info("Rapport de bug : {}", log::Narrow(file.wstring()));
+        Say("J'ai mis un rapport sur ton Bureau, avec ce qui vient de se passer. Envoie-le et dis ce que t'attendais. Il ne part nulle part tout seul.");
+        return true;
+    }
     // Liste
     if (ContainsAny(lower, {"quelles compétences", "quelles competences", "tes compétences", "tes competences",
                             "qu'est-ce que t'as appris", "ce que t'as appris", "compétences apprises"})) {
