@@ -10,6 +10,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <functional>
+#include <optional>
 #include <initializer_list>
 #include <utility>
 #include <string>
@@ -31,6 +33,7 @@ inline constexpr const char* kAeSystem =
     "- omnisShake(calques, amplitude, fréquence) : tremblement de caméra (wiggle) sur des CALQUES (pas des propriétés) ; léger = 4 px, 3 ; fort = 15 px, 6 ;\n"
     "- omnisStagger(calques, images, function (calque, t) { ... }) : même geste en cascade, décalé de n images ;\n"
     "- omnisColor(calques, [r,g,b]) : couleur (0 à 1) ; texte = sa couleur, autre calque = effet Remplissage ;\n"
+    "- omnisWhen(\"mot\") : l'instant (secondes) où ce mot est dit dans sa voix off ; omnisNow() : la tête de lecture ;\n"
     "- omnisKeys(propriété, [[t, valeur], [t, valeur]...], influence) : clés + easing pro ;\n"
     "- omnisEase(propriété, influence) : easing pro sur toutes les clés (75 par défaut, 85-95 plus nerveux).\n"
     "- rapport : variable texte, mets-y une phrase courte en français sur ce que tu as fait (il la dira à voix haute).\n"
@@ -48,7 +51,8 @@ inline constexpr const char* kAeSystem =
 
 // Recette : le modèle choisit dans un menu fermé de gestes de pro (grammaire), le code est écrit ici, donc toujours juste.
 // « SCRIPT » = la demande sort du menu : on passe au script libre.
-inline constexpr const char* kAeRecipeGrammar = R"(root ::= "SCRIPT\n" | cible geste geste? geste? geste?
+inline constexpr const char* kAeRecipeGrammar = R"(root ::= "SCRIPT\n" | cible quand? geste geste? geste? geste?
+quand ::= "QUAND " ("tete" | str) "\n"
 cible ::= "CIBLE " ("selection" | "tous" | "titre " str) "\n"
 geste ::= "GESTE " nom (" cascade " [1-9])? "\n"
 nom ::= "couleur-" couleur | "pop" | "glisse-bas" | "glisse-haut" | "glisse-gauche" | "glisse-droite" | "fondu-entree" | "fondu-sortie" | "tremblement-leger" | "tremblement-fort" | "flou-mouvement" | "ombre" | "lueur"
@@ -59,6 +63,8 @@ str ::= "\"" [^"\n]+ "\""
 inline constexpr const char* kAeRecipeSystem =
     "Tu traduis une demande d'animation After Effects en recette de gestes de pro. Format, une ligne par élément :\n"
     "CIBLE selection | CIBLE tous | CIBLE titre \"TEXTE\"   (selection = calques sélectionnés ; titre = crée ce texte)\n"
+    "QUAND \"mot\" | QUAND tete   (facultatif : le geste démarre quand ce mot est dit dans sa voix off, ou à la tête de "
+    "lecture pour « ici », « maintenant »)\n"
     "GESTE <nom> [cascade N]   (1 à 4 gestes ; cascade N = décalé de N images d'un calque à l'autre)\n"
     "Gestes : pop (apparition avec rebond), glisse-bas / glisse-haut / glisse-gauche / glisse-droite (arrive depuis ce côté "
     "avec fondu), fondu-entree, fondu-sortie (disparaît à la fin), tremblement-leger, tremblement-fort (caméra), "
@@ -67,7 +73,8 @@ inline constexpr const char* kAeRecipeSystem =
     "Si la demande ne se fait PAS avec ces gestes (couleur précise, effet particulier, expression, forme, masque, montage "
     "de clips…), réponds seulement SCRIPT.\n"
     "Exemple : « fais arriver les titres un par un depuis la gauche puis qu'ils partent en fondu » -> CIBLE selection / "
-    "GESTE glisse-gauche cascade 3 / GESTE fondu-sortie.";
+    "GESTE glisse-gauche cascade 3 / GESTE fondu-sortie. « fais apparaître ABONNE-TOI quand je le dis » -> CIBLE titre "
+    "\"ABONNE-TOI\" / QUAND \"abonne-toi\" / GESTE pop.";
 
 inline std::string AeQuote(std::string_view s) {
     std::string o = "\"";
@@ -99,7 +106,20 @@ inline bool AeAsked(std::string_view g, const std::string& lower) {
 
 // Code de la recette (corps du script) et la phrase dite à la fin ; vide = « SCRIPT » (ou recette illisible).
 // request : la demande en minuscules (garde-fou contre les gestes en trop).
-inline std::string AeRecipeBody(std::string_view plan, std::string& said, const std::string& request) {
+// when : instant d'un mot dans la voix off (nullopt = mot introuvable ou pas de voix off) ; whenError reçoit la raison.
+inline std::string AeRecipeBody(std::string_view plan, std::string& said, const std::string& request,
+                                const std::function<std::optional<double>(std::string_view)>& when = {},
+                                std::string* whenError = nullptr) {
+    const bool whenAsked = request.find("quand") != std::string::npos || request.find("au moment") != std::string::npos ||
+                           request.find("sur le mot") != std::string::npos || request.find("ici") != std::string::npos ||
+                           request.find("maintenant") != std::string::npos || request.find("tête de lecture") != std::string::npos ||
+                           request.find("là où je suis") != std::string::npos;
+    std::string t0;  // instant de départ des gestes (vide = début de chaque calque)
+    {
+        const std::string padded = " " + request + " ";
+        for (const char* w : {" ici ", " ici,", " ici.", " maintenant ", " maintenant,", "tête de lecture", "là où je suis", "la ou je suis"})
+            if (padded.find(w) != std::string::npos) t0 = "omnisNow()";  // la tête de lecture, même si le modèle l'oublie
+    }
     const bool cascadeAsked = request.find("cascade") != std::string::npos || request.find("un par un") != std::string::npos ||
                               request.find("une par une") != std::string::npos || request.find("l'un après") != std::string::npos ||
                               request.find("les uns après") != std::string::npos || request.find("à la suite") != std::string::npos ||
@@ -124,6 +144,22 @@ inline std::string AeRecipeBody(std::string_view plan, std::string& said, const 
             } else target = "var L = omnisLayers();\n";
             continue;
         }
+        if (line.starts_with("QUAND ") && whenAsked) {
+            std::string_view w = line.substr(6);
+            if (w == "tete") {
+                t0 = "omnisNow()";
+                continue;
+            }
+            if (w.size() >= 2 && w.front() == '"' && w.back() == '"') w = w.substr(1, w.size() - 2);
+            const auto t = when ? when(w) : std::nullopt;
+            if (!t) {
+                if (whenError) *whenError = "je n'entends pas « " + std::string(w) + " » dans ta voix off";
+                return {};
+            }
+            t0 = std::to_string(*t);
+            what.push_back("calé sur « " + std::string(w) + " »");
+            continue;
+        }
         if (!line.starts_with("GESTE ")) continue;
         std::string_view g = line.substr(6);
         int cascade = 0;
@@ -133,7 +169,8 @@ inline std::string AeRecipeBody(std::string_view plan, std::string& said, const 
         }
         if (!AeAsked(g, request) || (g.starts_with("tremblement") && std::exchange(shook, true))) continue;
         const auto each = [&](const std::string& call) {
-            body += "omnisStagger(L, " + std::to_string(cascade) + ", function (l, t) { " + call + " });\n";
+            body += t0.empty() ? "omnisStagger(L, " + std::to_string(cascade) + ", function (l, t) { " + call + " });\n"
+                               : "omnisStaggerAt(L, " + t0 + ", " + std::to_string(cascade) + ", function (l, t) { " + call + " });\n";
         };
         if (g == "pop") { each("omnisPop(l, t);"); what.push_back("pop avec rebond"); }
         else if (g.starts_with("glisse-")) {
@@ -216,7 +253,10 @@ inline std::string AeStripFences(std::string s) {
 }
 
 // Le script complet. resultPath : chemin du rapport avec des / (lu par Omnis : « OK|phrase » ou « ERREUR|… »).
-inline std::string AeWrap(const std::string& body, const std::string& resultPath) {
+// words : table des mots de la voix off (WordsTable) pour omnisWhen ; mustChange : un script qui ne change rien est une
+// erreur (faux pour les scripts qui ne font que lire le projet).
+inline std::string AeWrap(const std::string& body, const std::string& resultPath, const std::string& words = {},
+                          bool mustChange = true) {
     const std::string head = std::string(
                "(function () {\n"
                "var rapport = \"\";\n"
@@ -253,10 +293,27 @@ inline std::string AeWrap(const std::string& body, const std::string& resultPath
                "\"wiggle(\" + (freq || 3) + \",\" + (amp || 4) + \")\"; n++; } } if (!n) throw new Error(\"aucun calque à faire "
                "trembler\"); }\n"
                "function omnisStagger(ls, n, fn) { for (var i = 0; i < ls.length; i++) fn(ls[i], ls[i].inPoint + f(n * i)); }\n"
+               "function omnisStaggerAt(ls, t0, n, fn) { for (var i = 0; i < ls.length; i++) fn(ls[i], t0 + f(n * i)); }\n"
                "function omnisColor(ls, rgb) { if (ls.length === undefined) ls = [ls]; for (var i = 0; i < ls.length; i++) { var l = "
                "ls[i]; var st = null; try { st = l.property(\"Source Text\"); } catch (x) {} if (st) { var td = st.value; "
                "td.applyFill = true; td.fillColor = rgb; st.setValue(td); } else { var e = l.property(\"ADBE Effect Parade\")"
                ".addProperty(\"ADBE Fill\"); e.property(\"Color\").setValue([rgb[0], rgb[1], rgb[2], 1]); } } }\n"
+               "function omnisNow() { return omnisComp().time; }\n"
+               "function omnisNorm(s) { s = String(s).toLowerCase(); var a = \"àâäéèêëîïôöùûüç\", b = \"aaaeeeeiioouuuc\", o = \"\"; "
+               "for (var i = 0; i < s.length; i++) { var ch = s.charAt(i), k = a.indexOf(ch); if (k >= 0) ch = b.charAt(k); o += "
+               "/[a-z0-9]/.test(ch) ? ch : \" \"; } return o.replace(/ +/g, \" \").replace(/^ | $/g, \"\"); }\n"
+               "function omnisWhen(m) { if (!omnisWordsT.length) throw new Error(\"je n'ai pas ta voix off : sélectionne son "
+               "calque et redemande\"); var w = omnisNorm(m).split(\" \")[0]; for (var i = 0; i < omnisWordsT.length; i++) if "
+               "(omnisWordsT[i][0] == w || omnisWordsT[i][0].indexOf(w) == 0) return omnisWordsT[i][1]; throw new Error(\"je "
+               "n'entends pas « \" + m + \" » dans ta voix off\"); }\n"
+               "function omnisSub(txt, t0, t1, key) { var c = omnisComp(); var l = c.layers.addText(txt); var st = "
+               "l.property(\"Source Text\"); var td = st.value; td.fontSize = key ? 112 : 86; td.applyFill = true; td.fillColor = "
+               "key ? K : C; td.applyStroke = true; td.strokeColor = [0, 0, 0]; td.strokeWidth = 8; td.strokeOverFill = false; "
+               "td.justification = ParagraphJustification.CENTER_JUSTIFY; st.setValue(td); var r = l.sourceRectAtTime(t0, false); "
+               "l.transform.anchorPoint.setValue(omnisV(l.transform.anchorPoint, [r.left + r.width / 2, r.top + r.height / 2])); "
+               "l.transform.position.setValue(omnisV(l.transform.position, [c.width / 2, c.height * (c.height > c.width ? 0.68 : "
+               "0.82)])); l.inPoint = t0; l.outPoint = t1; omnisKeys(l.transform.scale, [[t0, [72, 72]], [t0 + f(3), [108, 108]], "
+               "[t0 + f(6), [100, 100]]], 85); l.name = \"Sous-titre \" + txt; return l; }\n"
                "function omnisTitle(txt, size, color) { var c = omnisComp(); var l = c.layers.addText(txt); var st = "
                "l.property(\"Source Text\"); var td = st.value; td.fontSize = size || 100; td.fillColor = color || [1, 1, 1]; "
                "td.justification = ParagraphJustification.CENTER_JUSTIFY; st.setValue(td); var r = l.sourceRectAtTime(0, false); "
@@ -270,6 +327,7 @@ inline std::string AeWrap(const std::string& body, const std::string& resultPath
                "var td = l.property(\"Source Text\").value; s += td.text + td.fillColor + td.fontSize + td.font; } catch (y) {} for (var k = "
                "1; fx && k <= fx.numProperties; k++) { var e = fx.property(k); for (var m = 1; m <= e.numProperties; m++) { try { s "
                "+= \";\" + e.property(m).value; } catch (z) {} } } } return s; }\n"
+               "var omnisWordsT = [];\n" + words +
                "var etat = \"OK\";\n"
                "var avant = omnisPrint();\n"
                "app.beginUndoGroup(\"Omnis\");\n"
@@ -278,7 +336,7 @@ inline std::string AeWrap(const std::string& body, const std::string& resultPath
     const auto offset = std::to_string(std::count(head.begin(), head.end(), '\n'));
     return head + body +
            "\n} catch (err) { etat = \"ERREUR\"; rapport = (err.line ? \"ligne \" + (err.line - " + offset + ") + \" : \" : \"\") + err.toString(); }\n"
-           "if (etat == \"OK\" && omnisPrint() == avant) { etat = \"ERREUR\"; rapport = \"le script n'a rien changé dans la "
+           "if (" + std::string(mustChange ? "true" : "false") + " && etat == \"OK\" && omnisPrint() == avant) { etat = \"ERREUR\"; rapport = \"le script n'a rien changé dans la "
            "composition (mauvais calque ou mauvaise propriété ?)\"; }\n"
            "app.endUndoGroup();\n"
            "try { var f = new File(\"" + resultPath + "\"); f.encoding = \"UTF-8\"; f.open(\"w\"); f.write(etat + \"|\" + rapport); "

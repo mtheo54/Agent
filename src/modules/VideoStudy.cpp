@@ -1,4 +1,5 @@
 #include "modules/VideoStudy.hpp"
+#include "audio/AudioDecode.hpp"
 
 #include "core/CallPrompt.hpp"
 #include "core/LocalBrain.hpp"
@@ -114,6 +115,8 @@ std::string ReadAll(const std::filesystem::path& f) {
     return ss.str();
 }
 
+}  // namespace
+
 // Audio d'une vidéo (m4a / mp4) -> 16 kHz mono, décodé par Windows (Media Foundation) : pas de ffmpeg à installer.
 std::vector<float> DecodeAudio16k(const std::filesystem::path& file, int maxSeconds) {
     std::vector<float> mono;
@@ -168,6 +171,8 @@ std::vector<float> DecodeAudio16k(const std::filesystem::path& file, int maxSeco
     }
     return mono;
 }
+
+namespace {
 
 }  // namespace
 

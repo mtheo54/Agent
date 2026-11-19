@@ -203,6 +203,7 @@ add_executable(CompanionAI WIN32
     src/modules/DesktopPilot.cpp
     src/modules/DiscordSpeaking.cpp
     src/modules/VideoStudy.cpp
+    src/modules/VoiceoverWords.cpp
     src/modules/WatchAlong.cpp
     src/audio/TextNormalizerFr.cpp
     src/render/OverlayWindow.cpp

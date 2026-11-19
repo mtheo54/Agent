@@ -38,6 +38,7 @@
 #include "core/PermissionGate.hpp"
 #include "core/ResourceGovernor.hpp"
 #include "modules/DesktopPilot.hpp"
+#include "modules/Subtitles.hpp"
 #include "modules/DiscordSpeaking.hpp"
 #include "modules/VideoStudy.hpp"
 #include "modules/WatchAlong.hpp"
@@ -252,7 +253,9 @@ private:
     DesktopPilot pilot_;
     bool HandlePilot(const std::string& text, const std::string& lower, std::stop_token stop);
     bool HandleAfterEffects(const PilotTarget& t, const std::string& text, std::stop_token stop);  // script ExtendScript vérifié
-    bool HandleFlChords(const std::string& text, std::stop_token stop);  // accords posés par un script piano roll
+    bool HandleFlChords(const std::string& text, std::stop_token stop);
+    std::vector<TimedWord> aeWords_;  // voix off du montage AE, mot par mot (temps de la composition)
+    std::string aeWordsKey_;          // fichier + taille + position : retranscrit seulement si ça change  // accords posés par un script piano roll
     // Call Discord (par ton micro) : rejoindre / quitter, réagir à ce que disent les autres
     bool HandleCallCommand(const std::string& lower, std::stop_token stop);
     // « Prends ma voix » / « reprends ta voix » / « oublie ma voix » : clone local de la voix de l'utilisateur.

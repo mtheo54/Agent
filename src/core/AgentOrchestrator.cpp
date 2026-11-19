@@ -8,6 +8,7 @@
 #include "audio/NeuralVoice.hpp"
 #include "modules/AeScript.hpp"
 #include "modules/ChordScript.hpp"
+#include "modules/VoiceoverWords.hpp"
 
 #include <objbase.h>
 #include <shellapi.h>
@@ -1779,11 +1780,13 @@ bool AgentOrchestrator::HandlePilot(const std::string& text, const std::string& 
         if (fg.app == PilotApp::AfterEffects && !question &&
             ContainsAny(lower, {"anime", "animer", "ajoute", "crée", "cree", "créer", "creer", "mets ", "met ", "applique", "fais ",
                                 "fais-", "génère", "genere", "rends", "change", "décale", "decale", "précompose", "precompose",
-                                "prends la main", "monte", "aligne", "centre", "colore", "écris", "ecris"}) &&
+                                "prends la main", "monte", "aligne", "centre", "colore", "écris", "ecris", "sous-titre", "sous titre",
+                                "soustitre", "oublie mes règles", "oublie les règles"}) &&
             ContainsAny(lower, {"texte", "calque", "titre", "anim", "keyframe", "clé", "cle ", "compo", "effet", "flou", "lueur",
                                 "glow", "ombre", "transition", "logo", "fondu", "zoom", "wiggle", "motion", "sous-titre", "forme",
                                 "null", "position", "échelle", "echelle", "opacité", "opacite", "rotation", "couleur", "rebond",
-                                "easing", "shake", "tremble", "apparai", "glisse", "slide", "pop", "lettre", "mot "}))
+                                "easing", "shake", "tremble", "apparai", "glisse", "slide", "pop", "lettre", "mot ", "voix off", "règle",
+                                "regle", "style", "caption", "subtitle"}))
             return HandleAfterEffects(fg, text, stop);
         // « fais-moi une suite d'accords trap sombre » : posée dans le piano roll de FL Studio par un script.
         if ((fg.app == PilotApp::FlStudio || mode_.load() == SystemMode::Studio) && !question &&
@@ -1923,10 +1926,11 @@ bool AgentOrchestrator::HandleAfterEffects(const PilotTarget& t, const std::stri
     std::ranges::replace(resultFwd, '\\', '/');
     // Lance un script et attend le rapport (« OK|phrase » / « ERREUR|… ») ; nullopt = lancement impossible ou pas de rapport.
     bool noReport = false;
-    const auto run = [&](const std::string& body) -> std::optional<std::string> {
+    const auto run = [&](const std::string& body, bool mustChange = true) -> std::optional<std::string> {
+        noReport = false;
         {
             std::ofstream f(jsx, std::ios::binary | std::ios::trunc);
-            f << "\xEF\xBB\xBF" << AeWrap(body, resultFwd);
+            f << "\xEF\xBB\xBF" << AeWrap(body, resultFwd, aeWords_.empty() ? std::string{} : WordsTable(aeWords_), mustChange);
         }
         std::filesystem::remove(result, ec);
         std::wstring cmd = L"\"" + t.path + L"\" -r \"" + jsx.wstring() + L"\"";
@@ -1960,6 +1964,110 @@ bool AgentOrchestrator::HandleAfterEffects(const PilotTarget& t, const std::stri
             "expressions, Autoriser les scripts à écrire des fichiers.");
     };
 
+    const std::string lower = Lower(text);
+    const auto ruleHint = [&] {  // règles de style retenues (« toujours… », « jamais… »)
+        const std::string r = d_.db.GetProfile("ae.rules").value_or("");
+        return r.empty() ? std::string{} : "\nRègles de style de l'utilisateur, à respecter TOUJOURS : " + r;
+    };
+    // Règle de style dite en passant (« toujours des sous-titres jaunes ») : retenue pour les prochaines fois.
+    if (ContainsAny(lower, {"oublie mes règles", "oublie les règles", "efface mes règles", "oublie mon style"})) {
+        d_.db.SetProfile("ae.rules", "");
+        Say("C'est oublié, je repars sur mon style à moi.");
+        return true;
+    }
+    if (ContainsAny(lower, {"toujours", "jamais", "à chaque fois", "a chaque fois", "à partir de maintenant"})) {
+        std::string rules = d_.db.GetProfile("ae.rules").value_or("");
+        if (rules.find(text) == std::string::npos) {
+            rules = Trim(rules + " ; " + text);
+            if (rules.starts_with(";")) rules = Trim(rules.substr(1));
+            if (rules.size() > 900) rules = rules.substr(rules.size() - 900);
+            d_.db.SetProfile("ae.rules", rules);
+            Say("Noté, je le ferai à chaque fois. Dis oublie mes règles pour effacer.");
+        }
+    }
+    // Voix off mot à mot : lue dans le projet (calque audio sélectionné, sinon le premier), transcrite, gardée en cache.
+    const auto loadVoice = [&]() -> bool {
+        const std::string q =
+            "var c = omnisComp(); var s = c.selectedLayers; var a = null;\n"
+            "for (var i = 0; i < s.length && !a; i++) if (s[i].hasAudio && s[i].source && s[i].source.file) a = s[i];\n"
+            "for (var j = 1; j <= c.numLayers && !a; j++) { var l = c.layer(j); if (l.hasAudio && l.audioEnabled && l.source && "
+            "l.source.file) a = l; }\n"
+            "if (!a) throw new Error(\"aucun calque audio : importe ta voix off dans la composition\");\n"
+            "rapport = a.source.file.fsName + \"\\t\" + a.startTime + \"\\t\" + a.inPoint + \"\\t\" + a.outPoint + \"\\t\" + "
+            "a.stretch;";
+        const auto r = run(q, /*mustChange=*/false);
+        std::string info;
+        if (!r || !split(*r, info)) {
+            if (r) Say("Je trouve pas ta voix off : " + info + ".");
+            else if (noReport) noReportHint();
+            else Say("After Effects a refusé de lancer le script.");
+            return false;
+        }
+        std::vector<std::string> f;
+        for (size_t p = 0;;) {
+            const size_t q2 = info.find('\t', p);
+            f.push_back(info.substr(p, q2 == std::string::npos ? std::string::npos : q2 - p));
+            if (q2 == std::string::npos) break;
+            p = q2 + 1;
+        }
+        if (f.size() < 5) return false;
+        const std::filesystem::path audio = log::Widen(f[0]);
+        const double start = std::atof(f[1].c_str()), in = std::atof(f[2].c_str()), out = std::atof(f[3].c_str());
+        const double stretch = std::atof(f[4].c_str()) / 100.0;
+        std::error_code e2;
+        const std::string key = f[0] + "|" + std::to_string(std::filesystem::file_size(audio, e2)) + "|" + f[1] + "|" + f[4];
+        if (key == aeWordsKey_ && !aeWords_.empty()) return true;
+        auto whisper = cfg_.llmModel.parent_path() / L"ggml-base-q5_1.bin";
+        if (!std::filesystem::exists(whisper)) whisper = cfg_.llmModel.parent_path() / L"ggml-tiny-q5_1.bin";
+        Say("J'écoute ta voix off, quelques secondes.");
+        activity_ = AgentActivity::Thinking;
+        auto words = TranscribeWords(audio, whisper);
+        if (stop.stop_requested()) return false;
+        aeWords_.clear();
+        for (auto& w : words) {  // temps du fichier -> temps de la composition
+            w.start = start + w.start * (stretch > 0 ? stretch : 1.0);
+            w.end = start + w.end * (stretch > 0 ? stretch : 1.0);
+            if (w.end >= in && w.start <= out) aeWords_.push_back(std::move(w));
+        }
+        aeWordsKey_ = key;
+        if (aeWords_.empty()) {
+            Say("J'entends aucune parole dans ce calque audio.");
+            return false;
+        }
+        return true;
+    };
+
+    // Sous-titres mot à mot, calés sur la voix off, les mots forts seuls et en couleur.
+    if (ContainsAny(lower, {"sous-titre", "sous titre", "soustitre", "subtitle", "caption"})) {
+        if (!loadVoice()) return true;
+        std::string color = "[1, 1, 1]", keyColor = "[1, 0.85, 0.1]";
+        const std::string rules = LowerFr(d_.db.GetProfile("ae.rules").value_or("") + " " + text);
+        static const std::pair<const char*, const char*> kRgb[] = {
+            {"jaune", "[1, 0.85, 0.1]"}, {"rouge", "[1, 0.15, 0.15]"}, {"vert", "[0.2, 0.9, 0.35]"}, {"bleu", "[0.2, 0.55, 1]"},
+            {"orange", "[1, 0.55, 0.1]"}, {"rose", "[1, 0.4, 0.75]"}, {"violet", "[0.6, 0.3, 1]"}};
+        for (const auto& [n, rgb] : kRgb)  // « mots forts en vert » / « sous-titres en jaune »
+            if (const auto p = rules.find(n); p != std::string::npos) {
+                const std::string before = rules.substr(p > 40 ? p - 40 : 0, std::min<size_t>(p, 40));
+                if (before.find("fort") != std::string::npos || before.find("clé") != std::string::npos ||
+                    before.find("important") != std::string::npos)
+                    keyColor = rgb;
+                else
+                    color = rgb;
+            }
+        const auto chunks = ChunkWords(aeWords_);
+        Say(std::format("Je pose {} sous-titres.", chunks.size()));
+        const auto r = run(SubtitleBody(chunks, color, keyColor));
+        std::string report;
+        if (r && split(*r, report)) Say(report + " Ctrl Z si ça te va pas.");
+        else if (r) Say("After Effects bloque : " + report + ".");
+        else if (noReport) noReportHint();
+        return true;
+    }
+    // « quand je le dis », « au moment où je dis » : il faut les mots de la voix off avant d'écrire le script.
+    if (ContainsAny(lower, {"quand je", "au moment où je", "au moment ou je", "sur le mot", "quand il dit", "quand on entend"}) &&
+        !loadVoice())
+        return true;
+
     // 1) Recette : gestes de pro choisis dans un menu fermé, code écrit par Omnis (fiable, même avec le petit cerveau).
     {
         GenerateOptions ro;
@@ -1971,8 +2079,13 @@ bool AgentOrchestrator::HandleAfterEffects(const PilotTarget& t, const std::stri
         const std::string plan = d_.brain.Generate({{"system", kAeRecipeSystem}, {"user", text}}, ro).value_or("");
         if (stop.stop_requested()) return true;
         std::string said;
-        const std::string body = AeRecipeBody(plan, said, Lower(text));
+        std::string whenError;
+        const std::string body = AeRecipeBody(plan, said, lower, [&](std::string_view w) { return FindWordTime(aeWords_, w); }, &whenError);
         log::Info("After Effects : recette\n{}", plan);
+        if (!whenError.empty()) {
+            Say(whenError + ". Dis-moi le mot exact.");
+            return true;
+        }
         if (!body.empty()) {
             Say("C'est parti.");
             const auto r = run(body);
@@ -1989,7 +2102,8 @@ bool AgentOrchestrator::HandleAfterEffects(const PilotTarget& t, const std::stri
     }
 
     // 2) Script libre (la demande sort du menu), vérifié et corrigé une fois.
-    std::vector<ChatTurn> msgs{{"system", kAeSystem}, {"user", "Projet ouvert : « " + t.title + " ».\nDemande : " + text}};
+    std::vector<ChatTurn> msgs{{"system", std::string(kAeSystem) + ruleHint()},
+                               {"user", "Projet ouvert : « " + t.title + " ».\nDemande : " + text}};
     for (int attempt = 0; attempt < 2; ++attempt) {
         GenerateOptions o;
         o.maxTokens = 900;

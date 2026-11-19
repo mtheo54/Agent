@@ -3,6 +3,7 @@
 #include "core/LocalBrain.hpp"
 #include "modules/AeScript.hpp"
 #include "modules/ChordScript.hpp"
+#include "modules/Subtitles.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <fstream>
@@ -40,19 +41,28 @@ int main(int argc, char** argv) {
                           "Mets le calque sélectionné en rouge vif",
                           "Ajoute une lueur et une ombre sur le titre sélectionné"};
     // Même boucle que l'appli : script -> exécution (faux After Effects, node) -> erreur renvoyée au modèle, 1 correction.
+    // Voix off factice (« … ton kick il a l'aura… abonne-toi … »), pour la synchro.
+    const std::vector<TimedWord> words = {{"Salut", 0.5, 0.8}, {"ton", 1.0, 1.2}, {"kick", 1.2, 1.6}, {"il", 1.7, 1.8},
+                                          {"tape", 1.8, 2.2}, {"abonne-toi", 4.0, 4.6}, {"maintenant", 4.6, 5.2}};
+    std::vector<const char*> list(std::begin(asks), std::end(asks));
+    if (argc > 4) list = {"Ajoute un titre ABONNE-TOI qui apparaît en pop quand je le dis",
+                          "Fais glisser le titre sélectionné depuis la droite quand je dis kick",
+                          "Mets un pop sur le calque sélectionné ici"};
     int i = 0, ok = 0;
-    for (const char* a : asks) {
+    for (const char* a : list) {
         std::vector<ChatTurn> msgs{{"system", kAeSystem}, {"user", std::string("Projet ouvert : « clip.aep ».\nDemande : ") + a}};
         std::printf("\n=== %s\n", a);
         {
             GenerateOptions ro; ro.maxTokens = 80; ro.temperature = 0.2f; ro.grammar = kAeRecipeGrammar;
             const auto plan = brain.Generate({{"system", kAeRecipeSystem}, {"user", a}}, ro).value_or("");
             std::string said;
-            const std::string body = AeRecipeBody(plan, said, LowerFr(a));
+            std::string whenErr;
+            const std::string body = AeRecipeBody(plan, said, LowerFr(a), [&](std::string_view w) { return FindWordTime(words, w); }, &whenErr);
+            if (!whenErr.empty()) std::printf("(mot : %s)\n", whenErr.c_str());
             std::printf("--- recette\n%s", plan.c_str());
             if (!body.empty()) {
                 const std::string file = out + "/ae" + std::to_string(i) + "_r.jsx";
-                std::ofstream(file) << AeWrap(body, "resultat.txt");
+                std::ofstream(file) << AeWrap(body, "resultat.txt", WordsTable(words));
                 std::string res;
                 if (FILE* pp = popen(("node " + out + "/../aemock.js " + file).c_str(), "r")) { char buf[512]; while (fgets(buf, sizeof buf, pp)) res += buf; pclose(pp); }
                 std::printf("=> %s", res.c_str());
