@@ -104,6 +104,8 @@ CompanionConfig LoadConfig(const std::filesystem::path& jsonFile) {
         cfg.cloudEnabled = j.value("cloudEnabled", cfg.cloudEnabled);
         cfg.cloudAsksPermission = j.value("cloudAsksPermission", cfg.cloudAsksPermission);
         cfg.captions = j.value("captions", cfg.captions);
+        cfg.avatarX = j.value("avatarX", cfg.avatarX);
+        cfg.avatarY = j.value("avatarY", cfg.avatarY);
         cfg.claudeModel = j.value("claudeModel", cfg.claudeModel);
         cfg.claudeEffort = j.value("claudeEffort", cfg.claudeEffort);
         if (j.contains("wikis")) {
@@ -154,6 +156,8 @@ bool SaveConfig(const CompanionConfig& cfg, const std::filesystem::path& jsonFil
     j["cloudEnabled"] = cfg.cloudEnabled;
     j["cloudAsksPermission"] = cfg.cloudAsksPermission;
     j["captions"] = cfg.captions;
+    j["avatarX"] = cfg.avatarX;
+    j["avatarY"] = cfg.avatarY;
     std::ofstream out(jsonFile, std::ios::binary | std::ios::trunc);
     if (!out) return false;
     out << j.dump(2) << "\n";

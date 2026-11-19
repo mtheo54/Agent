@@ -32,6 +32,7 @@ struct CompanionConfig {
     float avatarScale = 1.f;        // 0,6 … 1,6
     float avatarOpacity = 1.f;      // 0,3 … 1
     int avatarCorner = 3;           // 0 haut-gauche, 1 haut-droite, 2 bas-gauche, 3 bas-droite
+    int avatarX = -1, avatarY = -1; // posé à la souris (pixels écran) ; -1 = dans le coin
     float expressiveness = 0.8f;    // fréquence des gestes et réactions (0 … 1)
 
     // --- Voix ---

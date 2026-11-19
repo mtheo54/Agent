@@ -503,6 +503,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     }
     CartoonAvatar avatar;
     CaptionBar captionBar;
+    float swingAngle = 0.f, swingVel = 0.f;
+    D2D1_POINT_2F swingPivot{160.f, 60.f};
+    bool wasHeld = false;
     std::string shownCaption;
     float shownCaptionAlpha = 0.f;
     if (!avatar.Load(root / L"assets" / L"avatar" / L"rig.json")) {
@@ -594,6 +597,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     voice.SetBargeIn(cfg.bargeIn, [&orchestrator] { orchestrator.OnBargeIn(); });
     if (cfg.voiceActivity) voice.SetListenMode(ListenMode::VoiceActivity);
     overlay.SetLayout(cfg.avatarScale, cfg.avatarCorner);
+    if (cfg.avatarX >= 0) overlay.SetPosition(cfg.avatarX, cfg.avatarY);  // là où tu l'as posé la dernière fois
     avatar.SetOpacity(cfg.avatarOpacity);
 
     const DWORD mainThread = GetCurrentThreadId();
@@ -606,6 +610,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
         cfg.name = edited.name;
         cfg.avatarScale = edited.avatarScale;
         cfg.avatarOpacity = edited.avatarOpacity;
+        if (cfg.avatarCorner != edited.avatarCorner) cfg.avatarX = cfg.avatarY = -1;  // nouveau coin choisi : il y retourne
         cfg.avatarCorner = edited.avatarCorner;
         cfg.expressiveness = edited.expressiveness;
         cfg.fxIntensity = edited.fxIntensity;
@@ -643,6 +648,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
         voice.SetBargeIn(cfg.bargeIn, [&orchestrator] { orchestrator.OnBargeIn(); });
         voice.SetListenMode(cfg.voiceActivity ? ListenMode::VoiceActivity : ListenMode::PushToTalk);
         overlay.SetLayout(cfg.avatarScale, cfg.avatarCorner);
+        overlay.SetPosition(cfg.avatarX, cfg.avatarY);
         avatar.SetOpacity(cfg.avatarOpacity);
         orchestrator.UpdateConfig(cfg);
     };
@@ -819,6 +825,38 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
         if (wantVisible != overlay.IsVisible()) {
             overlay.SetVisible(wantVisible);
             forceFrame = wantVisible;  // réapparition : une image tout de suite
+        }
+        // --- Le déplacer à la souris, comme un Mii sur la Wii ------------------------------------
+        // Cliquable seulement quand le curseur est sur son corps et hors jeu (sinon les clics traversent).
+        {
+            POINT cur{};
+            GetCursorPos(&cur);
+            const RECT wr = overlay.ScreenRect();
+            const float s = overlay.Scale();
+            const float lx = static_cast<float>(cur.x - wr.left) / s, ly = static_cast<float>(cur.y - wr.top) / s;
+            const bool onBody = lx > 70.f && lx < 250.f && ly > 20.f && ly < 412.f;
+            overlay.SetInteractive(overlay.IsVisible() && m != SystemMode::Gaming && (onBody || overlay.Dragging()));
+            // Balancier : il pend sous la main et part dans le sens inverse du mouvement, puis se calme en oscillant.
+            const bool held = overlay.Dragging();
+            const float target = held ? std::clamp(overlay.DragVelocityX() * 0.018f, -38.f, 38.f) : 0.f;
+            swingVel += (-(swingAngle - target) * 70.f - swingVel * (held ? 9.f : 4.5f)) * std::min(dt, 0.05f);
+            swingAngle += swingVel * std::min(dt, 0.05f);
+            if (!held && std::abs(swingAngle) < 0.05f && std::abs(swingVel) < 0.5f) swingAngle = swingVel = 0.f;
+            if (held) swingPivot = overlay.GrabPoint();
+            avatar.SetSwing(swingAngle, swingPivot);
+            avatar.SetHeld(held);  // bras en l'air, jambes qui gigotent
+            if (held != wasHeld) {
+                if (held) voice.PlaySound("woosh");  // bruitage s'il est installé, sinon rien
+                wasHeld = held;
+            }
+            int dropX = 0, dropY = 0;
+            if (overlay.TakeDropped(dropX, dropY)) {
+                avatar.Express("land");  // il se pose : petit écrasement, rebond
+                cfg.avatarX = dropX;
+                cfg.avatarY = dropY;
+                SaveConfig(cfg, root / L"companion.json");
+            }
+            if (held || swingAngle != 0.f) forceFrame = true;
         }
         // Sous-titres : ce qu'il dit, visible 2,5 s après la fin puis estompé en 0,6 s.
         const VoiceEngine::Caption caption = cfg.captions ? voice.CurrentCaption() : VoiceEngine::Caption{};

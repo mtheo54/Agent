@@ -58,6 +58,11 @@ public:
     // offset : position du canevas dans la cible (aperçu dans la fenêtre de configuration).
     void Render(ID2D1DeviceContext* ctx, ID2D1Factory1* factory, float scale, D2D1_POINT_2F offset = {0.f, 0.f});
     void SetOpacity(float opacity) noexcept { opacity_ = opacity; }
+    // Balancier quand on le tient à la souris (comme un Mii qu'on déplace) : rotation du personnage entier autour du
+    // point saisi (coordonnées du canevas), en degrés, sens horaire.
+    void SetSwing(float degrees, D2D1_POINT_2F pivot) noexcept { swingDeg_ = degrees; swingPivot_ = pivot; }
+    // Tenu à la souris : animation « grabbed » tout de suite, par-dessus tout (même une réaction en cours).
+    void SetHeld(bool held) noexcept { held_ = held; }
 
     [[nodiscard]] float Width() const noexcept { return canvas_[0]; }
     [[nodiscard]] float Height() const noexcept { return canvas_[1]; }
@@ -148,6 +153,9 @@ private:
     std::map<std::string, Microsoft::WRL::ComPtr<ID2D1SolidColorBrush>> brushes_;
     Microsoft::WRL::ComPtr<ID2D1StrokeStyle1> roundStroke_;
     Microsoft::WRL::ComPtr<ID2D1RadialGradientBrush> airBrush_, bounceBrush_;
+    float swingDeg_ = 0.f;
+    D2D1_POINT_2F swingPivot_{160.f, 40.f};
+    bool held_ = false;
 };
 
 }  // namespace companion

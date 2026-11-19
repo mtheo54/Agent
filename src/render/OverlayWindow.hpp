@@ -15,6 +15,8 @@
 // plupart des jeux DX12 sous Windows 11), pas au-dessus d'un plein écran exclusif.
 
 #include <windows.h>
+
+#include <algorithm>
 #include <d2d1_1.h>
 #include <d3d11.h>
 #include <dcomp.h>
@@ -56,12 +58,37 @@ public:
     [[nodiscard]] ID2D1Factory1* D2DFactory() const noexcept { return d2dFactory_.Get(); }
     [[nodiscard]] float Scale() const noexcept { return scale_ * userScale_; }  // DPI / 96 × taille choisie
 
+    // --- Déplacement à la souris -----------------------------------------------------------------
+    // La fenêtre reste « transparente aux clics » (le jeu, le bureau les reçoivent) SAUF quand l'appelant la rend
+    // interactive : curseur sur le personnage, hors jeu. Alors on peut l'attraper et le poser n'importe où.
+    void SetInteractive(bool on);
+    [[nodiscard]] bool Dragging() const noexcept { return dragging_; }
+    // Pixels écran / s, lissée ; retombe à 0 quand la souris s'arrête (sinon il resterait penché).
+    [[nodiscard]] float DragVelocityX() const noexcept {
+        const float idle = static_cast<float>(GetTickCount64() - lastMoveTick_);
+        return idle > 60.f ? velX_ * std::max(0.f, 1.f - (idle - 60.f) / 120.f) : velX_;
+    }
+    [[nodiscard]] D2D1_POINT_2F GrabPoint() const noexcept { return grabLogical_; }  // point saisi (coordonnées logiques)
+    bool TakeDropped(int& x, int& y);  // vrai une fois après un lâcher : coin haut-gauche (pixels écran)
+    void SetPosition(int x, int y);    // position libre (pixels écran) ; x < 0 = retour au coin
+    [[nodiscard]] RECT ScreenRect() const;
+
 private:
     bool CreateDevice();
     bool CreateSwapChainAndComposition();
     bool RecoverDevice();
 
     static LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
+    LRESULT Handle(UINT msg, WPARAM wp, LPARAM lp);
+    void PlaceFree();
+
+    bool interactive_ = false, dragging_ = false, dropped_ = false;
+    POINT grabOffset_{};               // curseur - coin de la fenêtre au moment de la saisie
+    D2D1_POINT_2F grabLogical_{160.f, 60.f};
+    float velX_ = 0.f;
+    ULONGLONG lastMoveTick_ = 0;
+    int lastX_ = 0;
+    int posX_ = -1, posY_ = -1;        // position libre (pixels écran), -1 = coin
 
     Desc desc_{};
     HWND hwnd_ = nullptr;

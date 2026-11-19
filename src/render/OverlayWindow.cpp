@@ -75,6 +75,7 @@ void OverlayWindow::SetLayout(float userScale, int corner) {
     d2dContext_->SetTarget(nullptr);  // aucune référence au back buffer avant ResizeBuffers
     swapChain_->ResizeBuffers(2, static_cast<UINT>(pixelWidth_), static_cast<UINT>(pixelHeight_), kColorFormat, 0);
     SetWindowPos(hwnd_, HWND_TOPMOST, x, y, pixelWidth_, pixelHeight_, SWP_NOACTIVATE);
+    if (posX_ >= 0) PlaceFree();  // posé à la main : il y reste (nouvelle taille comprise)
     dcompDevice_->Commit();
 }
 
@@ -198,13 +199,119 @@ bool OverlayWindow::RecoverDevice() {
     return CreateDevice() && CreateSwapChainAndComposition();
 }
 
-LRESULT CALLBACK OverlayWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+// ---------------------------------------------------------------------------
+// Déplacement
+
+void OverlayWindow::SetInteractive(bool on) {
+    if (!hwnd_ || (on == interactive_ && !dragging_)) return;
+    if (!on && dragging_) return;  // jamais lâché de force en pleine saisie
+    interactive_ = on;
+    LONG_PTR ex = GetWindowLongPtrW(hwnd_, GWL_EXSTYLE);
+    ex = on ? (ex & ~static_cast<LONG_PTR>(WS_EX_TRANSPARENT)) : (ex | WS_EX_TRANSPARENT);
+    SetWindowLongPtrW(hwnd_, GWL_EXSTYLE, ex);
+}
+
+bool OverlayWindow::TakeDropped(int& x, int& y) {
+    if (!dropped_) return false;
+    dropped_ = false;
+    x = posX_;
+    y = posY_;
+    return true;
+}
+
+RECT OverlayWindow::ScreenRect() const {
+    RECT r{};
+    if (hwnd_) GetWindowRect(hwnd_, &r);
+    return r;
+}
+
+void OverlayWindow::SetPosition(int x, int y) {
+    posX_ = x;
+    posY_ = y;
+    if (x >= 0) PlaceFree();
+    else SetLayout(userScale_, corner_);
+}
+
+// Position libre, gardée dans la zone de travail de l'écran où il se trouve (plusieurs écrans possibles).
+void OverlayWindow::PlaceFree() {
+    if (!hwnd_) return;
+    MONITORINFO mi{};
+    mi.cbSize = sizeof(mi);
+    GetMonitorInfoW(MonitorFromPoint({posX_ + pixelWidth_ / 2, posY_ + pixelHeight_ / 2}, MONITOR_DEFAULTTONEAREST), &mi);
+    const RECT w = mi.rcWork;
+    posX_ = std::clamp(posX_, static_cast<int>(w.left), static_cast<int>(w.right) - pixelWidth_);
+    posY_ = std::clamp(posY_, static_cast<int>(w.top), static_cast<int>(w.bottom) - pixelHeight_);
+    SetWindowPos(hwnd_, HWND_TOPMOST, posX_, posY_, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+}
+
+LRESULT OverlayWindow::Handle(UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
-        case WM_NCHITTEST: return HTTRANSPARENT;   // ceinture + bretelles avec WS_EX_TRANSPARENT
-        case WM_MOUSEACTIVATE: return MA_NOACTIVATE;
+        case WM_NCHITTEST: return interactive_ || dragging_ ? HTCLIENT : HTTRANSPARENT;
+        case WM_MOUSEACTIVATE: return MA_NOACTIVATE;  // ne vole jamais le focus
+        case WM_SETCURSOR:
+            if (interactive_ || dragging_) {
+                SetCursor(LoadCursorW(nullptr, IDC_HAND));  // la main qui attrape, comme sur la Wii
+                return TRUE;
+            }
+            break;
+        case WM_LBUTTONDOWN: {
+            POINT p;
+            GetCursorPos(&p);
+            RECT r{};
+            GetWindowRect(hwnd_, &r);
+            grabOffset_ = {p.x - r.left, p.y - r.top};
+            grabLogical_ = {static_cast<float>(grabOffset_.x) / Scale(), static_cast<float>(grabOffset_.y) / Scale()};
+            dragging_ = true;
+            velX_ = 0.f;
+            lastX_ = p.x;
+            lastMoveTick_ = GetTickCount64();
+            SetCapture(hwnd_);
+            return 0;
+        }
+        case WM_MOUSEMOVE:
+            if (dragging_) {
+                POINT p;
+                GetCursorPos(&p);
+                const ULONGLONG now = GetTickCount64();
+                const float dt = std::max(1.f, static_cast<float>(now - lastMoveTick_)) / 1000.f;
+                velX_ = 0.7f * velX_ + 0.3f * static_cast<float>(p.x - lastX_) / dt;
+                lastX_ = p.x;
+                lastMoveTick_ = now;
+                posX_ = p.x - grabOffset_.x;
+                posY_ = p.y - grabOffset_.y;
+                SetWindowPos(hwnd_, HWND_TOPMOST, posX_, posY_, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+                return 0;
+            }
+            break;
+        case WM_LBUTTONUP:
+        case WM_CAPTURECHANGED:
+            if (dragging_) {
+                dragging_ = false;
+                if (msg == WM_LBUTTONUP) ReleaseCapture();
+                PlaceFree();  // pas à moitié hors de l'écran
+                dropped_ = true;
+                return 0;
+            }
+            break;
         case WM_CLOSE: PostQuitMessage(0); return 0;
-        default: return DefWindowProcW(hwnd, msg, wp, lp);
+        default: break;
     }
+    return DefWindowProcW(hwnd_, msg, wp, lp);
+}
+
+LRESULT CALLBACK OverlayWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (msg == WM_NCCREATE) {
+        auto* self = static_cast<OverlayWindow*>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams);
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
+        if (self) self->hwnd_ = hwnd;
+    }
+    auto* self = reinterpret_cast<OverlayWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (!self || !self->hwnd_) {
+        if (msg == WM_NCHITTEST) return HTTRANSPARENT;
+        if (msg == WM_MOUSEACTIVATE) return MA_NOACTIVATE;
+        return DefWindowProcW(hwnd, msg, wp, lp);
+    }
+    return self->Handle(msg, wp, lp);
 }
 
 }  // namespace companion

@@ -321,7 +321,9 @@ bool CartoonAvatar::Update(float dt, float voiceRms) noexcept {
     const bool oneShotRunning = !cur.loop && frame_ + advance < cur.frames;
     const bool speaking = rmsEnv_ > 0.03f;
     std::string next = clip_;
-    if (waveRequested_ && clips_.contains("wave")) {
+    if (held_ && clips_.contains("grabbed")) {
+        next = "grabbed";
+    } else if (waveRequested_ && clips_.contains("wave")) {
         next = "wave";
         waveRequested_ = false;
     } else if (!pendingExpression_.empty() && (!oneShotRunning || clip_ == "talk" || clip_ == "talk2")) {
@@ -461,7 +463,8 @@ void CartoonAvatar::Draw(ID2D1DeviceContext* ctx, ID2D1Factory1* factory, const 
     const auto at = [&](D2D1_POINT_2F v) { return Add(k.H, Rot(k.T, v)); };
     const D2D1_POINT_2F g{hips_.x, ground_};
     const float sq = P("sq");
-    const auto global = D2D1::Matrix3x2F::Scale(scale, scale) * D2D1::Matrix3x2F::Translation(offset.x, offset.y);
+    const auto global = D2D1::Matrix3x2F::Rotation(swingDeg_, swingPivot_) * D2D1::Matrix3x2F::Scale(scale, scale) *
+                        D2D1::Matrix3x2F::Translation(offset.x, offset.y);
     const auto squash = D2D1::Matrix3x2F::Translation(-g.x, -g.y) * D2D1::Matrix3x2F::Scale(1.f + sq * 0.6f, 1.f - sq) *
                         D2D1::Matrix3x2F::Translation(g.x, g.y);
     const auto stroke = [&](const ComPtr<ID2D1Geometry>& geom, ID2D1Brush* br, float w) {
