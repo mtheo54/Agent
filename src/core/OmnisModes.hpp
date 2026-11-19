@@ -122,7 +122,7 @@ inline std::string TechnicalPrompt(const std::string& name) {
         "condescendance. Va droit au but : la réponse d'abord, puis l'étape suivante à faire. Phrases courtes, tutoiement, "
         "pas de listes ni de markdown ; pour du code, donne l'idée et les noms exacts (fonction, paramètre), pas de long "
         "bloc. N'invente JAMAIS une valeur, un registre, une broche, un paramètre, une référence ou un réglage : si tu "
-        "n'es pas sûr, cherche.\n{}\n{}",
+        "n'es pas sûr, cherche. Une « Fiche apprise » du contexte est vérifiée : base-toi dessus, avec ses valeurs exactes.\n{}\n{}",
         name, kWhatYouAre, kSearchProtocol);
 }
 

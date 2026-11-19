@@ -72,7 +72,28 @@ AgentOrchestrator::AgentOrchestrator(OrchestratorDeps deps) : d_(deps), cfg_(dep
 AgentOrchestrator::~AgentOrchestrator() { Stop(); }
 
 void AgentOrchestrator::Start() {
+    LoadKnowledgePack();
     if (!worker_.joinable()) worker_ = std::jthread([this](std::stop_token st) { WorkerMain(st); });
+}
+
+// Fiches prêtes à l'emploi (assets/knowledge/fiches.json) : rangées comme des leçons, rechargées si la version change.
+void AgentOrchestrator::LoadKnowledgePack() {
+    std::ifstream f(d_.assetsDir / L"knowledge" / L"fiches.json", std::ios::binary);
+    if (!f) return;
+    try {
+        const auto j = nlohmann::json::parse(f);
+        const std::string version = std::to_string(j.value("version", 0));
+        if (d_.db.GetProfile("knowledge.version").value_or("") == version) return;
+        int n = 0;
+        for (const auto& x : j.at("fiches")) {
+            d_.db.AddLesson(x.value("subject", std::string{}), x.value("question", std::string{}), x.value("fiche", std::string{}));
+            ++n;
+        }
+        d_.db.SetProfile("knowledge.version", version);
+        log::Info("Connaissances : {} fiches chargées (version {})", n, version);
+    } catch (const std::exception& e) {
+        log::Info("Connaissances : fiches illisibles ({})", e.what());
+    }
 }
 
 void AgentOrchestrator::Stop() {
@@ -2400,7 +2421,10 @@ void AgentOrchestrator::HandleLevel1(const std::string& text, const std::vector<
     // Procédure, réglage, code d'erreur : le modèle n'écrit que les mots-clés, la réponse viendra de la source.
     // (Pas quand le contexte est déjà fourni : vu sur le terrain, « tu peux écouter ce que je fais sur FL Studio ? » partait
     // chercher « FL Studio LUFS -22.4 » sur le web au lieu de donner l'avis sur la prod.)
-    if (chatMode_ == ChatMode::Technical && d_.http && extraContext.empty() && NeedsSource(Lower(text))) {
+    // Une fiche vérifiée (pack ou tuto étudié) couvre déjà la question : c'est la source, pas besoin du web.
+    bool ficheCovers = false;
+    for (const auto& l : d_.db.SearchLessons(text, 2)) ficheCovers = ficheCovers || MemoryDB::CoversSubject(text, l.subject);
+    if (chatMode_ == ChatMode::Technical && d_.http && extraContext.empty() && !ficheCovers && NeedsSource(Lower(text))) {
         GenerateOptions so;
         so.grammar = kSearchOnlyGrammar;
         so.maxTokens = 32;

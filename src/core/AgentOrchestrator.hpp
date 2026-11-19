@@ -138,6 +138,7 @@ private:
     void Handle(const std::string& text, std::stop_token stop);
     bool HandleLevel0(const std::string& text, std::stop_token stop);
     bool HandleHelp(const std::string& lower);
+    void LoadKnowledgePack();
     // Phrase approximative : le modèle choisit la commande (CommandCatalog), puis on l'exécute.
     bool TryFuzzyCommand(const std::string& text, std::stop_token stop);
     void HandleLevel1(const std::string& text, const std::vector<ChatTurn>& history, const std::string& extraContext,
