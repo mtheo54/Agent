@@ -48,7 +48,9 @@ struct BrainChoice {
 
 struct VoicePlan {
     bool neural = false;  // voix neuronale (≈ 1,5 Go de VRAM) ou Piper (CPU)
-    const char* whisperFile = "ggml-base-q5_1.bin";
+    const char* whisperFile = "ggml-base-q5_1.bin";        // hors jeu
+    const char* whisperGamingFile = "ggml-base-q5_1.bin";  // en jeu (processeur) et en secours
+    bool whisperGpu = false;                                // le modèle hors jeu tourne sur la carte graphique
 };
 
 // Presets de jeu : où et quoi charger quand tu lui parles en partie.

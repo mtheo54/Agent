@@ -469,7 +469,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
         std::uint64_t total = 0;
         for (const auto& dl : missing) total += dl.bytes;
         const std::wstring msg = std::format(
-            L"Premier lancement : je télécharge les modèles adaptés à ton PC ({:.1f} Go).\n\n"
+            L"Je télécharge les modèles qui manquent pour ton PC ({:.1f} Go), par exemple la reconnaissance vocale plus précise.\n\n"
             L"Carte graphique : {} ({:.1f} Go)\nCerveau hors jeu : {} ({})\nCerveau en jeu : choisi selon la mémoire libre\n"
             L"Voix : {}\n\nLe téléchargement se fait en arrière-plan ; tu peux jouer pendant ce temps.\nOn y va ?",
             static_cast<double>(total) / 1e9, std::wstring(hw.gpuName.begin(), hw.gpuName.end()), hw.vramGiB,
@@ -527,6 +527,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     VoiceEngine voice;
     VoiceEngineConfig vcfg;
     vcfg.whisperModel = modelsDir / vplan.whisperFile;
+    vcfg.whisperModelGaming = modelsDir / vplan.whisperGamingFile;
+    vcfg.sttGpu = vplan.whisperGpu && cfg.gpuSafeStage < 2;  // mode prudent « processeur » : Whisper aussi
+    // Gros modèle pas encore téléchargé : le léger en attendant ; LoadMissing le remplace dès qu'il arrive.
     vcfg.piperModel = root / L"assets" / L"models" / L"fr_FR-siwis-medium.onnx";
     vcfg.espeakDataDir = root / L"espeak-ng-data";
     vcfg.neural.library = root / L"qwen.dll";

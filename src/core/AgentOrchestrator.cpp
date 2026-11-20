@@ -2031,11 +2031,14 @@ bool AgentOrchestrator::HandleAfterEffects(const PilotTarget& t, const std::stri
         std::error_code e2;
         const std::string key = f[0] + "|" + std::to_string(std::filesystem::file_size(audio, e2)) + "|" + f[1] + "|" + f[4];
         if (key == aeWordsKey_ && !aeWords_.empty()) return true;
-        auto whisper = cfg_.llmModel.parent_path() / L"ggml-base-q5_1.bin";
+        // Le meilleur Whisper présent : large-v3-turbo sur la carte (sous-titres justes), sinon base / tiny sur le processeur.
+        auto whisper = cfg_.llmModel.parent_path() / L"ggml-large-v3-turbo-q5_0.bin";
+        const bool whisperGpu = std::filesystem::exists(whisper) && cfg_.gpuSafeStage < 2;
+        if (!std::filesystem::exists(whisper)) whisper = cfg_.llmModel.parent_path() / L"ggml-base-q5_1.bin";
         if (!std::filesystem::exists(whisper)) whisper = cfg_.llmModel.parent_path() / L"ggml-tiny-q5_1.bin";
         Say("J'écoute ta voix off. Si elle est longue, ça prend un petit moment.");
         activity_ = AgentActivity::Thinking;
-        auto words = TranscribeWords(audio, whisper);
+        auto words = TranscribeWords(audio, whisper, 1800, whisperGpu);
         if (stop.stop_requested()) return false;
         aeWords_.clear();
         for (auto& w : words) {  // temps du fichier -> temps de la composition

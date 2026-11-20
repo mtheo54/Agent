@@ -482,7 +482,27 @@ struct VoiceEngine::Impl {
     }
 
 #if COMPANION_WITH_WHISPER
-    whisper_context* whisper = nullptr;
+    whisper_context* whisper = nullptr;      // modèle principal (large-v3-turbo sur la carte, hors jeu)
+    whisper_context* whisperGame = nullptr;  // modèle léger sur le processeur (en jeu), chargé au besoin
+    bool whisperOnGpu = false;
+    static whisper_context* LoadWhisper(const std::filesystem::path& file, bool gpu) {
+        if (file.empty() || !std::filesystem::exists(file)) return nullptr;
+        whisper_context_params cp = whisper_context_default_params();
+        cp.use_gpu = gpu;
+        cp.flash_attn = gpu;
+        whisper_context* w = whisper_init_from_file_with_params(log::Narrow(file.wstring()).c_str(), cp);
+        log::Info("VoiceEngine: Whisper {} sur {} : {}", log::Narrow(file.filename().wstring()), gpu ? "la carte graphique" : "le processeur",
+                  w ? "prêt" : "échec");
+        return w;
+    }
+    // En jeu : le modèle léger sur le processeur (le gros sur la carte volerait des images au jeu).
+    whisper_context* SttContext() {
+        if (gaming.load() && whisperOnGpu && !cfg.whisperModelGaming.empty()) {
+            if (!whisperGame) whisperGame = LoadWhisper(cfg.whisperModelGaming, false);
+            if (whisperGame) return whisperGame;
+        }
+        return whisper;
+    }
 #endif
 #if COMPANION_WITH_ONNX && COMPANION_WITH_ESPEAK
     std::unique_ptr<PiperTts> tts;
@@ -704,10 +724,14 @@ struct VoiceEngine::Impl {
     // Texte d'un segment 16 kHz mono (vide si rien de reconnu).
     std::string Whisper(std::vector<float> pcm) {
 #if COMPANION_WITH_WHISPER
-        if (!whisper || pcm.size() < kSttSampleRate / 4) return {};  // < 250 ms : ignoré
+        whisper_context* const ctx = SttContext();
+        if (!ctx || pcm.size() < kSttSampleRate / 4) return {};  // < 250 ms : ignoré
         if (pcm.size() < kSttSampleRate + kSttSampleRate / 10) pcm.resize(kSttSampleRate + kSttSampleRate / 10, 0.f);
 
-        whisper_full_params wp = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
+        // Gros modèle sur la carte : recherche en faisceau (5 hypothèses), nettement plus juste en français. Sinon glouton.
+        const bool beam = ctx == whisper && whisperOnGpu;
+        whisper_full_params wp = whisper_full_default_params(beam ? WHISPER_SAMPLING_BEAM_SEARCH : WHISPER_SAMPLING_GREEDY);
+        if (beam) wp.beam_search.beam_size = 5;
         wp.language = cfg.language.c_str();
         wp.n_threads = gaming.load() ? cfg.sttThreadsGaming : cfg.sttThreads;
         wp.translate = false;
@@ -723,13 +747,13 @@ struct VoiceEngine::Impl {
                             "master, prod, beat, instru, Antelope, Zen Go, League of Legends, LoL, Valorant, Discord, AutoCAD "
                             "Electrical, After Effects.";
 
-        if (whisper_full(whisper, wp, pcm.data(), static_cast<int>(pcm.size())) != 0) {
+        if (whisper_full(ctx, wp, pcm.data(), static_cast<int>(pcm.size())) != 0) {
             log::Info("whisper: échec de transcription");
             return {};
         }
         std::string text;
-        const int n = whisper_full_n_segments(whisper);
-        for (int i = 0; i < n; ++i) text += whisper_full_get_segment_text(whisper, i);
+        const int n = whisper_full_n_segments(ctx);
+        for (int i = 0; i < n; ++i) text += whisper_full_get_segment_text(ctx, i);
         const auto first = text.find_first_not_of(' ');
         if (first == std::string::npos) return {};
         text.erase(0, first);
@@ -1042,10 +1066,11 @@ bool VoiceEngine::Initialize(const VoiceEngineConfig& cfg) {
     d.cfg = cfg;
 
 #if COMPANION_WITH_WHISPER
-    if (std::filesystem::exists(cfg.whisperModel)) {
-        whisper_context_params cp = whisper_context_default_params();
-        cp.use_gpu = false;  // 0 Mo VRAM
-        d.whisper = whisper_init_from_file_with_params(log::Narrow(cfg.whisperModel.wstring()).c_str(), cp);
+    d.whisper = Impl::LoadWhisper(cfg.whisperModel, cfg.sttGpu);
+    d.whisperOnGpu = d.whisper && cfg.sttGpu;
+    if (!d.whisper) {  // gros modèle absent (pas encore téléchargé) ou refusé par la carte : le léger, sinon le même sur le processeur
+        d.whisper = Impl::LoadWhisper(cfg.whisperModelGaming, false);
+        if (!d.whisper && cfg.sttGpu) d.whisper = Impl::LoadWhisper(cfg.whisperModel, false);
     }
     log::Info("VoiceEngine: STT {}", d.whisper ? "prêt" : "désactivé (modèle absent)");
 #endif
@@ -1094,6 +1119,7 @@ void VoiceEngine::Shutdown() {
     if (d.renderWake) { CloseHandle(d.renderWake); d.renderWake = nullptr; }
 #if COMPANION_WITH_WHISPER
     if (d.whisper) { whisper_free(d.whisper); d.whisper = nullptr; }
+    if (d.whisperGame) { whisper_free(d.whisperGame); d.whisperGame = nullptr; }
 #endif
 #if COMPANION_WITH_ONNX && COMPANION_WITH_ESPEAK
     d.tts.reset();
@@ -1269,12 +1295,17 @@ void VoiceEngine::LoadMissing(bool neuralWanted) {
     auto& d = *impl_;
     d.Post([&d, neuralWanted] {
 #if COMPANION_WITH_WHISPER
-        if (!d.whisper && std::filesystem::exists(d.cfg.whisperModel)) {
-            whisper_context_params cp = whisper_context_default_params();
-            cp.use_gpu = false;
-            d.whisper = whisper_init_from_file_with_params(log::Narrow(d.cfg.whisperModel.wstring()).c_str(), cp);
-            log::Info("VoiceEngine: STT {}", d.whisper ? "prêt" : "toujours absent");
+        if ((!d.whisper || !d.whisperOnGpu) && d.cfg.sttGpu && std::filesystem::exists(d.cfg.whisperModel)) {
+            // Le gros modèle vient d'arriver (téléchargé après le démarrage) : il remplace le léger.
+            if (whisper_context* big = Impl::LoadWhisper(d.cfg.whisperModel, true)) {
+                if (d.whisper) whisper_free(d.whisper);
+                d.whisper = big;
+                d.whisperOnGpu = true;
+            }
         }
+        if (!d.whisper) d.whisper = Impl::LoadWhisper(d.cfg.whisperModelGaming, false);
+        if (!d.whisper) d.whisper = Impl::LoadWhisper(d.cfg.whisperModel, false);
+        log::Info("VoiceEngine: STT {}", d.whisper ? "prêt" : "toujours absent");
 #endif
 #if COMPANION_WITH_ONNX && COMPANION_WITH_ESPEAK
         if (!d.tts && std::filesystem::exists(d.cfg.piperModel)) {

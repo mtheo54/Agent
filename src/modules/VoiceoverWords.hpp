@@ -8,7 +8,7 @@
 namespace companion {
 // Temps en secondes depuis le début du FICHIER audio. Vide si Whisper ou le fichier manquent.
 std::vector<TimedWord> TranscribeWords(const std::filesystem::path& audio, const std::filesystem::path& whisperModel,
-                                       int maxSeconds = 1800);
+                                       int maxSeconds = 1800, bool gpu = false);
 // Même chose depuis un son déjà décodé (16 kHz mono).
-std::vector<TimedWord> TranscribeWordsPcm(const std::vector<float>& pcm16k, const std::filesystem::path& whisperModel);
+std::vector<TimedWord> TranscribeWordsPcm(const std::vector<float>& pcm16k, const std::filesystem::path& whisperModel, bool gpu = false);
 }

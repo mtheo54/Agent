@@ -12,19 +12,21 @@
 
 namespace companion {
 
-std::vector<TimedWord> TranscribeWords(const std::filesystem::path& audio, const std::filesystem::path& whisperModel, int maxSeconds) {
+std::vector<TimedWord> TranscribeWords(const std::filesystem::path& audio, const std::filesystem::path& whisperModel, int maxSeconds,
+                                       bool gpu) {
     if (!std::filesystem::exists(whisperModel)) return {};
-    auto words = TranscribeWordsPcm(DecodeAudio16k(audio, maxSeconds), whisperModel);
+    auto words = TranscribeWordsPcm(DecodeAudio16k(audio, maxSeconds), whisperModel, gpu);
     log::Info("Voix off : {} mots transcrits ({})", words.size(), log::Narrow(audio.filename().wstring()));
     return words;
 }
 
-std::vector<TimedWord> TranscribeWordsPcm(const std::vector<float>& pcm, const std::filesystem::path& whisperModel) {
+std::vector<TimedWord> TranscribeWordsPcm(const std::vector<float>& pcm, const std::filesystem::path& whisperModel, bool gpu) {
     std::vector<TimedWord> words;
 #if COMPANION_WITH_WHISPER
     if (pcm.size() < 16000) return words;
     whisper_context_params cp = whisper_context_default_params();
-    cp.use_gpu = false;
+    cp.use_gpu = gpu;
+    cp.flash_attn = gpu;
     whisper_context* w = whisper_init_from_file_with_params(log::Narrow(whisperModel.wstring()).c_str(), cp);
     if (!w) return words;
     whisper_full_params wp = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
@@ -48,6 +50,7 @@ std::vector<TimedWord> TranscribeWordsPcm(const std::vector<float>& pcm, const s
     whisper_free(w);
 #else
     (void)pcm;
+    (void)gpu;
     (void)whisperModel;
 #endif
     return words;

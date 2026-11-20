@@ -133,7 +133,14 @@ VoicePlan ModelPlanner::PlanVoice(const HardwareInfo& hw, bool neuralWanted) {
     // Voix neuronale seulement si elle tient confortablement dans la moitié de la VRAM avec un cerveau
     // correct à côté : cartes de 8 Go et plus. Sinon Piper (CPU) : la VRAM va au cerveau.
     v.neural = neuralWanted && hw.vramGiB >= 7.5;
-    v.whisperFile = hw.ramGiB < 7.5 ? "ggml-tiny-q5_1.bin" : "ggml-base-q5_1.bin";
+    v.whisperGamingFile = hw.ramGiB < 7.5 ? "ggml-tiny-q5_1.bin" : "ggml-base-q5_1.bin";
+    v.whisperFile = v.whisperGamingFile;
+    // Vu sur le terrain : avec « base », la moitié des mots étaient faux en français. Carte de 6 Go et plus : Whisper
+    // large-v3-turbo (bien plus juste, ~0,9 Go sur la carte), hors jeu seulement ; en jeu, le léger sur le processeur.
+    if (hw.vramGiB >= 5.5 && hw.ramGiB >= 11.5) {
+        v.whisperFile = "ggml-large-v3-turbo-q5_0.bin";
+        v.whisperGpu = true;
+    }
     return v;
 }
 
@@ -219,8 +226,11 @@ std::vector<Download> ModelPlanner::Required(const HardwareInfo& hw, bool neural
     for (const auto* m : {normal.model, gaming.model, gamingCpu.model, &Brains().front()})
         if (m && std::ranges::none_of(d, [&](const Download& x) { return x.file == m->file; }))
             d.push_back({m->file, m->url, m->bytes});
-    const std::string w = v.whisperFile;
-    d.push_back({w, "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/" + w, w == "ggml-tiny-q5_1.bin" ? 32152673ull : 59707625ull});
+    for (const std::string& w : {std::string(v.whisperGamingFile), std::string(v.whisperFile)}) {
+        if (std::ranges::any_of(d, [&](const Download& x) { return x.file == w; })) continue;
+        const std::uint64_t bytes = w == "ggml-tiny-q5_1.bin" ? 32152673ull : w == "ggml-large-v3-turbo-q5_0.bin" ? 574041195ull : 59707625ull;
+        d.push_back({w, "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/" + w, bytes});
+    }
     d.push_back({"fr_FR-siwis-medium.onnx",
                  "https://huggingface.co/rhasspy/piper-voices/resolve/main/fr/fr_FR/siwis/medium/fr_FR-siwis-medium.onnx", 63221984ull});
     d.push_back({"fr_FR-siwis-medium.onnx.json",

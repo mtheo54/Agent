@@ -27,6 +27,9 @@ namespace companion {
 
 struct VoiceEngineConfig {
     std::filesystem::path whisperModel = L"assets/models/ggml-base-q5_1.bin";
+    // Modèle léger, sur le processeur : en jeu (0 % de FPS) et en secours si le gros ne se charge pas.
+    std::filesystem::path whisperModelGaming;
+    bool sttGpu = false;  // gros modèle sur la carte graphique (Vulkan) hors jeu, avec recherche en faisceau
     std::filesystem::path piperModel = L"assets/models/fr_FR-siwis-medium.onnx";  // + .onnx.json
     std::filesystem::path espeakDataDir = L"espeak-ng-data";
     std::string language = "fr";
