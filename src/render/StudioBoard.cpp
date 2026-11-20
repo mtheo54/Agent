@@ -56,7 +56,7 @@ void StudioBoard::Render(ID2D1DeviceContext* ctx, float scale, float out, float 
     rmsDb = std::clamp(rmsDb, -60.f, 0.f);
     peakDb = std::clamp(peakDb, -60.f, 3.f);
     shownDb_ = rmsDb > shownDb_ ? rmsDb : shownDb_ + (rmsDb - shownDb_) * 0.12f;
-    holdPeak_ = peakDb > holdPeak_ ? peakDb : holdPeak_ - 0.35f;
+    holdPeak_ = std::max(-60.f, peakDb > holdPeak_ ? peakDb : holdPeak_ - 0.35f);  // jamais sous le bas de l'échelle
     const bool hearing = shownDb_ > -45.f;
 
     // Rangé : derrière son corps (centre du canevas), petit ; sorti : à sa droite, tenu à hauteur de poitrine.
@@ -94,7 +94,7 @@ void StudioBoard::Render(ID2D1DeviceContext* ctx, float scale, float out, float 
     }
     // Valeur de crête en bas.
     wchar_t val[16];
-    const int n = std::swprintf(val, 16, L"%.1f dB", holdPeak_);
+    const int n = holdPeak_ <= -59.5f ? std::swprintf(val, 16, L"silence") : std::swprintf(val, 16, L"%.1f dB", holdPeak_);
     ctx->DrawText(val, static_cast<UINT32>(std::max(n, 0)), title_.Get(), {p.left, p.bottom - 17.f, p.right, p.bottom - 2.f},
                   holdPeak_ > -1.f ? red_.Get() : text_.Get());
     ctx->SetTransform(D2D1::IdentityMatrix());

@@ -21,3 +21,4 @@ companion.json
 # Python
 __pycache__/
 *.pyc
+*.mp4
