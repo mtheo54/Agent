@@ -484,6 +484,8 @@ struct VoiceEngine::Impl {
 #if COMPANION_WITH_WHISPER
     whisper_context* whisper = nullptr;      // modèle principal (large-v3-turbo sur la carte, hors jeu)
     whisper_context* whisperGame = nullptr;  // modèle léger sur le processeur (en jeu), chargé au besoin
+    std::mutex promptMutex;
+    std::string sttPrompt;  // vide = vocabulaire par défaut
     bool whisperOnGpu = false;
     static whisper_context* LoadWhisper(const std::filesystem::path& file, bool gpu) {
         if (file.empty() || !std::filesystem::exists(file)) return nullptr;
@@ -743,9 +745,15 @@ struct VoiceEngine::Impl {
         wp.print_special = false;
         wp.suppress_blank = true;
         // Vocabulaire attendu : Whisper l'orthographie juste (« FL Studio » et pas « fête studio »).
-        wp.initial_prompt = "Omnis, FL Studio, DAW, MAO, VST, ASIO, vu-mètre, limiteur, mode, 808, kick, snare, sidechain, mix, "
-                            "master, prod, beat, instru, Antelope, Zen Go, League of Legends, LoL, Valorant, Discord, AutoCAD "
-                            "Electrical, After Effects.";
+        std::string prompt;
+        {
+            std::scoped_lock lock(promptMutex);
+            prompt = sttPrompt;
+        }
+        if (prompt.empty())
+            prompt = "Omnis, FL Studio, DAW, MAO, VST, ASIO, vu-mètre, limiteur, mode, 808, kick, snare, sidechain, mix, master, prod, "
+                     "beat, instru, Antelope, Zen Go, League of Legends, LoL, Valorant, Discord, AutoCAD Electrical, After Effects.";
+        wp.initial_prompt = prompt.c_str();
 
         if (whisper_full(ctx, wp, pcm.data(), static_cast<int>(pcm.size())) != 0) {
             log::Info("whisper: échec de transcription");
@@ -1290,6 +1298,10 @@ void VoiceEngine::SetNeuralVoice(bool enabled, bool inGame) noexcept {
     d.neuralEnabled = enabled;
 }
 bool VoiceEngine::HasNeuralVoice() const noexcept { return impl_->neural.Ready(); }
+void VoiceEngine::SetSttPrompt(std::string prompt) {
+    std::scoped_lock lock(impl_->promptMutex);
+    impl_->sttPrompt = std::move(prompt);
+}
 void VoiceEngine::SetQuirks(float quirks01) noexcept { impl_->quirks = std::clamp(quirks01, 0.f, 1.f); }
 void VoiceEngine::LoadMissing(bool neuralWanted) {
     auto& d = *impl_;

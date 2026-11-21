@@ -36,6 +36,7 @@
 #include "core/MemoryDB.hpp"
 #include "core/Playbooks.hpp"
 #include "core/Skills.hpp"
+#include "core/SpeechFix.hpp"
 #include "core/PermissionGate.hpp"
 #include "core/ResourceGovernor.hpp"
 #include "modules/DesktopPilot.hpp"
@@ -264,6 +265,11 @@ private:
     void RunPilotSteps(const PilotTarget& t, std::vector<PilotStep> steps, std::stop_token stop);
     // Compétences créées par Omnis à ta demande et avec ton accord (Skills.hpp).
     std::vector<Skill> skills_;
+    // Banque de mots + autocorrecteur de transcription ; domaine actif selon ce que tu fais.
+    SpeechFix speechFix_;
+    std::string sttDomain_, lastUserText_;
+    void UpdateSttVocabulary(bool force = false);
+    bool HandleVocabCommand(const std::string& text, const std::string& lower);
     std::optional<std::string> aeForcedBody_;  // compétence After Effects : ce script-là, sans en écrire un autre
     [[nodiscard]] std::filesystem::path SkillsDir() const { return d_.dataDir / L"skills"; }
     void ReloadSkills();

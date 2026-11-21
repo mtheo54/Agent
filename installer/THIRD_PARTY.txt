@@ -18,3 +18,10 @@ Piper fr_FR-siwis-medium      voir la fiche du modèle  https://huggingface.co/r
 yt-dlp, deno (entraînement vidéo, à la demande, empreinte SHA-256 vérifiée)  Unlicense / MIT
 
 Outils d'autres éditeurs, jamais inclus : VB-Cable (VB-Audio, à installer soi-même pour parler dans Discord).
+
+--------------------------------------------------------------------------------
+assets/knowledge/fr_frequents.txt — 40 000 mots français les plus fréquents
+Source : FrequencyWords (Hermit Dave), https://github.com/hermitdave/FrequencyWords
+(listes tirées des sous-titres OpenSubtitles). Données sous licence CC BY-SA 4.0 :
+https://creativecommons.org/licenses/by-sa/4.0/ — ce fichier dérivé (liste tronquée,
+sans les fréquences) est redistribué sous la même licence.

@@ -79,6 +79,10 @@ AgentOrchestrator::~AgentOrchestrator() { Stop(); }
 void AgentOrchestrator::Start() {
     LoadKnowledgePack();
     ReloadSkills();  // méthodes de pro + compétences apprises
+    speechFix_.Load(d_.assetsDir / L"knowledge" / L"vocab.json", d_.assetsDir / L"knowledge" / L"fr_frequents.txt",
+                    d_.dataDir / L"mots_perso.json");
+    log::Info("Banque de mots : {} termes", speechFix_.Size());
+    UpdateSttVocabulary(true);
     log::Info("Méthodes de pro : {} domaines", playbooks_.size());
     if (!worker_.joinable()) worker_ = std::jthread([this](std::stop_token st) { WorkerMain(st); });
 }
@@ -193,6 +197,17 @@ void AgentOrchestrator::OnBargeIn() {
 void AgentOrchestrator::OnTranscript(std::string text, EmotionEstimate emotion) {
     text = Trim(std::move(text));
     if (text.empty()) return;
+    // Autocorrecteur : ce que Whisper a mal écrit et qui sonne comme un mot de la banque (« fête studio » -> « FL Studio »).
+    {
+        std::vector<SpeechFix::Change> changes;
+        std::string fixed = speechFix_.Fix(text, &changes);
+        if (!changes.empty()) {
+            std::string what;
+            for (const auto& c : changes) what += (what.empty() ? "" : ", ") + c.from + " -> " + c.to;
+            log::Info("Écoute : corrigé ({})", what);
+            text = std::move(fixed);
+        }
+    }
 
     // Émotion : la voix donne l'activation, les mots tranchent la tonalité.
     const EmotionEstimate e = FuseWithText(std::move(emotion), text);
@@ -322,6 +337,7 @@ void AgentOrchestrator::WorkerMain(std::stop_token st) {
             }
         }
         UpdateStudioCapture();
+        UpdateSttVocabulary();
         CheckGameEvents();  // au plus toutes les 5 s, comme le sondage de l'API LoL
         UpdatePerfMonitor();
         CheckSubstitute();
@@ -2633,6 +2649,8 @@ void AgentOrchestrator::Handle(const std::string& text, std::stop_token stop) {
     } reportAfter{*this, stop};
     const auto history = d_.db.RecentMessages(8);  // avant d'ajouter la question courante
     d_.db.AddMessage("user", text);
+    lastUserText_ = text;  // contexte pour Whisper : la phrase suivante est souvent dans le même sujet
+    d_.voice.SetSttPrompt(speechFix_.Prompt(lastUserText_));
     if (HandleLevel0(text, stop)) return;
     if (TryFuzzyCommand(text, stop)) return;  // « viens sur discord avec nous », « tu peux te mettre en mode léger »…
 
@@ -2711,6 +2729,7 @@ bool AgentOrchestrator::TryFuzzyCommand(const std::string& text, std::stop_token
 bool AgentOrchestrator::HandleLevel0(const std::string& text, std::stop_token stop) {
     const std::string lower = Lower(text);
     if (HandleHelp(lower)) return true;
+    if (HandleVocabCommand(text, lower)) return true;  // « quand je dis X, c'est Y », « retiens le mot Z »
     if (HandleSkillCommand(text, lower, stop)) return true;  // « apprends à… », compétences apprises
 
     // « Arrête le mode FL », « arrête d'écouter » : l'écoute du studio est coupée jusqu'à ce que FL ferme ou qu'on la redemande.
@@ -3831,4 +3850,69 @@ bool AgentOrchestrator::MeterVisible() const {
     if (meterVisible_.load() || NowMs() < listenUntilMs_.load()) return true;
     return mode_.load() == SystemMode::Studio && !d_.analyzer.Snapshot().silent;
 }
+}  // namespace companion
+
+// ---------------------------------------------------------------------------
+namespace companion {
+
+// Domaine actif (musique, jeu, montage, électrique) : vocabulaire donné à Whisper et mots que l'autocorrecteur peut remettre.
+void AgentOrchestrator::UpdateSttVocabulary(bool force) {
+    const SystemMode m = mode_.load();
+    std::string domain = m == SystemMode::Gaming ? "jeu" : m == SystemMode::Studio ? "musique" : "";
+    if (domain.empty()) {
+        const PilotTarget fg = DesktopPilot::Foreground();
+        domain = fg.app == PilotApp::AfterEffects ? "montage" : fg.app == PilotApp::AutoCad ? "electrique"
+               : fg.app == PilotApp::FlStudio ? "musique" : "general";
+    }
+    if (!force && domain == sttDomain_) return;
+    sttDomain_ = domain;
+    // Hors domaine précis : un peu de tout (musique et jeu d'abord, ce dont il parle le plus).
+    speechFix_.SetDomains(domain == "general" ? std::vector<std::string>{"musique", "jeu"} : std::vector<std::string>{domain});
+    d_.voice.SetSttPrompt(speechFix_.Prompt(lastUserText_));
+}
+
+// « Quand je dis fête studio, c'est FL Studio », « retiens le mot Nexus », « oublie le mot Nexus ».
+bool AgentOrchestrator::HandleVocabCommand(const std::string& text, const std::string& lower) {
+    static const std::regex fixRe(R"(quand (?:je dis|tu entends|t'entends) (.+?),? (?:c'est|ça veut dire|ca veut dire|je veux dire|en fait c'est) (.+))",
+                                  std::regex::icase);
+    const auto clean = [](std::string w) {
+        w = Trim(std::move(w));
+        while (!w.empty() && std::string_view("\"'.,!?").find(w.back()) != std::string_view::npos) w.pop_back();
+        while (!w.empty() && std::string_view("\"'").find(w.front()) != std::string_view::npos) w.erase(0, 1);
+        for (const char* q : {"«", "»"}) {  // guillemets français (2 octets en UTF-8)
+            if (w.starts_with(q)) w.erase(0, 2);
+            if (w.ends_with(q)) w.erase(w.size() - 2);
+        }
+        return Trim(std::move(w));
+    };
+    std::smatch m;
+    if (std::regex_search(text, m, fixRe)) {
+        const std::string from = clean(m[1].str()), to = clean(m[2].str());
+        if (from.size() >= 2 && to.size() >= 2 && from.size() < 60 && to.size() < 60) {
+            speechFix_.AddFix(from, to);
+            speechFix_.AddWord(to);
+            d_.voice.SetSttPrompt(speechFix_.Prompt(lastUserText_));
+            Say("Noté : quand j'entends " + from + ", je comprends " + to + ".");
+            return true;
+        }
+    }
+    for (const char* key : {"retiens le mot ", "apprends le mot ", "retiens le nom ", "apprends le nom ", "retiens le pseudo "})
+        if (const auto p = lower.find(key); p != std::string::npos) {
+            const std::string w = clean(text.substr(p + std::string_view(key).size()));
+            if (w.size() < 2) return false;
+            speechFix_.AddWord(w);
+            d_.voice.SetSttPrompt(speechFix_.Prompt(lastUserText_));
+            Say("Retenu : " + w + ". Je l'écrirai comme ça.");
+            return true;
+        }
+    for (const char* key : {"oublie le mot ", "oublie le nom ", "oublie le pseudo "})
+        if (const auto p = lower.find(key); p != std::string::npos) {
+            const std::string w = clean(text.substr(p + std::string_view(key).size()));
+            Say(speechFix_.Forget(w) ? "C'est oublié." : "Je l'avais pas, ce mot-là.");
+            d_.voice.SetSttPrompt(speechFix_.Prompt(lastUserText_));
+            return true;
+        }
+    return false;
+}
+
 }  // namespace companion
