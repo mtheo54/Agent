@@ -5,6 +5,7 @@
 #include "audio/VoiceColor.hpp"
 #include "audio/TextNormalizerFr.hpp"
 #include "core/Log.hpp"
+#include "core/LocalBrain.hpp"
 
 #include <windows.h>
 #include <audioclient.h>
@@ -485,6 +486,44 @@ struct VoiceEngine::Impl {
     whisper_context* whisper = nullptr;      // modèle principal (large-v3-turbo sur la carte, hors jeu)
     whisper_context* whisperGame = nullptr;  // modèle léger sur le processeur (en jeu), chargé au besoin
     std::mutex promptMutex;
+    // Qwen3-ASR : chargé au premier besoin (hors jeu : carte ; en jeu : processeur, et le gros libère la carte).
+    std::unique_ptr<LocalBrain> asr, asrGame;
+    bool asrTried = false, asrGameTried = false;
+    static std::unique_ptr<LocalBrain> LoadAsr(const std::filesystem::path& model, const std::filesystem::path& mmproj, bool gpu,
+                                               int threads) {
+        if (model.empty() || mmproj.empty() || !std::filesystem::exists(model) || !std::filesystem::exists(mmproj)) return nullptr;
+        auto b = std::make_unique<LocalBrain>();
+        LocalBrainConfig c;
+        c.model = model;
+        c.mmproj = mmproj;
+        c.contextTokens = 2048;
+        c.gpuLayers = 99;
+        c.threads = threads;
+        b->Configure(gpu, threads);
+        const bool ok = b->Load(c);
+        log::Info("VoiceEngine: Qwen3-ASR {} sur {} : {}", log::Narrow(model.filename().wstring()), gpu ? "la carte graphique" : "le processeur",
+                  ok ? "prêt" : "échec");
+        return ok ? std::move(b) : nullptr;
+    }
+    LocalBrain* AsrContext() {
+        if (gaming.load()) {
+            if (asr) {  // en jeu : le gros modèle rend la carte au jeu
+                asr.reset();
+                asrTried = false;
+            }
+            if (!asrGame && !asrGameTried) {
+                asrGameTried = true;
+                asrGame = LoadAsr(cfg.asrModelGaming, cfg.asrMmprojGaming, false, cfg.sttThreadsGaming);
+            }
+            return asrGame.get();
+        }
+        if (!asr && !asrTried) {
+            asrTried = true;
+            asr = LoadAsr(cfg.asrModel, cfg.asrMmproj, cfg.asrGpu, cfg.sttThreads);
+            if (!asr && cfg.asrGpu) asr = LoadAsr(cfg.asrModel, cfg.asrMmproj, false, cfg.sttThreads);  // la carte refuse
+        }
+        return asr ? asr.get() : asrGame.get();
+    }
     std::string sttPrompt;  // vide = vocabulaire par défaut
     bool whisperOnGpu = false;
     static whisper_context* LoadWhisper(const std::filesystem::path& file, bool gpu) {
@@ -726,8 +765,27 @@ struct VoiceEngine::Impl {
     // Texte d'un segment 16 kHz mono (vide si rien de reconnu).
     std::string Whisper(std::vector<float> pcm) {
 #if COMPANION_WITH_WHISPER
+        if (pcm.size() < kSttSampleRate / 4) return {};  // < 250 ms : ignoré
+        // Qwen3-ASR d'abord (contexte : banque de mots du moment + dernière phrase) ; Whisper en secours.
+        if (LocalBrain* q = AsrContext()) {
+            std::string context;
+            {
+                std::scoped_lock lock(promptMutex);
+                context = sttPrompt;
+            }
+            std::vector<float> padded = pcm;
+            if (padded.size() < kSttSampleRate) padded.resize(kSttSampleRate, 0.f);
+            if (auto r = q->TranscribeAudio(padded, context)) {
+                std::string text = *r;
+                const auto first = text.find_first_not_of(" \n");
+                if (first == std::string::npos) return {};
+                text.erase(0, first);
+                while (!text.empty() && (text.back() == ' ' || text.back() == '\n')) text.pop_back();
+                return text;
+            }
+        }
         whisper_context* const ctx = SttContext();
-        if (!ctx || pcm.size() < kSttSampleRate / 4) return {};  // < 250 ms : ignoré
+        if (!ctx) return {};
         if (pcm.size() < kSttSampleRate + kSttSampleRate / 10) pcm.resize(kSttSampleRate + kSttSampleRate / 10, 0.f);
 
         // Gros modèle sur la carte : recherche en faisceau (5 hypothèses), nettement plus juste en français. Sinon glouton.
@@ -1306,6 +1364,9 @@ void VoiceEngine::SetQuirks(float quirks01) noexcept { impl_->quirks = std::clam
 void VoiceEngine::LoadMissing(bool neuralWanted) {
     auto& d = *impl_;
     d.Post([&d, neuralWanted] {
+        // Qwen3-ASR téléchargé après le démarrage : on retente au prochain besoin.
+        d.asrTried = d.asr != nullptr;
+        d.asrGameTried = d.asrGame != nullptr;
 #if COMPANION_WITH_WHISPER
         if ((!d.whisper || !d.whisperOnGpu) && d.cfg.sttGpu && std::filesystem::exists(d.cfg.whisperModel)) {
             // Le gros modèle vient d'arriver (téléchargé après le démarrage) : il remplace le léger.

@@ -141,6 +141,20 @@ VoicePlan ModelPlanner::PlanVoice(const HardwareInfo& hw, bool neuralWanted) {
         v.whisperFile = "ggml-large-v3-turbo-q5_0.bin";
         v.whisperGpu = true;
     }
+    // Qwen3-ASR : sur le jargon (FL Studio, ASIO, Kai'Sa, Omnis…), avec la banque de mots en contexte, plus juste que Whisper
+    // (testé sur un micro dégradé) et 4 fois plus rapide sur processeur. Hors jeu : 1.7B sur la carte (~2,6 Go) ; en jeu :
+    // 0.6B sur le processeur (bien meilleur que Whisper base, ~1 Go de RAM).
+    if (hw.ramGiB >= 11.5) {
+        v.asrGamingFile = "Qwen3-ASR-0.6B-Q8_0.gguf";
+        v.asrGamingMmproj = "Qwen3-ASR-0.6B-mmproj-Q8_0.gguf";
+        if (hw.vramGiB >= 7.5) {
+            v.asrFile = "Qwen3-ASR-1.7B-Q8_0.gguf";
+            v.asrMmproj = "Qwen3-ASR-1.7B-mmproj-Q8_0.gguf";
+        } else {  // petite carte : le 0.6B partout, sur le processeur
+            v.asrFile = v.asrGamingFile;
+            v.asrMmproj = v.asrGamingMmproj;
+        }
+    }
     return v;
 }
 
@@ -231,6 +245,16 @@ std::vector<Download> ModelPlanner::Required(const HardwareInfo& hw, bool neural
         const std::uint64_t bytes = w == "ggml-tiny-q5_1.bin" ? 32152673ull : w == "ggml-large-v3-turbo-q5_0.bin" ? 574041195ull : 59707625ull;
         d.push_back({w, "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/" + w, bytes});
     }
+    struct Asr { const char* file; const char* url; std::uint64_t bytes; };
+    static const Asr kAsr[] = {
+        {"Qwen3-ASR-1.7B-Q8_0.gguf", "https://huggingface.co/ggml-org/Qwen3-ASR-1.7B-GGUF/resolve/main/Qwen3-ASR-1.7B-Q8_0.gguf", 2165035232ull},
+        {"Qwen3-ASR-1.7B-mmproj-Q8_0.gguf", "https://huggingface.co/ggml-org/Qwen3-ASR-1.7B-GGUF/resolve/main/mmproj-Qwen3-ASR-1.7B-Q8_0.gguf", 355709376ull},
+        {"Qwen3-ASR-0.6B-Q8_0.gguf", "https://huggingface.co/ggml-org/Qwen3-ASR-0.6B-GGUF/resolve/main/Qwen3-ASR-0.6B-Q8_0.gguf", 804749536ull},
+        {"Qwen3-ASR-0.6B-mmproj-Q8_0.gguf", "https://huggingface.co/ggml-org/Qwen3-ASR-0.6B-GGUF/resolve/main/mmproj-Qwen3-ASR-0.6B-Q8_0.gguf", 214392544ull}};
+    for (const char* f : {v.asrFile, v.asrMmproj, v.asrGamingFile, v.asrGamingMmproj})
+        for (const auto& a : kAsr)
+            if (*f && std::string_view(f) == a.file && std::ranges::none_of(d, [&](const Download& x) { return x.file == a.file; }))
+                d.push_back({a.file, a.url, a.bytes});
     d.push_back({"fr_FR-siwis-medium.onnx",
                  "https://huggingface.co/rhasspy/piper-voices/resolve/main/fr/fr_FR/siwis/medium/fr_FR-siwis-medium.onnx", 63221984ull});
     d.push_back({"fr_FR-siwis-medium.onnx.json",

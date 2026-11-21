@@ -51,6 +51,11 @@ struct VoicePlan {
     const char* whisperFile = "ggml-base-q5_1.bin";        // hors jeu
     const char* whisperGamingFile = "ggml-base-q5_1.bin";  // en jeu (processeur) et en secours
     bool whisperGpu = false;                                // le modèle hors jeu tourne sur la carte graphique
+    // Qwen3-ASR (reconnaissance vocale avec contexte : banque de mots + phrase précédente) ; vide = Whisper seul.
+    const char* asrFile = "";         // hors jeu, sur la carte : 1.7B
+    const char* asrMmproj = "";
+    const char* asrGamingFile = "";   // en jeu, sur le processeur : 0.6B
+    const char* asrGamingMmproj = "";
 };
 
 // Presets de jeu : où et quoi charger quand tu lui parles en partie.

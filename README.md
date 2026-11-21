@@ -332,6 +332,15 @@ Omnis écoute la sortie de FL Studio directement (pas ton micro), via la capture
 - **Voix off (After Effects)** : « sous-titre ma voix off » — Omnis demande au projet le fichier du calque audio (sélectionné, sinon le premier), le décode (Media Foundation), le transcrit avec Whisper mot par mot (`token_timestamps`), ramène les instants au temps de la composition (position et étirement du calque) et pose les sous-titres : 1 à 3 mots, coupés aux pauses et à la ponctuation, mot fort seul, plus gros et en couleur, petite entrée en pop. « Quand je le dis » : la recette reçoit `QUAND "mot"` et les gestes démarrent à l'instant exact du mot (recherche sans accents, expressions de plusieurs mots) ; « ici » = tête de lecture. Les « toujours… / jamais… » sont retenus comme règles de style. Transcription gardée en cache tant que le fichier ne change pas.
 - **FL Studio, accords** : « fais-moi une suite d'accords trap sombre ». Le modèle donne la tonalité et les degrés (grammaire), Omnis empile les tierces dans la gamme (toujours dans la tonalité), choisit les renversements qui bougent le moins et ajoute la basse ; script piano roll `Omnis - accords.pyscript` (FL 21.2+, menu Outils → Scripts).
 
+## Reconnaissance vocale
+
+- **Qwen3-ASR** (via llama.cpp + mtmd, comme la vision) : hors jeu le 1.7B sur la carte, en jeu le 0.6B sur le processeur. Le
+  contexte (banque de mots du domaine actif + ta dernière phrase) passe dans le message système, la langue est imposée.
+  Test sur un micro dégradé : avec contexte, il trouve « Kai'Sa », « Thresh », « ASIO », « Omnis » là où Whisper turbo se
+  trompe, et il est 4 fois plus rapide sur processeur (pas de fenêtre fixe de 30 s).
+- **Whisper** reste : sous-titres After Effects (instant de chaque mot) et secours si Qwen3-ASR manque ou échoue.
+- **Banque de mots + autocorrecteur** (SpeechFix) après la transcription, quel que soit le moteur.
+
 ## Compétences qu'il se crée (avec ton accord)
 
 « Apprends Blender », « apprends à exporter en MP3 » : Omnis classe la demande (savoir / action / refus, grammaire). Il refuse tout ce qui touche aux comptes, aux messages, à la triche, au piratage ou à la sécurité. Une compétence n'est jamais du code natif : c'est un fichier JSON dans `%LOCALAPPDATA%\CompanionAI\skills`, exécuté par les briques déjà sûres d'Omnis.

@@ -86,6 +86,9 @@ public:
     // Module de vision (mmproj) téléchargé après coup : branché sans recharger le cerveau (chargé à la 1re image).
     void SetMmproj(std::filesystem::path p) { cfg_.mmproj = std::move(p); }
     static const char* MediaMarker();
+    // Modèle audio -> texte (Qwen3-ASR + son encodeur en mmproj) : transcription d'un son 16 kHz mono.
+    std::optional<std::string> TranscribeAudio(const std::vector<float>& pcm16k, const std::string& context,
+                                               const std::string& language = "French", int maxTokens = 160);
     std::optional<std::string> GenerateWithImage(const std::vector<ChatTurn>& messages, const unsigned char* rgb,
                                                  int width, int height, const GenerateOptions& opt);
 

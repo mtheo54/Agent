@@ -452,6 +452,65 @@ std::optional<std::string> LocalBrain::GenerateWithImage(const std::vector<ChatT
 #endif
 }
 
+// Reconnaissance vocale avec un modèle « audio -> texte » (Qwen3-ASR) : contexte dans le message système (vocabulaire,
+// phrase précédente), langue imposée en début de réponse (« language French<asr_text> »), décodage glouton.
+std::optional<std::string> LocalBrain::TranscribeAudio(const std::vector<float>& pcm16k, const std::string& context,
+                                                       const std::string& language, int maxTokens) {
+    const BusyScope busy(busy_);
+#if COMPANION_WITH_MTMD
+    if (cfg_.mmproj.empty() || !std::filesystem::exists(cfg_.mmproj) || pcm16k.size() < 1600) return std::nullopt;
+    if (!IsLoaded() && !Load(cfg_)) return std::nullopt;
+    if (!mtmd_) {
+        mtmd_context_params mp = mtmd_context_params_default();
+        mp.use_gpu = useGpu_;
+        mp.n_threads = cfg_.threads;
+        mp.print_timings = false;
+        mp.warmup = false;
+        mtmd_ = mtmd_init_from_file(log::Narrow(cfg_.mmproj.wstring()).c_str(), model_, mp);
+        if (!mtmd_ || !mtmd_support_audio(mtmd_)) {
+            log::Info("LocalBrain: encodeur audio invalide");
+            if (mtmd_) mtmd_free(mtmd_);
+            mtmd_ = nullptr;
+            return std::nullopt;
+        }
+    }
+    std::string prompt;
+    if (!context.empty()) prompt += "<|im_start|>system\n" + context + "<|im_end|>\n";
+    prompt += std::string("<|im_start|>user\n") + mtmd_default_marker() + "<|im_end|>\n<|im_start|>assistant\n";
+    if (!language.empty()) prompt += "language " + language + "<asr_text>";
+    llama_memory_clear(llama_get_memory(ctx_), true);
+    cachedTokens_.clear();
+    mtmd_bitmap* bitmap = mtmd_bitmap_init_from_audio(pcm16k.size(), pcm16k.data());
+    mtmd_input_chunks* chunks = mtmd_input_chunks_init();
+    const mtmd_input_text text{prompt.c_str(), prompt.size(), true, true};
+    const mtmd_bitmap* bitmaps[] = {bitmap};
+    std::optional<std::string> result;
+    llama_pos nPast = 0;
+    GenerateOptions opt;
+    opt.maxTokens = maxTokens;
+    opt.temperature = 0.f;
+    if (mtmd_tokenize(mtmd_, chunks, &text, bitmaps, 1) == 0 &&
+        static_cast<int>(mtmd_helper_get_n_pos(chunks)) + maxTokens < static_cast<int>(llama_n_ctx(ctx_)) &&
+        mtmd_helper_eval_chunks(mtmd_, ctx_, chunks, 0, 0, static_cast<int32_t>(llama_n_batch(ctx_)), true, &nPast) == 0) {
+        result = SampleLoop(opt, static_cast<int>(llama_n_ctx(ctx_)), /*trackTokens=*/false);
+        // Sans langue imposée, le modèle écrit « language French<asr_text>… » : on garde le texte.
+        if (result) {
+            if (const auto p = result->find("<asr_text>"); p != std::string::npos) result->erase(0, p + 10);
+            while (!result->empty() && (result->front() == ' ' || result->front() == '\n')) result->erase(0, 1);
+        }
+    } else {
+        log::Info("LocalBrain: évaluation de l'audio impossible");
+    }
+    mtmd_input_chunks_free(chunks);
+    mtmd_bitmap_free(bitmap);
+    llama_memory_clear(llama_get_memory(ctx_), true);
+    return result;
+#else
+    (void)pcm16k; (void)context; (void)language; (void)maxTokens;
+    return std::nullopt;
+#endif
+}
+
 #else  // !COMPANION_WITH_LLAMA : build sans llama.cpp, le niveau 1 est désactivé.
 
 LocalBrain::LocalBrain() = default;
@@ -467,6 +526,9 @@ bool LocalBrain::HasVision() const { return false; }
 const char* LocalBrain::MediaMarker() { return "<__media__>"; }
 std::optional<std::string> LocalBrain::GenerateWithImage(const std::vector<ChatTurn>&, const unsigned char*, int, int,
                                                          const GenerateOptions&) { return std::nullopt; }
+std::optional<std::string> LocalBrain::TranscribeAudio(const std::vector<float>&, const std::string&, const std::string&, int) {
+    return std::nullopt;
+}
 
 #endif
 

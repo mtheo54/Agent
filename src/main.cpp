@@ -529,6 +529,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     vcfg.whisperModel = modelsDir / vplan.whisperFile;
     vcfg.whisperModelGaming = modelsDir / vplan.whisperGamingFile;
     vcfg.sttGpu = vplan.whisperGpu && cfg.gpuSafeStage < 2;  // mode prudent « processeur » : Whisper aussi
+    if (*vplan.asrFile) {
+        vcfg.asrModel = modelsDir / vplan.asrFile;
+        vcfg.asrMmproj = modelsDir / vplan.asrMmproj;
+        vcfg.asrModelGaming = modelsDir / vplan.asrGamingFile;
+        vcfg.asrMmprojGaming = modelsDir / vplan.asrGamingMmproj;
+        vcfg.asrGpu = vplan.whisperGpu && cfg.gpuSafeStage < 2 && vplan.asrFile != vplan.asrGamingFile;
+    }
     // Gros modèle pas encore téléchargé : le léger en attendant ; LoadMissing le remplace dès qu'il arrive.
     vcfg.piperModel = root / L"assets" / L"models" / L"fr_FR-siwis-medium.onnx";
     vcfg.espeakDataDir = root / L"espeak-ng-data";

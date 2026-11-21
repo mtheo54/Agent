@@ -30,6 +30,9 @@ struct VoiceEngineConfig {
     // Modèle léger, sur le processeur : en jeu (0 % de FPS) et en secours si le gros ne se charge pas.
     std::filesystem::path whisperModelGaming;
     bool sttGpu = false;  // gros modèle sur la carte graphique (Vulkan) hors jeu, avec recherche en faisceau
+    // Qwen3-ASR (prioritaire sur Whisper s'il est là) : hors jeu sur la carte, en jeu sur le processeur. Contexte = consigne.
+    std::filesystem::path asrModel, asrMmproj, asrModelGaming, asrMmprojGaming;
+    bool asrGpu = false;
     std::filesystem::path piperModel = L"assets/models/fr_FR-siwis-medium.onnx";  // + .onnx.json
     std::filesystem::path espeakDataDir = L"espeak-ng-data";
     std::string language = "fr";

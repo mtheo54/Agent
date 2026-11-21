@@ -14,7 +14,7 @@ int main(int argc, char** argv) {
         std::vector<float> pcm(b.size() / 4); std::memcpy(pcm.data(), b.data(), pcm.size() * 4);
         whisper_full_params wp = whisper_full_default_params(beam ? WHISPER_SAMPLING_BEAM_SEARCH : WHISPER_SAMPLING_GREEDY);
         if (beam) wp.beam_search.beam_size = 5;
-        wp.language = "fr"; wp.n_threads = 4; wp.no_context = true; wp.suppress_blank = true;
+        wp.language = "fr"; wp.n_threads = 2; wp.no_context = true; wp.suppress_blank = true;
         wp.print_progress = wp.print_realtime = wp.print_timestamps = wp.print_special = false;
         wp.initial_prompt = "Omnis, FL Studio, DAW, MAO, VST, ASIO, vu-mètre, limiteur, mode, 808, kick, snare, sidechain, mix, master, prod, beat, instru, Antelope, Zen Go, League of Legends, LoL, Valorant, Discord, AutoCAD Electrical, After Effects.";
         const auto t0 = std::chrono::steady_clock::now();
