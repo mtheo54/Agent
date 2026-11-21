@@ -497,6 +497,7 @@ struct VoiceEngine::Impl {
         c.model = model;
         c.mmproj = mmproj;
         c.contextTokens = 2048;
+        c.mediaBatch = 512;  // ~40 s d'audio par lot : largement assez pour une phrase
         c.gpuLayers = 99;
         c.threads = threads;
         b->Configure(gpu, threads);
@@ -504,6 +505,20 @@ struct VoiceEngine::Impl {
         log::Info("VoiceEngine: Qwen3-ASR {} sur {} : {}", log::Narrow(model.filename().wstring()), gpu ? "la carte graphique" : "le processeur",
                   ok ? "prêt" : "échec");
         return ok ? std::move(b) : nullptr;
+    }
+    // Seconde sécurité : trois mots de la liste du contexte d'affilée (« FL Studio, ASIO, vu-mètre ») = recopie, pas de parole.
+    static bool EchoesContext(const std::string& text, const std::string& context) {
+        const std::string list = context.substr(0, context.find(". "));
+        std::vector<std::string> items;
+        for (size_t p = 0; p < list.size();) {
+            size_t q = list.find(", ", p);
+            if (q == std::string::npos) q = list.size();
+            items.push_back(list.substr(p, q - p));
+            p = q + 2;
+        }
+        for (size_t i = 0; i + 2 < items.size(); ++i)
+            if (text.find(items[i] + ", " + items[i + 1] + ", " + items[i + 2]) != std::string::npos) return true;
+        return false;
     }
     LocalBrain* AsrContext() {
         if (gaming.load()) {
@@ -775,12 +790,20 @@ struct VoiceEngine::Impl {
             }
             std::vector<float> padded = pcm;
             if (padded.size() < kSttSampleRate) padded.resize(kSttSampleRate, 0.f);
-            if (auto r = q->TranscribeAudio(padded, context)) {
+            // Langue NON imposée : sur du bruit, un souffle ou de la musique, le modèle répond « language None » et rien. Imposer
+            // le français (ou donner un contexte) le faisait inventer : il recopiait la liste de mots, ou une phrase au hasard.
+            std::string lang;
+            if (auto r = q->TranscribeAudio(padded, context, "", 160, &lang)) {
+                if (lang.empty() || lang == "None") return {};  // pas de parole
                 std::string text = *r;
                 const auto first = text.find_first_not_of(" \n");
                 if (first == std::string::npos) return {};
                 text.erase(0, first);
                 while (!text.empty() && (text.back() == ' ' || text.back() == '\n')) text.pop_back();
+                if (EchoesContext(text, context)) {
+                    log::Info("Écoute : transcription rejetée (recopie la liste de mots)");
+                    return {};
+                }
                 return text;
             }
         }
@@ -1139,6 +1162,8 @@ bool VoiceEngine::Initialize(const VoiceEngineConfig& cfg) {
         if (!d.whisper && cfg.sttGpu) d.whisper = Impl::LoadWhisper(cfg.whisperModel, false);
     }
     log::Info("VoiceEngine: STT {}", d.whisper ? "prêt" : "désactivé (modèle absent)");
+    // Qwen3-ASR chargé dès maintenant, en arrière-plan : la première phrase n'attend pas 2,5 Go de chargement.
+    d.Post([&d] { d.AsrContext(); });
 #endif
 
 #if COMPANION_WITH_ONNX && COMPANION_WITH_ESPEAK
@@ -1177,6 +1202,8 @@ void VoiceEngine::Shutdown() {
     EndListening();
     StopSpeaking();
     if (d.worker.joinable()) { d.worker.request_stop(); d.worker.join(); }
+    d.asr.reset();  // Qwen3-ASR libéré après l'arrêt du fil qui s'en sert
+    d.asrGame.reset();
     if (d.renderThread.joinable()) {
         d.renderThread.request_stop();
         SetEvent(d.renderWake);

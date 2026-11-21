@@ -3873,8 +3873,11 @@ void AgentOrchestrator::UpdateSttVocabulary(bool force) {
 
 // « Quand je dis fête studio, c'est FL Studio », « retiens le mot Nexus », « oublie le mot Nexus ».
 bool AgentOrchestrator::HandleVocabCommand(const std::string& text, const std::string& lower) {
-    static const std::regex fixRe(R"(quand (?:je dis|tu entends|t'entends) (.+?),? (?:c'est|ça veut dire|ca veut dire|je veux dire|en fait c'est) (.+))",
-                                  std::regex::icase);
+    // Ancré au début de la phrase (après « Omnis, » éventuel) : « fais apparaître le titre quand je dis bonjour, c'est pour
+    // l'intro » est une demande After Effects, pas une correction de vocabulaire.
+    static const std::regex fixRe(
+        R"(^\s*(?:omnis\s*[,.!]?\s*)?quand (?:je dis|tu entends|t'entends) (.+?),? (?:c'est|ça veut dire|ca veut dire|je veux dire|en fait c'est) (.+))",
+        std::regex::icase);
     const auto clean = [](std::string w) {
         w = Trim(std::move(w));
         while (!w.empty() && std::string_view("\"'.,!?").find(w.back()) != std::string_view::npos) w.pop_back();

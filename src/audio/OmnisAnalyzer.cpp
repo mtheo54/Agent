@@ -188,6 +188,7 @@ void OmnisAnalyzer::Reset() {
     blocks_.clear();
     bandEnergy_.fill(0.0);
     bandsValid_ = false;
+    snapshotAt_ = {};  // plus de résultat en cache après une remise à zéro
 }
 
 void OmnisAnalyzer::Push(const float* in, std::size_t frames) noexcept {
@@ -333,7 +334,12 @@ MixMetrics OmnisAnalyzer::ComputeLocked() const {
 
 MixMetrics OmnisAnalyzer::Snapshot() const {
     std::scoped_lock lock(mutex_);
-    return ComputeLocked();
+    // Lu à chaque image par le tableau (vu-mètre) : un calcul complet toutes les 60 ms suffit à l'œil.
+    const auto now = std::chrono::steady_clock::now();
+    if (now - snapshotAt_ < std::chrono::milliseconds(60)) return snapshot_;
+    snapshot_ = ComputeLocked();
+    snapshotAt_ = now;
+    return snapshot_;
 }
 
 }  // namespace companion

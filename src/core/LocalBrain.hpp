@@ -43,6 +43,7 @@ struct LocalBrainConfig {
     // Modèle MoE (cerveau expert) : les experts des N premières couches restent en RAM (calculés par le
     // processeur), le reste (attention, experts partagés, dernières couches) va sur la carte. 0 = tout sur la carte.
     int cpuMoeLayers = 0;
+    int mediaBatch = 1024;  // lots avec un module média (image : 1024 ; audio de Qwen3-ASR : 512 suffit, moins de VRAM)
 };
 
 struct GenerateOptions {
@@ -87,8 +88,11 @@ public:
     void SetMmproj(std::filesystem::path p) { cfg_.mmproj = std::move(p); }
     static const char* MediaMarker();
     // Modèle audio -> texte (Qwen3-ASR + son encodeur en mmproj) : transcription d'un son 16 kHz mono.
+    // language vide : le modèle annonce la langue entendue (detected reçoit « French », « None »…), utile pour savoir si
+    // c'est vraiment de la parole.
     std::optional<std::string> TranscribeAudio(const std::vector<float>& pcm16k, const std::string& context,
-                                               const std::string& language = "French", int maxTokens = 160);
+                                               const std::string& language = "French", int maxTokens = 160,
+                                               std::string* detected = nullptr);
     std::optional<std::string> GenerateWithImage(const std::vector<ChatTurn>& messages, const unsigned char* rgb,
                                                  int width, int height, const GenerateOptions& opt);
 

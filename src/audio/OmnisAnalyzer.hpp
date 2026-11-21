@@ -126,6 +126,8 @@ private:
     std::array<double, MixMetrics::kBands> refShareDb_{};
 
     mutable std::mutex mutex_;
+    mutable MixMetrics snapshot_;                               // dernier calcul (gardé 60 ms)
+    mutable std::chrono::steady_clock::time_point snapshotAt_{};
     std::deque<Block> blocks_;                         // 100 ms chacun, 3 s au total
     std::array<double, MixMetrics::kBands> bandEnergy_{};  // lissage exponentiel ~3 s
     bool bandsValid_ = false;

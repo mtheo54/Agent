@@ -72,8 +72,8 @@ bool LocalBrain::Load(const LocalBrainConfig& cfg) {
     llama_context_params cp = llama_context_default_params();
     cp.n_ctx = static_cast<uint32_t>(cfg.contextTokens);
     const bool vision = !cfg.mmproj.empty();
-    cp.n_batch = vision ? 1024 : 512;  // une image fait plusieurs centaines de tokens
-    cp.n_ubatch = vision ? 1024 : static_cast<uint32_t>(std::clamp(cfg.ubatch, 32, 512));
+    cp.n_batch = vision ? static_cast<uint32_t>(cfg.mediaBatch) : 512;  // une image fait plusieurs centaines de tokens
+    cp.n_ubatch = vision ? static_cast<uint32_t>(cfg.mediaBatch) : static_cast<uint32_t>(std::clamp(cfg.ubatch, 32, 512));
     cp.n_threads = cfg.threads;
     cp.n_threads_batch = cfg.threads;
     cp.no_perf = true;
@@ -455,7 +455,7 @@ std::optional<std::string> LocalBrain::GenerateWithImage(const std::vector<ChatT
 // Reconnaissance vocale avec un modèle « audio -> texte » (Qwen3-ASR) : contexte dans le message système (vocabulaire,
 // phrase précédente), langue imposée en début de réponse (« language French<asr_text> »), décodage glouton.
 std::optional<std::string> LocalBrain::TranscribeAudio(const std::vector<float>& pcm16k, const std::string& context,
-                                                       const std::string& language, int maxTokens) {
+                                                       const std::string& language, int maxTokens, std::string* detected) {
     const BusyScope busy(busy_);
 #if COMPANION_WITH_MTMD
     if (cfg_.mmproj.empty() || !std::filesystem::exists(cfg_.mmproj) || pcm16k.size() < 1600) return std::nullopt;
@@ -495,7 +495,12 @@ std::optional<std::string> LocalBrain::TranscribeAudio(const std::vector<float>&
         result = SampleLoop(opt, static_cast<int>(llama_n_ctx(ctx_)), /*trackTokens=*/false);
         // Sans langue imposée, le modèle écrit « language French<asr_text>… » : on garde le texte.
         if (result) {
-            if (const auto p = result->find("<asr_text>"); p != std::string::npos) result->erase(0, p + 10);
+            if (const auto p = result->find("<asr_text>"); p != std::string::npos) {
+                if (detected && result->starts_with("language ")) *detected = result->substr(9, p - 9);
+                result->erase(0, p + 10);
+            } else if (detected && language.empty()) {
+                *detected = "None";  // pas de « language X<asr_text> » : rien de reconnu comme de la parole
+            }
             while (!result->empty() && (result->front() == ' ' || result->front() == '\n')) result->erase(0, 1);
         }
     } else {
@@ -506,7 +511,7 @@ std::optional<std::string> LocalBrain::TranscribeAudio(const std::vector<float>&
     llama_memory_clear(llama_get_memory(ctx_), true);
     return result;
 #else
-    (void)pcm16k; (void)context; (void)language; (void)maxTokens;
+    (void)pcm16k; (void)context; (void)language; (void)maxTokens; (void)detected;
     return std::nullopt;
 #endif
 }
@@ -526,7 +531,8 @@ bool LocalBrain::HasVision() const { return false; }
 const char* LocalBrain::MediaMarker() { return "<__media__>"; }
 std::optional<std::string> LocalBrain::GenerateWithImage(const std::vector<ChatTurn>&, const unsigned char*, int, int,
                                                          const GenerateOptions&) { return std::nullopt; }
-std::optional<std::string> LocalBrain::TranscribeAudio(const std::vector<float>&, const std::string&, const std::string&, int) {
+std::optional<std::string> LocalBrain::TranscribeAudio(const std::vector<float>&, const std::string&, const std::string&, int,
+                                                       std::string*) {
     return std::nullopt;
 }
 

@@ -15,8 +15,10 @@ int main(int argc, char** argv) {
         std::ifstream f(argv[i], std::ios::binary); std::vector<char> b((std::istreambuf_iterator<char>(f)), {});
         std::vector<float> pcm(b.size() / 4); std::memcpy(pcm.data(), b.data(), pcm.size() * 4);
         const auto t0 = std::chrono::steady_clock::now();
-        const auto r = brain.TranscribeAudio(pcm, ctx);
-        std::printf("%5.1fs | %s\n", std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(), r ? r->c_str() : "(échec)");
+        std::string lang;
+        const bool free = std::getenv("FREE_LANG") != nullptr;
+        const auto r = brain.TranscribeAudio(pcm, ctx, free ? "" : "French", 160, &lang);
+        std::printf("%5.1fs | [%s] %s\n", std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(), lang.c_str(), r ? r->c_str() : "(échec)");
         std::fflush(stdout);
     }
 }
