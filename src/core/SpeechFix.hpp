@@ -318,12 +318,12 @@ private:
         }
         // Une lettre d'écart (« Jinks » ~ « Jinx »), seulement pour un mot rare et une clé assez longue.
         if (!anyRare || key.size() < 5) return nullptr;
-        std::vector<const Entry*> near;
+        std::vector<const Entry*> closeOnes;  // (pas « near » : macro des en-têtes Windows)
         for (const auto& [k, es] : byKey_)
             if (k.size() >= 5 && std::abs(static_cast<int>(k.size()) - static_cast<int>(key.size())) <= 1 && EditDistance(k, key) == 1)
                 for (const Entry& e : es)
-                    if (Active(e.domain)) near.push_back(&e);
-        return pick(near);
+                    if (Active(e.domain)) closeOnes.push_back(&e);
+        return pick(closeOnes);
     }
 
     void Rebuild() {
