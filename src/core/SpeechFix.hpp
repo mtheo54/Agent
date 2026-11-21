@@ -201,6 +201,7 @@ public:
                 if (allBlank || anyBlank || key.size() < 3) continue;
                 const Entry* e = Lookup(key, anyRare, minRank);
                 if (!e || LowerFr(e->display) == LowerFr(span)) continue;
+                if (allWords_.contains(LowerFr(span))) continue;  // déjà un mot de la banque (« lead ») : on n'y touche pas
                 // Autant de mots avant qu'après (« le lead » ne devient jamais « release », « un side chain » garde « un »).
                 if (static_cast<size_t>(std::count(e->display.begin(), e->display.end(), ' ')) + 1 != n) continue;
                 if (n > 1 && minRank > 0 && minRank <= 3000 && !anyRare) continue;  // « de la » + … : groupes de mots courants intouchables
@@ -250,6 +251,7 @@ public:
 private:
     struct Entry {
         std::string display, domain;
+        bool core = false;  // mots essentiels du domaine (début de liste) ; les grandes listes ne corrigent que des mots rares
     };
     struct Token {
         std::string lead, core, trail;
@@ -294,33 +296,49 @@ private:
         return domain == "pc" || domain == "perso" || std::find(active_.begin(), active_.end(), domain) != active_.end();
     }
 
-    // Mot de la banque qui sonne pareil. Mots courants : jamais (top 8 000), ou seulement pour le domaine actif.
+    // Mot de la banque qui sonne pareil. Entre plusieurs qui sonnent pareil : celui du domaine actif, sinon rien (ambigu).
+    // Mot courant (dans la liste des 40 000) : seulement un mot essentiel du domaine actif, et jamais les 8 000 plus courants.
     const Entry* Lookup(const std::string& key, bool anyRare, int minRank) const {
+        const auto pick = [&](const std::vector<const Entry*>& c) -> const Entry* {
+            const Entry* best = nullptr;
+            for (const Entry* e : c)
+                if (best && LowerFr(best->display) != LowerFr(e->display)) return nullptr;  // deux mots différents : ambigu
+                else best = e;
+            return best;
+        };
         if (const auto it = byKey_.find(key); it != byKey_.end()) {
-            const Entry& e = it->second;
-            if (anyRare || (minRank > 8000 && Active(e.domain))) return &e;
-            return nullptr;
+            std::vector<const Entry*> active, other;
+            for (const Entry& e : it->second) (Active(e.domain) ? active : other).push_back(&e);
+            if (anyRare) return pick(active.empty() ? other : active);
+            if (minRank <= 8000) return nullptr;
+            std::vector<const Entry*> core;
+            for (const Entry* e : active)
+                if (e->core) core.push_back(e);
+            return pick(core);
         }
         // Une lettre d'écart (« Jinks » ~ « Jinx »), seulement pour un mot rare et une clé assez longue.
         if (!anyRare || key.size() < 5) return nullptr;
-        const Entry* best = nullptr;
-        for (const auto& [k, e] : byKey_)
-            if (k.size() >= 5 && std::abs(static_cast<int>(k.size()) - static_cast<int>(key.size())) <= 1 && Active(e.domain) &&
-                EditDistance(k, key) == 1) {
-                if (best) return nullptr;  // ambigu : on ne touche à rien
-                best = &e;
-            }
-        return best;
+        std::vector<const Entry*> near;
+        for (const auto& [k, es] : byKey_)
+            if (k.size() >= 5 && std::abs(static_cast<int>(k.size()) - static_cast<int>(key.size())) <= 1 && EditDistance(k, key) == 1)
+                for (const Entry& e : es)
+                    if (Active(e.domain)) near.push_back(&e);
+        return pick(near);
     }
 
     void Rebuild() {
         byKey_.clear();
-        for (const auto& [dom, words] : domains_)
-            if (dom != "argot")  // l'argot sert au prompt, pas à remplacer
-                for (const auto& w : words)
-                    if (const std::string k = PhonKey(w); k.size() >= 3) byKey_.emplace(k, Entry{w, dom});
-        for (const auto& w : userWords_)
-            if (const std::string k = PhonKey(w); k.size() >= 3) byKey_[k] = Entry{w, "perso"};
+        allWords_.clear();
+        for (const auto& [dom, words] : domains_) {
+            for (const auto& w : words) allWords_.insert(LowerFr(w));
+            if (dom == "argot") continue;  // l'argot sert au prompt, pas à remplacer
+            for (size_t i = 0; i < words.size(); ++i)
+                if (const std::string k = PhonKey(words[i]); k.size() >= 3) byKey_[k].push_back(Entry{words[i], dom, i < kCoreWords});
+        }
+        for (const auto& w : userWords_) {
+            allWords_.insert(LowerFr(w));
+            if (const std::string k = PhonKey(w); k.size() >= 3) byKey_[k] = {Entry{w, "perso", true}};  // tes mots passent avant tout
+        }
         fixesByLength_.assign(fixes_.begin(), fixes_.end());
         for (const auto& kv : userFixes_) fixesByLength_.push_back(kv);
         std::sort(fixesByLength_.begin(), fixesByLength_.end(), [](const auto& a, const auto& b) { return a.first.size() > b.first.size(); });
@@ -355,7 +373,9 @@ private:
     std::vector<std::pair<std::string, std::string>> fixesByLength_;
     std::vector<std::string> userWords_, active_;
     std::unordered_map<std::string, int> rank_;
-    std::unordered_map<std::string, Entry> byKey_;
+    std::unordered_map<std::string, std::vector<Entry>> byKey_;
+    std::set<std::string> allWords_;
+    static constexpr size_t kCoreWords = 420;  // début de chaque liste : les mots écrits à la main pour ce domaine
 };
 
 }  // namespace companion
