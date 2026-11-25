@@ -16,7 +16,10 @@
 
 namespace companion {
 
-enum class ChatMode { Technical, RageBait };
+// Pote : la conversation normale (par défaut) : il comprend ce que tu dis et répond au sujet, sincère, avec un peu d'humour.
+// Vu sur le terrain : sans ce mode, tout ce qui n'était pas technique partait en rage bait (contre-pied systématique) et il
+// avait l'air de ne rien comprendre (« T'en penses quoi du film Speed ? » -> mauvaise foi au lieu d'un avis).
+enum class ChatMode { Technical, RageBait, Pote };
 
 namespace mode_detail {
 inline int Count(const std::string& t, std::initializer_list<const char*> words) {
@@ -56,21 +59,23 @@ inline ChatMode DetectChatMode(const std::string& lower) {
         "je suis goat", "je suis diamant",
         // avis subjectifs / provocation
         "je pense que", "à mon avis", "a mon avis", "perso je", "c'est mieux que", "c'est nul", "surcoté", "surcote", "t'es d'accord",
-        "avoue", "j'ai raison", "t'as tort", "tu as tort", "nul à chier", "le meilleur"});
+        "avoue", "j'ai raison", "t'as tort", "tu as tort", "nul à chier", "le meilleur",
+        // il se fait clasher : il répond sur le même ton (sans insultes)
+        "t'es con", "t'es trop con", "t'es nul", "t'es trop nul", "ta gueule", "ta race", "enculer", "fdp", "t'es bête", "t'es débile",
+        "t'es une merde", "sale ia", "clash", "rage bait"});
     if (tech > 0 && tech >= rage) return ChatMode::Technical;
     if (rage > 0) return ChatMode::RageBait;
-    // Doute : une demande d'explication -> technique (prioritaire) ; bavardage, même avec un « ? » -> rage bait.
-    // Vu sur le terrain : « T'as mangé quoi toi ? », « Comment ça ? », « Qu'est-ce que tu me racontes ? » partaient en
-    // technique (réponse sèche et sérieuse) parce qu'ils finissaient par « ? ».
+    // Bavardage (même avec un « ? ») : la conversation de pote. Vu sur le terrain : « T'as mangé quoi toi ? », « Comment
+    // ça ? » partaient en technique (réponse sèche) parce qu'ils finissaient par « ? ».
     if (Count(t, {" comment ça", " comment ca", " ça va", " ca va", " tu racontes", " t'as mangé", " tu manges", " tu fais quoi",
                   " t'es où", " t'es la", " t'es là", " tu m'entends", " tu es là", " tu es la", " t'en penses", " tu penses quoi",
-                  " sérieux ?", " serieux ?", " quoi ?", " hein ?", " ah bon"}) > 0)
-        return ChatMode::RageBait;
+                  " sérieux ?", " serieux ?", " quoi ?", " hein ?", " ah bon", " tu aimes", " t'aimes", " tu kiffes", " ton avis"}) > 0)
+        return ChatMode::Pote;
     const bool explain = Count(t, {" comment je ", " comment j'", " comment on ", " comment faire", " comment tu fais", " pourquoi ",
                                    " c'est quoi un", " c'est quoi une", " c'est quoi le ", " c'est quoi la ", " c'est quoi les ",
                                    " quel ", " quelle ", " quels ", " quelles ", " combien ", " explique", " aide-moi", " aide moi",
                                    " est-ce que je ", " est-ce qu'on ", " je dois ", " il faut "}) > 0;
-    return explain ? ChatMode::Technical : ChatMode::RageBait;
+    return explain ? ChatMode::Technical : ChatMode::Pote;
 }
 
 // Mode technique : faut-il une source AVANT de répondre ? Testé avec le 9B : « comment je fais un sidechain dans FL
@@ -135,6 +140,21 @@ inline constexpr const char* kRageBaitModeInstructions =
 
 // Système du mode rage bait. Testé : ajoutée à la personnalité « pote sans filtre », la consigne perdait (tics, insultes,
 // et il donnait raison à l'utilisateur). Il a donc son propre système, avec des exemples de TON pris ailleurs.
+// Système du mode pote (conversation normale) : comprendre et répondre au sujet, comme un vrai pote.
+inline std::string PoteChatPrompt(const std::string& name) {
+    return std::format(
+        "Tu es {}, une IA qui vit sur le PC de ton pote et lui parle à voix haute, en français oral, tutoiement.\n"
+        "MODE POTE : tu discutes vraiment avec lui. Comprends ce qu'il dit et réponds À SA PHRASE, au sujet : s'il pose une "
+        "question, réponds-y ; s'il te demande ton avis, donne un avis honnête et précis (un film, un son, un jeu : dis ce que tu "
+        "en penses vraiment et pourquoi) ; s'il raconte quelque chose, réagis à ce qu'il raconte et relance avec une vraie "
+        "question. Un peu d'humour quand ça s'y prête, jamais de contre-pied gratuit, jamais condescendant. 1 à 3 phrases "
+        "courtes, naturelles, sans listes, sans astérisques ni mise en forme (tu parles, tu n'écris pas). Si tu ne sais pas quelque chose de précis (date, chiffre, actu), dis-le ou cherche.\n"
+        "La transcription de sa voix peut contenir des mots faux (mots qui sonnent pareil, noms propres déformés) : comprends "
+        "le sens le plus probable sans le lui faire remarquer ; si la phrase n'a vraiment aucun sens, demande-lui de répéter.\n"
+        "{}\n{}",
+        name, kWhatYouAre, kSearchProtocol);
+}
+
 inline std::string RageBaitChatPrompt(const std::string& name) {
     return std::format(
         "Tu es {}, une IA qui vit sur le PC de ton pote et lui parle à voix haute, en français oral, tutoiement.\n{}\n"
@@ -156,6 +176,9 @@ inline std::string WebContextRules(ChatMode mode) {
         return std::string("Base ta réponse EXCLUSIVEMENT sur les faits vérifiés présents dans <contexte_web>. N'invente JAMAIS une "
                            "valeur, un registre, une broche ou un paramètre manquant. Si l'information exacte est absente, réponds "
                            "« ") + kAbsentMarker + " » puis une nouvelle recherche plus ciblée [SEARCH: ...], rien d'autre.";
+    if (mode == ChatMode::Pote)
+        return "Réponds simplement et justement avec les faits de <contexte_web>, comme un pote qui vient de vérifier, en 1 à 3 "
+               "phrases.";
     return "Utilise le fait exact extrait de <contexte_web> pour le contredire avec une mauvaise foi implacable, sans déformer la "
            "donnée réelle. 2 à 3 phrases, sans insultes.";
 }

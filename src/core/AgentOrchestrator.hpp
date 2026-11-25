@@ -167,7 +167,7 @@ private:
 
     std::string PersonaPrompt() const;
     std::string ModePrompt() const;  // technique ou rage bait, selon la question en cours
-    ChatMode chatMode_ = ChatMode::RageBait;
+    ChatMode chatMode_ = ChatMode::Pote;
     int searchRound_ = 0;  // 0 = 1re recherche ; 1 = recherche plus ciblée (ensuite : Claude)
     std::string LiveContext(const std::string& question) const;
     bool EnsureBrain();

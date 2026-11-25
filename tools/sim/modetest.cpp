@@ -13,6 +13,6 @@ int main() {
                           "Pourquoi ma voix sature quand je chante fort ?", "C'est quoi un compresseur ?", "Omnis t'es là ? Tu m'entends ?",
                           "Combien de RAM il faut pour Ableton ?"}) {
         std::string l = s; for (auto& c : l) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        std::printf("%-12s %s\n", DetectChatMode(l) == ChatMode::Technical ? "TECHNIQUE" : "RAGE BAIT", s);
+        std::printf("%-12s %s\n", DetectChatMode(l) == ChatMode::Technical ? "TECHNIQUE" : DetectChatMode(l) == ChatMode::Pote ? "POTE" : "RAGE BAIT", s);
     }
 }

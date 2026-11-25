@@ -102,6 +102,7 @@ inline std::string CleanSpoken(std::string s) {
         }
     for (auto& c : s)
         if (c == '\n' || c == '\r') c = ' ';
+    std::erase_if(s, [](char c) { return c == '*' || c == '_' || c == '#'; });  // markdown (« *Speed* ») : jamais lu ni affiché
     const auto trim = [&] {
         while (!s.empty() && (s.front() == ' ' || s.front() == '"')) s.erase(s.begin());
         while (!s.empty() && (s.back() == ' ' || s.back() == '"')) s.pop_back();

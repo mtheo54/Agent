@@ -466,6 +466,7 @@ std::string AgentOrchestrator::ModePrompt() const {
                "dis jamais « la méthode », « étape 5 » ni un numéro de point.\n" +
                playbook_->method;
     }
+    if (chatMode_ == ChatMode::Pote) return PoteChatPrompt(cfg_.name);
     return RageBaitChatPrompt(cfg_.name);
 }
 
@@ -2581,13 +2582,14 @@ std::string AgentOrchestrator::GenerateSpoken(const std::vector<ChatTurn>& messa
         bcCv.notify_all();
     };
     SpeakingStyle replyStyle = style_.load();
-    // Bavardage : 2 phrases au plus (il en enchaînait 3-4) ; une explication (technique) peut être plus longue.
-    const int maxSentences = maxTokens <= 120 ? 2 : 0;
+    // Rage bait : 2 phrases au plus (il en enchaînait 3-4) ; pote : 3 ; une explication (technique) peut être plus longue.
+    const int maxSentences = maxTokens <= 80 ? 2 : maxTokens <= 130 ? 3 : 0;
     int sentences = 0;
     bool enough = false;
     const auto speak = [&](const std::string& chunk) {
         cancelBackchannel();
         std::string said = chunk;
+        std::erase_if(said, [](char c) { return c == '*' || c == '#'; });  // markdown (« *Speed* ») : jamais lu ni affiché
         if (!spoken) {  // geste et intonation portés par le début de la réponse
             said = DropRepeatedOpener(chunk);
             const std::string expression = ExpressionForReply(said);
@@ -2906,14 +2908,16 @@ void AgentOrchestrator::HandleLevel1(const std::string& text, const std::vector<
     // Domaine de pro (FL Studio, montage, AutoCAD Electrical, LoL…) : sa méthode, et le cerveau expert s'il est là.
     playbook_ = chatMode_ == ChatMode::Technical ? DetectPlaybook(playbooks_, Lower(text)) : nullptr;
     if (playbook_) MaybeUseExpert(Lower(text), stop);
-    log::Info("Orchestrator: mode {}{}{}", chatMode_ == ChatMode::Technical ? "technique" : "rage bait",
+    log::Info("Orchestrator: mode {}{}{}", chatMode_ == ChatMode::Technical ? "technique" : chatMode_ == ChatMode::Pote ? "pote" : "rage bait",
               playbook_ ? ", méthode " + playbook_->id : std::string{}, expertActive_ ? ", cerveau expert" : "");
     std::vector<ChatTurn> messages{{"system", ModePrompt()}};
     messages.insert(messages.end(), history.begin(), history.end());
     // Technique : rien qui distraie (memes, bruitages, rage bait) ; rage bait : tout le sel habituel.
-    const std::string ctx = chatMode_ == ChatMode::Technical
-                                ? LiveContext(text) + CallHint() + extraContext
-                                : LiveContext(text) + CallHint() + extraContext + OpenerHint() + MemeHint() + SoundHint() + RageBaitHint(text);
+    // Pote : le sel habituel, sauf les consignes de mauvaise foi (réservées au rage bait).
+    const std::string ctx = chatMode_ == ChatMode::Technical ? LiveContext(text) + CallHint() + extraContext
+                          : chatMode_ == ChatMode::Pote      ? LiveContext(text) + CallHint() + extraContext + OpenerHint() + MemeHint() + SoundHint()
+                                                             : LiveContext(text) + CallHint() + extraContext + OpenerHint() + MemeHint() + SoundHint() +
+                                                                   RageBaitHint(text);
     messages.push_back({"user", ctx.empty() ? text : "[Contexte]\n" + ctx + "\n[Message]\n" + text});
 
     // Procédure, réglage, code d'erreur : le modèle n'écrit que les mots-clés, la réponse viendra de la source.
@@ -2940,7 +2944,9 @@ void AgentOrchestrator::HandleLevel1(const std::string& text, const std::vector<
     bool escalation = false;
     // Rage bait : 2 à 3 phrases, sec ; technique : de quoi expliquer.
     const std::string out = GenerateSpoken(messages, kEscalateGrammar, stop, escalation, nullptr,
-                                           chatMode_ == ChatMode::Technical ? (expertActive_ ? 340 : 260) : 70);
+                                           chatMode_ == ChatMode::Technical ? (expertActive_ ? 340 : 260)
+                                           : chatMode_ == ChatMode::Pote    ? 130
+                                                                            : 70);
     if (stop.stop_requested()) return;
     if (!escalation) {
         if (!out.empty()) {
