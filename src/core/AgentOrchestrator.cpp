@@ -243,6 +243,24 @@ void AgentOrchestrator::OnTranscript(std::string text, EmotionEstimate emotion) 
     // Réponse à une question du Permission Gate : consommée immédiatement (le worker attend).
     if (d_.gate.OnUserReply(text)) return;
 
+    // Écoute continue : il ne répond que si on l'appelle (« Omnis, … »), ou pendant une conversation en cours (45 s après le
+    // dernier échange). Vu sur le terrain : il répondait à tout ce que le micro captait (bruits, phrases à moitié comprises,
+    // ce qu'on dit à quelqu'un d'autre), et ses réponses à côté le rendaient bête. Au raccourci clavier, on l'appelle exprès.
+    if (d_.voice.GetListenMode() == ListenMode::VoiceActivity && d_.db.GetProfile("listen.needName").value_or("oui") != "non") {
+        const std::int64_t now = NowMs();
+        const bool inConversation = d_.voice.IsSpeaking() || now - lastExchangeMs_.load() < 45'000;
+        if (!inConversation && !CallsOmnis(text)) {
+            log::Info("Écoute : ignoré, pas pour moi (« {} »)", text);
+            // Une fois par session, pour une vraie phrase : il explique pourquoi il ne répond pas.
+            if (!nameHintGiven_.exchange(true) && std::count(text.begin(), text.end(), ' ') >= 3)
+                Post([this](std::stop_token) {
+                    Say("Si tu me parles, commence par Omnis. Sinon je pense que tu parles à quelqu'un d'autre.");
+                });
+            return;
+        }
+    }
+    lastExchangeMs_ = NowMs();
+
     // "Pause" coupe tout, tout de suite, sans attendre la file.
     const std::string lower = Lower(text);
     const bool aboutMusic = ContainsAny(lower, {"musique", "chanson", "lecture", "spotify"});
@@ -2520,6 +2538,7 @@ std::string AgentOrchestrator::OpenerHint() const {
 
 void AgentOrchestrator::Say(const std::string& text) {
     if (text.empty()) return;
+    lastExchangeMs_ = NowMs();  // il parle : la conversation continue, tu peux répondre sans redire son nom
     const std::string expression = ExpressionForReply(text);
     React(expression);
     d_.voice.Speak(text, ReplyStyle(expression, style_.load(), text));
@@ -3873,6 +3892,18 @@ void AgentOrchestrator::UpdateSttVocabulary(bool force) {
 
 // « Quand je dis fête studio, c'est FL Studio », « retiens le mot Nexus », « oublie le mot Nexus ».
 bool AgentOrchestrator::HandleVocabCommand(const std::string& text, const std::string& lower) {
+    // Écoute continue : faut-il dire son nom ?
+    if (ContainsAny(lower, {"plus besoin de dire ton nom", "réponds tout le temps", "reponds tout le temps", "réponds-moi tout le temps",
+                            "réponds à tout", "reponds a tout", "sans que je dise ton nom"})) {
+        d_.db.SetProfile("listen.needName", "non");
+        Say("Ok, je réponds à tout ce que j'entends, même sans mon nom. Dis réponds seulement quand je dis ton nom pour revenir.");
+        return true;
+    }
+    if (ContainsAny(lower, {"seulement quand je dis ton nom", "quand je t'appelle", "que quand je dis ton nom", "attends que je dise ton nom"})) {
+        d_.db.SetProfile("listen.needName", "oui");
+        Say("Ok, en écoute continue je réponds quand tu dis Omnis, ou quand on est déjà en train de parler.");
+        return true;
+    }
     // Ancré au début de la phrase (après « Omnis, » éventuel) : « fais apparaître le titre quand je dis bonjour, c'est pour
     // l'intro » est une demande After Effects, pas une correction de vocabulaire.
     static const std::regex fixRe(
@@ -3915,6 +3946,36 @@ bool AgentOrchestrator::HandleVocabCommand(const std::string& text, const std::s
             d_.voice.SetSttPrompt(speechFix_.Prompt(lastUserText_));
             return true;
         }
+    return false;
+}
+
+}  // namespace companion
+
+// ---------------------------------------------------------------------------
+namespace companion {
+
+// « Omnis, … », « ok Omnis », « Omni », « M. Omnis », « Homnis » : son nom dans les 6 premiers mots, même mal transcrit
+// (même son à une lettre près).
+bool AgentOrchestrator::CallsOmnis(const std::string& text) const {
+    const std::string name = PhonKey(cfg_.name.empty() ? "Omnis" : cfg_.name);
+    std::vector<std::string> words;
+    std::string w;
+    for (char c : text + " ") {
+        const unsigned char u = static_cast<unsigned char>(c);
+        if (std::isalnum(u) || u >= 0x80) w += c;
+        else if (!w.empty()) {
+            words.push_back(w);
+            w.clear();
+            if (words.size() >= 6) break;
+        }
+    }
+    for (size_t i = 0; i < words.size(); ++i) {
+        for (const std::string cand : {words[i], i + 1 < words.size() ? words[i] + words[i + 1] : std::string{}}) {
+            if (cand.size() < 4) continue;
+            const std::string k = PhonKey(cand);
+            if (k == name || (k.size() >= 4 && EditDistance(k, name) <= 1)) return true;
+        }
+    }
     return false;
 }
 

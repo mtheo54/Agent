@@ -267,6 +267,9 @@ private:
     std::vector<Skill> skills_;
     // Banque de mots + autocorrecteur de transcription ; domaine actif selon ce que tu fais.
     SpeechFix speechFix_;
+    std::atomic<std::int64_t> lastExchangeMs_{-1'000'000};  // dernier échange (conversation en cours : pas besoin de son nom)
+    [[nodiscard]] bool CallsOmnis(const std::string& text) const;
+    std::atomic<bool> nameHintGiven_{false};  // « commence par Omnis » expliqué une fois par session
     std::string sttDomain_, lastUserText_;
     void UpdateSttVocabulary(bool force = false);
     bool HandleVocabCommand(const std::string& text, const std::string& lower);
