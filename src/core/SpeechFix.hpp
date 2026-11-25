@@ -162,11 +162,15 @@ public:
         std::scoped_lock lock(mutex_);
         std::string s = text;
         // 1) corrections explicites (bornes de mot), de la plus longue à la plus courte
-        for (const auto& [from, to] : fixesByLength_) {
+        for (const auto& [rawFrom, to] : fixesByLength_) {
+            // « ^… » : seulement en début de phrase (« 10 mois, t'es sur quoi » = « dis-moi », pas « il y a 10 mois »).
+            const bool atStart = rawFrom.starts_with("^");
+            const std::string from = atStart ? rawFrom.substr(1) : rawFrom;
             for (size_t p = 0;;) {
                 const std::string low = LowerFr(s);
                 p = low.find(from, p);
                 if (p == std::string::npos) break;
+                if (atStart && low.find_first_not_of(" \"«") != p) break;
                 const bool startOk = p == 0 || !IsWordByte(low[p - 1]) || low[p - 1] == '\'';  // « d'Otte » : après une élision
                 const bool endOk = p + from.size() >= low.size() || !IsWordByte(low[p + from.size()]);
                 if (startOk && endOk && s.compare(p, from.size(), to) != 0) {

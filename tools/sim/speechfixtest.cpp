@@ -22,6 +22,8 @@ int main() {
         {"Ouvre le piano rôle et le chanel rack.", "musique"},
         {"Omni, tu m'entends ?", "pc"},
         {"Je suis sur after effect, mets un wiggle.", "montage"},
+        {"10 mois, t'es sur quelle processus pour parler actuellement ?", "pc"},
+        {"10 mois, 10 mois, est-ce que tu peux prendre 2-3 trucs ?", "musique"},
     };
     for (auto& [t, d] : bad) {
         fx.SetDomains({d});
@@ -47,7 +49,7 @@ int main() {
         "Je dois réviser mon examen de maths pour lundi.", "Ce restaurant fait les meilleures pizzas du quartier.",
         "Le chat a renversé mon verre sur le clavier.", "Il pleut depuis trois jours, j'en peux plus.",
         "Mon frère conduit trop vite sur l'autoroute.", "On part en vacances en Bretagne cet été.",
-        "Elle chante dans une chorale le dimanche matin.",
+        "Elle chante dans une chorale le dimanche matin.", "J'ai commencé la musique il y a 10 mois.",
     };
     int changed = 0;
     for (const char* t : good)

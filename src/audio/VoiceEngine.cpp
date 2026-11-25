@@ -1394,6 +1394,7 @@ void VoiceEngine::LoadMissing(bool neuralWanted) {
         // Qwen3-ASR téléchargé après le démarrage : on retente au prochain besoin.
         d.asrTried = d.asr != nullptr;
         d.asrGameTried = d.asrGame != nullptr;
+        d.AsrContext();  // chargé tout de suite : la prochaine phrase est déjà comprise par le nouveau modèle
 #if COMPANION_WITH_WHISPER
         if ((!d.whisper || !d.whisperOnGpu) && d.cfg.sttGpu && std::filesystem::exists(d.cfg.whisperModel)) {
             // Le gros modèle vient d'arriver (téléchargé après le démarrage) : il remplace le léger.

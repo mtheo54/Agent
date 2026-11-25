@@ -477,27 +477,73 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
             normalPlan.gpu ? L"carte graphique" : L"processeur", cfg.neuralVoice ? L"neuronale" : L"Piper (légère)");
         if (MessageBoxW(nullptr, msg.c_str(), L"Omnis — installation", MB_YESNO | MB_ICONINFORMATION) == IDYES) {
             downloading = true;
-            downloader = std::jthread([&, missing, total, ua = cfg.userAgent](std::stop_token st) {
+            // Ordre : la reconnaissance vocale d'abord (c'est elle qui fait qu'il te comprend), le reste ensuite, Whisper turbo
+            // (sous-titres After Effects) en dernier. Vu sur le terrain : turbo passait avant et le téléchargement a calé à 18 %,
+            // Omnis est resté sur le vieux Whisper sans le dire.
+            auto ordered = missing;
+            const auto rank = [](const Download& d) {
+                if (d.file.starts_with("Qwen3-ASR-1.7B")) return 0;
+                if (d.file.starts_with("Qwen3-ASR")) return 1;
+                if (d.file == "ggml-large-v3-turbo-q5_0.bin") return 3;
+                return 2;
+            };
+            std::ranges::stable_sort(ordered, {}, rank);
+            const bool asrMissing = std::ranges::any_of(ordered, [](const Download& d) { return d.file.starts_with("Qwen3-ASR"); });
+            downloader = std::jthread([&, ordered, total, asrMissing, ua = cfg.userAgent](std::stop_token st) {
                 log::SetCurrentThreadName(L"Companion.Downloads");
                 SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+                // Il le dit à voix haute (après le chargement de sa voix) : sinon on croit qu'il a déjà ses nouvelles oreilles.
+                if (asrMissing) {
+                    for (int i = 0; i < 100 && !st.stop_requested(); ++i) Sleep(100);
+                    PostThreadMessageW(uiThread, WM_APP_MODELS_READY, 3, 0);
+                }
                 HttpClient net(ua);
                 std::uint64_t before = 0;
-                bool allOk = true;
-                for (const auto& dl : missing) {
-                    std::string err;
-                    int lastPct = -1;
-                    const bool ok = net.DownloadToFile(dl.url, modelsDir / std::filesystem::path(std::u8string(dl.file.begin(), dl.file.end())),
-                        [&](std::uint64_t done, std::uint64_t) {
-                            const int pct = static_cast<int>(100.0 * static_cast<double>(before + done) / static_cast<double>(total));
-                            if (pct != lastPct) { lastPct = pct; log::Info("Téléchargement : {} % ({})", pct, dl.file); }
-                            return !st.stop_requested();
-                        }, &err);
-                    if (!ok) { allOk = false; log::Info("Téléchargement de {} impossible : {}", dl.file, err); }
+                bool allOk = true, asrAnnounced = false;
+                for (size_t k = 0; k < ordered.size(); ++k) {
+                    const auto& dl = ordered[k];
+                    bool ok = false;
+                    // Jusqu'à 4 essais : chaque essai reprend où le précédent s'est arrêté (fichier .part).
+                    for (int attempt = 1; attempt <= 4 && !ok && !st.stop_requested(); ++attempt) {
+                        std::string err;
+                        int lastPct = -1;
+                        auto lastLog = std::chrono::steady_clock::now();
+                        std::uint64_t lastDone = 0;
+                        ok = net.DownloadToFile(dl.url, modelsDir / std::filesystem::path(std::u8string(dl.file.begin(), dl.file.end())),
+                            [&](std::uint64_t done, std::uint64_t) {
+                                const int pct = static_cast<int>(100.0 * static_cast<double>(before + done) / static_cast<double>(total));
+                                const auto now = std::chrono::steady_clock::now();
+                                // Toutes les 5 s au moins, avec le débit : un téléchargement qui rame se voit dans le journal.
+                                if (pct != lastPct || now - lastLog > std::chrono::seconds(5)) {
+                                    const double secs = std::chrono::duration<double>(now - lastLog).count();
+                                    log::Info("Téléchargement : {} % ({}, {:.1f} Mo/s)", pct, dl.file,
+                                              secs > 0.05 ? static_cast<double>(done - lastDone) / 1e6 / secs : 0.0);
+                                    lastPct = pct;
+                                    lastLog = now;
+                                    lastDone = done;
+                                }
+                                return !st.stop_requested();
+                            }, &err);
+                        if (!ok && !st.stop_requested()) {
+                            log::Info("Téléchargement de {} interrompu (essai {}/4) : {}", dl.file, attempt, err);
+                            for (int i = 0; i < attempt * 50 && !st.stop_requested(); ++i) Sleep(100);
+                        }
+                    }
+                    if (!ok) allOk = false;
                     before += dl.bytes;
                     if (st.stop_requested()) return;
+                    // Les nouvelles oreilles sont là (les deux fichiers du 1.7B, ou du 0.6B) : chargées tout de suite.
+                    const bool asrDone = asrMissing && !asrAnnounced && std::ranges::none_of(ordered, [&](const Download& d) {
+                        return d.file.starts_with("Qwen3-ASR") && !std::filesystem::exists(
+                            modelsDir / std::filesystem::path(std::u8string(d.file.begin(), d.file.end())));
+                    });
+                    if (asrDone && k + 1 < ordered.size()) {
+                        asrAnnounced = true;
+                        PostThreadMessageW(uiThread, WM_APP_MODELS_READY, 2, 0);
+                    }
                 }
                 downloading = false;
-                PostThreadMessageW(uiThread, WM_APP_MODELS_READY, allOk ? 1 : 0, 0);
+                PostThreadMessageW(uiThread, WM_APP_MODELS_READY, allOk ? 1 : 0, asrMissing && !asrAnnounced ? 1 : 0);
             });
         }
     }
@@ -791,9 +837,18 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
                 continue;
             }
             if (msg.message == WM_APP_MODELS_READY) {  // modèles téléchargés : on les charge sans redémarrer
+                if (msg.wParam == 3) {  // début : il prévient qu'il comprend moins bien en attendant
+                    voice.Speak("Je télécharge mes nouvelles oreilles. En attendant, je risque de mal comprendre certains mots.");
+                    continue;
+                }
                 voice.LoadMissing(cfg.neuralVoice);
+                if (msg.wParam == 2) {  // la reconnaissance vocale est arrivée (le reste continue)
+                    voice.Speak("Mes nouvelles oreilles sont prêtes, je te comprends beaucoup mieux maintenant.");
+                    continue;
+                }
                 voice.PrepareBackchannels(backchannels());
-                voice.Speak(msg.wParam ? "C'est bon, j'ai tout ce qu'il me faut. On y va."
+                voice.Speak(msg.wParam ? (msg.lParam ? "Mes nouvelles oreilles sont prêtes, et j'ai tout ce qu'il me faut. On y va."
+                                                     : "C'est bon, j'ai tout ce qu'il me faut. On y va.")
                                        : "Il me manque encore des fichiers, je réessaierai au prochain démarrage.");
                 continue;
             }

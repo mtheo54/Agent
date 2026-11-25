@@ -207,6 +207,7 @@ fixes = {
     "da vinci": "DaVinci", "valo rante": "Valorant", "valorante": "Valorant", "omni": "Omnis", "omnisse": "Omnis",
     "homnis": "Omnis", "om nis": "Omnis", "ozone": "Ozone", "serrum": "Serum", "sérum": "Serum", "piano rôle": "piano roll",
     "channel rac": "channel rack", "chanel rack": "channel rack", "playliste": "playlist", "hi hat": "hi-hat", "aïe hat": "hi-hat",
+    "^10 mois": "Dis-moi", "^dix mois": "Dis-moi", "^10 mois, 10 mois": "Dis-moi, dis-moi", "^m. omnis": "Omnis",
     "yasso": "Yasuo", "yazuo": "Yasuo", "otte": "OTT", "o t t": "OTT", "assent": "Ascent", "a scent": "Ascent", "haiven": "Haven", "hey ven": "Haven", "ice box": "Icebox", "aïce box": "Icebox",
     "jet t": "Jett", "rayna": "Reyna", "kill joy": "Killjoy", "kay o": "KAY/O", "chamb'r": "Chamber",
     "décibelles": "décibels", "décibelle": "décibel", "masteur": "master", "masterring": "mastering",
